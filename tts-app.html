@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Voice Reader</title>
+<script src="https://apis.google.com/js/api.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=Noto+Sans+JP:wght@300;400;500&display=swap');
 
@@ -380,8 +381,9 @@
         <button class="btn-gdrive" id="driveAuthBtn" onclick="handleDriveAuth()">🔗 ログイン</button>
       </div>
       <div class="drive-file-area" id="driveFileArea">
-        <input class="drive-search" id="driveSearch" placeholder="ファイル名で検索…" oninput="filterFiles(this.value)">
-        <div class="drive-file-list" id="driveFileList"></div>
+        <button class="btn btn-primary" style="margin-top:10px;" onclick="openPicker()">
+          📄 ファイルを選択する
+        </button>
       </div>
     </div>
 
@@ -722,14 +724,18 @@ function downloadMp3() {
 }
 
 // ============================================================
-// Google Drive 連携
+// Google Drive 連携 + Picker API
 // ============================================================
-const CLIENT_ID = '818344559221-1rud3377jb5vg32rpkcjcqh80m669as3.apps.googleusercontent.com';
-const SCOPES    = 'https://www.googleapis.com/auth/drive.readonly';
-const REDIRECT  = location.href.split('#')[0];
+const CLIENT_ID   = '818344559221-1rud3377jb5vg32rpkcjcqh80m669as3.apps.googleusercontent.com';
+const APP_ID      = '818344559221';
+const SCOPES      = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly';
+const REDIRECT    = location.href.split('#')[0];
 
 let accessToken   = null;
-let allDriveFiles = [];
+let pickerApiLoaded = false;
+
+// Picker APIをロード
+gapi.load('picker', () => { pickerApiLoaded = true; });
 
 // ページ読み込み時にURLハッシュからトークンを取得
 (function checkToken() {
@@ -744,10 +750,13 @@ let allDriveFiles = [];
 
 function handleDriveAuth() {
   if (accessToken) {
-    accessToken = null; allDriveFiles = [];
+    accessToken = null;
     ['driveAuthBtn','driveAuthBtnSettings'].forEach(id => {
       const b = document.getElementById(id);
-      if(b){ b.textContent = '🔗 ログイン'; b.className = b.id === 'driveAuthBtn' ? 'btn-gdrive' : 'btn-sm btn-save-key'; }
+      if (b) {
+        b.textContent = id === 'driveAuthBtn' ? '🔗 ログイン' : '🔗 Googleでログイン';
+        b.className   = id === 'driveAuthBtn' ? 'btn-gdrive' : 'btn-sm btn-save-key';
+      }
     });
     document.getElementById('driveFileArea').classList.remove('show');
     setStatus('Googleドライブからログアウトしました', 'info');
@@ -762,66 +771,57 @@ function handleDriveAuth() {
   window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
 }
 
-async function onDriveLoggedIn() {
+function onDriveLoggedIn() {
   ['driveAuthBtn','driveAuthBtnSettings'].forEach(id => {
     const b = document.getElementById(id);
-    if(b){ b.textContent = '✓ 接続済み（ログアウト）'; b.className = b.id === 'driveAuthBtn' ? 'btn-gdrive connected' : 'btn-sm btn-clear-key'; }
+    if (b) {
+      b.textContent = id === 'driveAuthBtn' ? '✓ 接続済み（ログアウト）' : '✓ 接続済み（ログアウト）';
+      b.className   = id === 'driveAuthBtn' ? 'btn-gdrive connected' : 'btn-sm btn-clear-key';
+    }
   });
   document.getElementById('driveFileArea').classList.add('show');
-  setStatus('Googleドライブに接続しました。ファイルを読み込んでいます…', 'info');
-  await fetchDriveFiles();
+  setStatus('Googleドライブに接続しました。「ファイルを選択する」をクリックしてください', 'success');
 }
 
-async function fetchDriveFiles() {
-  const list = document.getElementById('driveFileList');
-  list.innerHTML = '<div class="drive-empty">読み込み中…</div>';
+// Google Picker を開く
+function openPicker() {
+  if (!accessToken) {
+    setStatus('先にGoogleでログインしてください', 'error');
+    return;
+  }
+  if (!pickerApiLoaded) {
+    setStatus('Picker APIを読み込み中です。少し待ってから再試行してください', 'info');
+    gapi.load('picker', () => { pickerApiLoaded = true; openPicker(); });
+    return;
+  }
 
-  try {
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files?q=mimeType%3D'application%2Fvnd.google-apps.document'+and+trashed%3Dfalse&orderBy=modifiedTime+desc&pageSize=50&fields=files(id,name,modifiedTime)`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
+  const apiKey = getTtsKey();
 
-    if (!data.files || data.files.length === 0) {
-      list.innerHTML = '<div class="drive-empty">Googleドキュメントが見つかりませんでした</div>';
-      return;
-    }
-    allDriveFiles = data.files;
-    renderFileList(allDriveFiles);
-    setStatus(`${data.files.length} 件のドキュメントが見つかりました`, 'success');
+  const view = new gapi.picker.DocsView(gapi.picker.ViewId.DOCUMENTS)
+    .setMimeTypes('application/vnd.google-apps.document')
+    .setIncludeFolders(true);
 
-  } catch(err) {
-    list.innerHTML = '<div class="drive-empty">取得に失敗しました。再度ログインしてください。</div>';
-    setStatus('ファイル取得エラー: ' + err.message, 'error');
+  const picker = new gapi.picker.PickerBuilder()
+    .setAppId(APP_ID)
+    .setOAuthToken(accessToken)
+    .addView(view)
+    .setCallback(pickerCallback)
+    .setTitle('Googleドキュメントを選択')
+    .build();
+
+  if (apiKey) picker.setDeveloperKey(apiKey);
+  picker.setVisible(true);
+}
+
+// ファイル選択後のコールバック
+async function pickerCallback(data) {
+  if (data.action === gapi.picker.Action.PICKED) {
+    const file = data.docs[0];
+    await loadDocText(file.id, file.name);
   }
 }
 
-function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-
-function renderFileList(files) {
-  const list = document.getElementById('driveFileList');
-  if (!files.length) { list.innerHTML = '<div class="drive-empty">該当するファイルがありません</div>'; return; }
-  list.innerHTML = files.map(f => {
-    const date = new Date(f.modifiedTime).toLocaleDateString('ja-JP',{month:'short',day:'numeric'});
-    return `<div class="drive-file-item" onclick="loadDocText('${f.id}','${escHtml(f.name).replace(/'/g,"\\'")}')">
-      <span>📄</span>
-      <span class="fi-name">${escHtml(f.name)}</span>
-      <span class="fi-date">${date}</span>
-    </div>`;
-  }).join('');
-}
-
-function filterFiles(q) {
-  const filtered = q.trim()
-    ? allDriveFiles.filter(f => f.name.toLowerCase().includes(q.toLowerCase()))
-    : allDriveFiles;
-  renderFileList(filtered);
-}
-
+// ドキュメントのテキストを取得
 async function loadDocText(fileId, fileName) {
   setStatus(`「${fileName}」を読み込んでいます…`, 'info');
   try {
@@ -837,7 +837,7 @@ async function loadDocText(fileId, fileName) {
     textInput.value = text;
     const n = text.length;
     charCountEl.textContent = n.toLocaleString();
-    charCountEl.style.color = n > 7000 ? '#ff6584' : '';
+    charCountEl.style.color  = n > 7000 ? '#ff6584' : '';
     charWarnEl.style.display = n > 7000 ? 'inline' : 'none';
 
     setStatus(
