@@ -644,7 +644,7 @@ function handleDriveAuth() {
   // OAuth2 ポップアップ
   const params = new URLSearchParams({
     client_id:     CLIENT_ID,
-    redirect_uri:  'https://oauth2.example.com/code',
+    redirect_uri:  'https://reggae-voice.github.io/tts-app/tts-app.html',
     response_type: 'token',
     scope:         SCOPES,
     include_granted_scopes: 'true',
@@ -653,20 +653,18 @@ function handleDriveAuth() {
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
   const popup   = window.open(authUrl, 'google_auth', 'width=500,height=620,left=200,top=100');
 
-  // ポップアップのURLを監視してトークン取得
+  // フォールバック：ポップアップURLを監視
   const timer = setInterval(() => {
     try {
       const url = popup.location.href;
       if (url.includes('access_token')) {
         clearInterval(timer);
-        const hash   = new URLSearchParams(popup.location.hash.slice(1));
-        accessToken  = hash.get('access_token');
+        const hash = new URLSearchParams(popup.location.hash.slice(1));
+        accessToken = hash.get('access_token');
         popup.close();
         onDriveLoggedIn();
       }
-    } catch(e) {
-      // クロスオリジン中は無視
-    }
+    } catch(e) {}
     if (popup.closed) clearInterval(timer);
   }, 300);
 }
