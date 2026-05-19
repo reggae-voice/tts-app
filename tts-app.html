@@ -617,10 +617,8 @@ function openPicker() {
 
   function buildAndShow() {
     try {
-      const view = new gapi.picker.DocsView()
-        .setMimeTypes('application/vnd.google-apps.document')
-        .setIncludeFolders(true)
-        .setSelectFolderEnabled(false);
+      const view = new gapi.picker.View(gapi.picker.ViewId.DOCS)
+        .setMimeTypes('application/vnd.google-apps.document');
 
       const picker = new gapi.picker.PickerBuilder()
         .setAppId(APP_ID)
