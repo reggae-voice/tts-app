@@ -7,326 +7,170 @@
 <script src="https://apis.google.com/js/api.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;800&family=Noto+Sans+JP:wght@300;400;500&display=swap');
-
   :root {
-    --bg: #0a0a0f;
-    --surface: #12121a;
-    --card: #1a1a26;
-    --border: #2a2a40;
-    --accent: #6c63ff;
-    --accent2: #ff6584;
-    --accent3: #43e97b;
-    --text: #e8e8f0;
-    --muted: #6a6a8a;
-    --glow: rgba(108,99,255,0.3);
+    --bg:#0a0a0f; --surface:#12121a; --card:#1a1a26; --border:#2a2a40;
+    --accent:#6c63ff; --accent2:#ff6584; --accent3:#43e97b;
+    --text:#e8e8f0; --muted:#6a6a8a; --glow:rgba(108,99,255,0.3);
   }
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Noto Sans JP',sans-serif;
+    min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:24px}
+  body::before{content:'';position:fixed;inset:0;
+    background:radial-gradient(ellipse 60% 50% at 20% 20%,rgba(108,99,255,.08) 0%,transparent 60%),
+               radial-gradient(ellipse 40% 40% at 80% 80%,rgba(255,101,132,.06) 0%,transparent 60%);
+    pointer-events:none;z-index:0}
+  .app{position:relative;z-index:1;width:100%;max-width:700px;padding-top:20px}
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Header */
+  .header{text-align:center;margin-bottom:28px;animation:fadeDown .6s ease both}
+  .header-row{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:6px}
+  .header h1{font-family:'Syne',sans-serif;font-weight:800;font-size:clamp(2rem,5vw,3rem);
+    letter-spacing:-.02em;background:linear-gradient(135deg,var(--accent),var(--accent2));
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1.1}
+  .header p{color:var(--muted);font-size:.8rem;letter-spacing:.08em}
+  .btn-gear{background:none;border:1px solid var(--border);border-radius:8px;
+    padding:6px 10px;color:var(--muted);cursor:pointer;transition:all .2s;font-size:1rem}
+  .btn-gear:hover{border-color:var(--accent);color:var(--accent)}
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Noto Sans JP', sans-serif;
-    min-height: 100vh;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    padding: 24px;
-  }
+  /* Card */
+  .card{background:var(--card);border:1px solid var(--border);border-radius:20px;padding:28px;
+    animation:fadeUp .6s ease .1s both;
+    box-shadow:0 0 0 1px rgba(108,99,255,.05),0 32px 80px rgba(0,0,0,.4);margin-bottom:16px}
 
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    background:
-      radial-gradient(ellipse 60% 50% at 20% 20%, rgba(108,99,255,0.08) 0%, transparent 60%),
-      radial-gradient(ellipse 40% 40% at 80% 80%, rgba(255,101,132,0.06) 0%, transparent 60%);
-    pointer-events: none; z-index: 0;
-  }
-
-  .app {
-    position: relative; z-index: 1;
-    width: 100%; max-width: 700px; padding-top: 20px;
-  }
-
-  .header { text-align: center; margin-bottom: 28px; animation: fadeDown 0.6s ease both; }
-  .header h1 {
-    font-family: 'Syne', sans-serif; font-weight: 800;
-    font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -0.02em;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-    background-clip: text; line-height: 1.1; margin-bottom: 6px;
-  }
-  .header p { color: var(--muted); font-size: 0.8rem; letter-spacing: 0.08em; }
-
-  /* Settings gear */
-  .header-row {
-    display: flex; align-items: center; justify-content: center;
-    gap: 12px; margin-bottom: 6px;
-  }
-  .btn-gear {
-    background: none; border: 1px solid var(--border);
-    border-radius: 8px; padding: 6px 10px; color: var(--muted);
-    cursor: pointer; transition: all 0.2s; font-size: 1rem;
-  }
-  .btn-gear:hover { border-color: var(--accent); color: var(--accent); }
-
-  .card {
-    background: var(--card); border: 1px solid var(--border);
-    border-radius: 20px; padding: 28px;
-    animation: fadeUp 0.6s ease 0.1s both;
-    box-shadow: 0 0 0 1px rgba(108,99,255,0.05), 0 32px 80px rgba(0,0,0,0.4);
-    margin-bottom: 16px;
-  }
-
-  /* Settings panel */
-  .settings-panel {
-    display: none; background: var(--card);
-    border: 1px solid var(--accent); border-radius: 16px;
-    padding: 24px; margin-bottom: 16px;
-    animation: fadeUp 0.3s ease both;
-  }
-  .settings-panel.show { display: block; }
-  .settings-title {
-    font-family: 'Syne', sans-serif; font-size: 0.85rem;
-    font-weight: 700; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--accent);
-    margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
-  }
-
-  .setting-row { margin-bottom: 14px; }
-  .setting-row label {
-    display: block; font-size: 0.7rem; font-weight: 500;
-    letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--muted); margin-bottom: 7px;
-  }
-  .setting-input-row { display: flex; gap: 8px; }
-  .setting-input {
-    flex: 1; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; color: var(--text);
-    font-family: 'Noto Sans JP', sans-serif; font-size: 0.85rem;
-    padding: 9px 12px; outline: none; transition: border-color 0.2s;
-  }
-  .setting-input:focus { border-color: var(--accent); }
-  .setting-input::placeholder { color: var(--muted); }
-
-  .btn-sm {
-    padding: 9px 14px; border: none; border-radius: 8px;
-    font-family: 'Syne', sans-serif; font-size: 0.78rem;
-    font-weight: 600; cursor: pointer; transition: all 0.2s;
-    white-space: nowrap;
-  }
-  .btn-save-key {
-    background: linear-gradient(135deg, var(--accent), #8b7fff);
-    color: #fff; box-shadow: 0 3px 12px rgba(108,99,255,0.3);
-  }
-  .btn-save-key:hover { transform: translateY(-1px); }
-  .btn-clear-key {
-    background: rgba(255,101,132,0.12); color: var(--accent2);
-    border: 1px solid rgba(255,101,132,0.3);
-  }
-  .btn-clear-key:hover { background: rgba(255,101,132,0.22); }
-
-  .key-status {
-    font-size: 0.72rem; margin-top: 6px; padding: 6px 10px;
-    border-radius: 6px; display: none;
-  }
-  .key-status.ok  { display:block; background:rgba(67,233,123,0.1); color:var(--accent3); border:1px solid rgba(67,233,123,0.2); }
-  .key-status.ng  { display:block; background:rgba(255,101,132,0.1); color:var(--accent2); border:1px solid rgba(255,101,132,0.2); }
-
-  .setting-hint {
-    font-size: 0.7rem; color: var(--muted); margin-top: 6px; line-height: 1.6;
-  }
-  .setting-hint a { color: var(--accent); text-decoration: none; }
-  .setting-hint a:hover { text-decoration: underline; }
+  /* Settings */
+  .settings-panel{display:none;background:var(--card);border:1px solid var(--accent);
+    border-radius:16px;padding:24px;margin-bottom:16px;animation:fadeUp .3s ease both}
+  .settings-panel.show{display:block}
+  .settings-title{font-family:'Syne',sans-serif;font-size:.85rem;font-weight:700;
+    letter-spacing:.08em;text-transform:uppercase;color:var(--accent);
+    margin-bottom:16px;display:flex;align-items:center;gap:8px}
+  .setting-row{margin-bottom:14px}
+  .setting-row label{display:block;font-size:.7rem;font-weight:500;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+  .setting-input-row{display:flex;gap:8px}
+  .setting-input{flex:1;background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;color:var(--text);font-family:'Noto Sans JP',sans-serif;
+    font-size:.85rem;padding:9px 12px;outline:none;transition:border-color .2s}
+  .setting-input:focus{border-color:var(--accent)}
+  .setting-input::placeholder{color:var(--muted)}
+  .btn-sm{padding:9px 14px;border:none;border-radius:8px;font-family:'Syne',sans-serif;
+    font-size:.78rem;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
+  .btn-save-key{background:linear-gradient(135deg,var(--accent),#8b7fff);color:#fff;
+    box-shadow:0 3px 12px rgba(108,99,255,.3)}
+  .btn-save-key:hover{transform:translateY(-1px)}
+  .btn-clear-key{background:rgba(255,101,132,.12);color:var(--accent2);border:1px solid rgba(255,101,132,.3)}
+  .btn-clear-key:hover{background:rgba(255,101,132,.22)}
+  .key-status{font-size:.72rem;margin-top:6px;padding:6px 10px;border-radius:6px;display:none}
+  .key-status.ok{display:block;background:rgba(67,233,123,.1);color:var(--accent3);border:1px solid rgba(67,233,123,.2)}
+  .key-status.ng{display:block;background:rgba(255,101,132,.1);color:var(--accent2);border:1px solid rgba(255,101,132,.2)}
+  .setting-hint{font-size:.7rem;color:var(--muted);margin-top:6px;line-height:1.6}
+  .setting-hint a{color:var(--accent);text-decoration:none}
 
   /* sec-label */
-  .sec-label {
-    display: flex; align-items: center; gap: 8px;
-    font-family: 'Syne', sans-serif; font-size: 0.7rem;
-    font-weight: 600; letter-spacing: 0.12em;
-    text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
-  }
-  .sec-label .dot {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--accent); box-shadow: 0 0 8px var(--accent);
-  }
+  .sec-label{display:flex;align-items:center;gap:8px;font-family:'Syne',sans-serif;
+    font-size:.7rem;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:10px}
+  .sec-label .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent)}
 
-  /* Google Drive panel */
-  .drive-panel {
-    background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px; margin-bottom: 20px;
-  }
-  .drive-header {
-    display: flex; align-items: center;
-    justify-content: space-between; margin-bottom: 0;
-  }
-  .drive-title {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 0.72rem; font-weight: 600;
-    letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
-  }
-  .btn-gdrive {
-    display: flex; align-items: center; gap: 6px;
-    padding: 8px 14px; border: none; border-radius: 8px;
-    font-family: 'Syne', sans-serif; font-size: 0.78rem;
-    font-weight: 600; cursor: pointer; transition: all 0.2s;
-    background: linear-gradient(135deg, #4285f4, #34a853);
-    color: #fff; box-shadow: 0 3px 12px rgba(66,133,244,0.3);
-  }
-  .btn-gdrive:hover { transform: translateY(-1px); }
-  .btn-gdrive.connected {
-    background: rgba(67,233,123,0.15); color: var(--accent3);
-    border: 1px solid rgba(67,233,123,0.3); box-shadow: none;
-  }
-
-  .drive-file-area { display: none; margin-top: 12px; }
-  .drive-file-area.show { display: block; }
-
-  .drive-search {
-    width: 100%; background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px; color: var(--text);
-    font-family: 'Noto Sans JP', sans-serif; font-size: 0.85rem;
-    padding: 8px 12px; outline: none; margin-bottom: 8px;
-    transition: border-color 0.2s;
-  }
-  .drive-search:focus { border-color: var(--accent); }
-  .drive-search::placeholder { color: var(--muted); }
-
-  .drive-file-list {
-    display: flex; flex-direction: column; gap: 5px;
-    max-height: 200px; overflow-y: auto;
-    scrollbar-width: thin; scrollbar-color: var(--border) transparent;
-  }
-  .drive-file-list::-webkit-scrollbar { width: 4px; }
-  .drive-file-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-  .drive-file-item {
-    display: flex; align-items: center; gap: 9px;
-    padding: 8px 10px; border-radius: 7px;
-    font-size: 0.8rem; color: var(--text);
-    border: 1px solid var(--border); cursor: pointer;
-    transition: all 0.2s; background: var(--card);
-  }
-  .drive-file-item:hover { border-color: var(--accent); background: rgba(108,99,255,0.08); }
-  .drive-file-item .fi-name { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-  .drive-file-item .fi-date { font-size: 0.68rem; color: var(--muted); flex-shrink: 0; }
-  .drive-empty { text-align: center; color: var(--muted); font-size: 0.78rem; padding: 16px; }
+  /* Drive panel */
+  .drive-panel{background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;padding:16px;margin-bottom:20px}
+  .drive-header{display:flex;align-items:center;justify-content:space-between}
+  .drive-title{display:flex;align-items:center;gap:8px;font-size:.72rem;font-weight:600;
+    letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+  .btn-gdrive{display:flex;align-items:center;gap:6px;padding:8px 14px;border:none;
+    border-radius:8px;font-family:'Syne',sans-serif;font-size:.78rem;font-weight:600;
+    cursor:pointer;transition:all .2s;background:linear-gradient(135deg,#4285f4,#34a853);
+    color:#fff;box-shadow:0 3px 12px rgba(66,133,244,.3)}
+  .btn-gdrive:hover{transform:translateY(-1px)}
+  .btn-gdrive.connected{background:rgba(67,233,123,.15);color:var(--accent3);
+    border:1px solid rgba(67,233,123,.3);box-shadow:none}
+  .drive-file-area{display:none;margin-top:12px}
+  .drive-file-area.show{display:block}
 
   /* Textarea */
-  .textarea-wrap { margin-bottom: 20px; }
-  textarea {
-    width: 100%; min-height: 180px; background: var(--surface);
-    border: 1px solid var(--border); border-radius: 12px;
-    color: var(--text); font-family: 'Noto Sans JP', sans-serif;
-    font-size: 1rem; line-height: 1.8; padding: 14px 18px;
-    resize: vertical; transition: border-color 0.2s, box-shadow 0.2s; outline: none;
-  }
-  textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(108,99,255,0.15); }
-  textarea::placeholder { color: var(--muted); }
+  .textarea-wrap{margin-bottom:20px}
+  textarea{width:100%;min-height:180px;background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;color:var(--text);font-family:'Noto Sans JP',sans-serif;
+    font-size:1rem;line-height:1.8;padding:14px 18px;resize:vertical;
+    transition:border-color .2s,box-shadow .2s;outline:none}
+  textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(108,99,255,.15)}
+  textarea::placeholder{color:var(--muted)}
+  .char-row{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
+  .char-count{font-size:.72rem;color:var(--muted);transition:color .2s}
+  .char-warn{font-size:.72rem;color:var(--accent2);display:none}
 
-  .char-row { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }
-  .char-count { font-size: 0.72rem; color: var(--muted); transition: color 0.2s; }
-  .char-warn  { font-size: 0.72rem; color: var(--accent2); display: none; }
+  /* Controls */
+  .controls{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
+  .control-group label{display:block;font-size:.68rem;font-weight:500;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:7px}
+  .control-group select{width:100%;background:var(--surface);border:1px solid var(--border);
+    border-radius:8px;color:var(--text);font-family:'Noto Sans JP',sans-serif;font-size:.85rem;
+    padding:9px 30px 9px 11px;outline:none;cursor:pointer;transition:border-color .2s;
+    appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236a6a8a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat:no-repeat;background-position:right 10px center}
+  .control-group select:focus{border-color:var(--accent)}
 
-  /* Voice controls */
-  .controls { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
-  .control-group label {
-    display: block; font-size: 0.68rem; font-weight: 500;
-    letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--muted); margin-bottom: 7px;
-  }
-  .control-group select {
-    width: 100%; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; color: var(--text);
-    font-family: 'Noto Sans JP', sans-serif; font-size: 0.85rem;
-    padding: 9px 30px 9px 11px; outline: none; cursor: pointer;
-    transition: border-color 0.2s; appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236a6a8a' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat; background-position: right 10px center;
-  }
-  .control-group select:focus { border-color: var(--accent); }
-
-  /* Speed slider */
-  .slider-wrap { margin-bottom: 20px; }
-  .slider-group label {
-    display: flex; justify-content: space-between; align-items: center;
-    font-size: 0.68rem; font-weight: 500; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--muted); margin-bottom: 9px;
-  }
-  .slider-group label em {
-    font-style: normal; color: var(--accent);
-    font-family: 'Syne', sans-serif; font-weight: 600; font-size: 0.78rem;
-  }
-  input[type="range"] {
-    width: 100%; appearance: none; height: 4px;
-    border-radius: 2px; background: var(--border); outline: none; cursor: pointer;
-  }
-  input[type="range"]::-webkit-slider-thumb {
-    appearance: none; width: 16px; height: 16px; border-radius: 50%;
-    background: var(--accent); box-shadow: 0 0 8px var(--glow);
-    cursor: pointer; transition: transform 0.15s;
-  }
-  input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+  /* Slider */
+  .slider-wrap{margin-bottom:20px}
+  .slider-group label{display:flex;justify-content:space-between;align-items:center;
+    font-size:.68rem;font-weight:500;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:9px}
+  .slider-group label em{font-style:normal;color:var(--accent);font-family:'Syne',sans-serif;
+    font-weight:600;font-size:.78rem}
+  input[type="range"]{width:100%;appearance:none;height:4px;border-radius:2px;
+    background:var(--border);outline:none;cursor:pointer}
+  input[type="range"]::-webkit-slider-thumb{appearance:none;width:16px;height:16px;
+    border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--glow);
+    cursor:pointer;transition:transform .15s}
+  input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.2)}
 
   /* Audio player */
-  .audio-player {
-    display: none; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 12px; padding: 16px; margin-bottom: 20px;
-  }
-  .audio-player.show { display: block; }
-  .audio-player-title {
-    font-size: 0.7rem; font-weight: 600; letter-spacing: 0.08em;
-    text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
-  }
-  audio { width: 100%; height: 36px; accent-color: var(--accent); }
+  .audio-player{display:none;background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;padding:16px;margin-bottom:20px}
+  .audio-player.show{display:block}
+  .audio-player-title{font-size:.7rem;font-weight:600;letter-spacing:.08em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+  audio{width:100%;height:36px;accent-color:var(--accent)}
 
   /* Buttons */
-  .section-title {
-    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em;
-    text-transform: uppercase; color: var(--muted); margin-bottom: 12px;
-  }
-  .btn-group { display: flex; gap: 10px; margin-bottom: 8px; }
-  .btn {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    gap: 7px; padding: 13px 14px; border: none; border-radius: 11px;
-    font-family: 'Syne', sans-serif; font-size: 0.82rem; font-weight: 600;
-    cursor: pointer; transition: all 0.2s; letter-spacing: 0.03em; white-space: nowrap;
-  }
-  .btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none !important; }
-
-  .btn-primary {
-    background: linear-gradient(135deg, var(--accent), #8b7fff);
-    color: #fff; box-shadow: 0 4px 20px rgba(108,99,255,0.3);
-  }
-  .btn-primary:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(108,99,255,0.45); }
-
-  .btn-dl {
-    background: rgba(67,233,123,0.1); color: var(--accent3);
-    border: 1px solid rgba(67,233,123,0.25); flex: 0.8;
-  }
-  .btn-dl:hover:not(:disabled) { background: rgba(67,233,123,0.2); transform: translateY(-1px); }
+  .section-title{font-size:.68rem;font-weight:600;letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+  .btn-group{display:flex;gap:10px;margin-bottom:8px}
+  .btn{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;
+    padding:13px 14px;border:none;border-radius:11px;font-family:'Syne',sans-serif;
+    font-size:.82rem;font-weight:600;cursor:pointer;transition:all .2s;
+    letter-spacing:.03em;white-space:nowrap}
+  .btn:disabled{opacity:.35;cursor:not-allowed;transform:none!important}
+  .btn-primary{background:linear-gradient(135deg,var(--accent),#8b7fff);color:#fff;
+    box-shadow:0 4px 20px rgba(108,99,255,.3)}
+  .btn-primary:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 8px 28px rgba(108,99,255,.45)}
+  .btn-dl{background:rgba(67,233,123,.1);color:var(--accent3);
+    border:1px solid rgba(67,233,123,.25);flex:.8}
+  .btn-dl:hover:not(:disabled){background:rgba(67,233,123,.2);transform:translateY(-1px)}
 
   /* Progress */
-  .progress-wrap { display: none; margin-top: 14px; }
-  .progress-wrap.show { display: block; }
-  .progress-label-row { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); margin-bottom: 5px; }
-  .progress-bar { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
-  .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent3)); border-radius: 2px; width: 0%; transition: width 0.3s ease; }
+  .progress-wrap{display:none;margin-top:14px}
+  .progress-wrap.show{display:block}
+  .progress-label-row{display:flex;justify-content:space-between;font-size:.7rem;color:var(--muted);margin-bottom:5px}
+  .progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+  .progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent3));
+    border-radius:2px;width:0%;transition:width .3s ease}
 
   /* Divider */
-  .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  .divider{border:none;border-top:1px solid var(--border);margin:20px 0}
 
   /* Status */
-  .status { padding: 9px 13px; border-radius: 8px; font-size: 0.78rem; display: none; align-items: center; gap: 8px; margin-top: 14px; }
-  .status.show { display: flex; }
-  .status.info    { background: rgba(108,99,255,0.08); color: #b0aaff; border: 1px solid rgba(108,99,255,0.18); }
-  .status.success { background: rgba(67,233,123,0.08); color: #8dffb8; border: 1px solid rgba(67,233,123,0.18); }
-  .status.error   { background: rgba(255,101,132,0.08); color: #ffb3c1; border: 1px solid rgba(255,101,132,0.18); }
+  .status{padding:9px 13px;border-radius:8px;font-size:.78rem;display:none;
+    align-items:center;gap:8px;margin-top:14px}
+  .status.show{display:flex}
+  .status.info{background:rgba(108,99,255,.08);color:#b0aaff;border:1px solid rgba(108,99,255,.18)}
+  .status.success{background:rgba(67,233,123,.08);color:#8dffb8;border:1px solid rgba(67,233,123,.18)}
+  .status.error{background:rgba(255,101,132,.08);color:#ffb3c1;border:1px solid rgba(255,101,132,.18)}
 
-  .icon { width: 15px; height: 15px; flex-shrink: 0; }
-
-  @keyframes fadeDown { from{opacity:0;transform:translateY(-14px)} to{opacity:1;transform:translateY(0)} }
-  @keyframes fadeUp   { from{opacity:0;transform:translateY(14px)}  to{opacity:1;transform:translateY(0)} }
+  .icon{width:15px;height:15px;flex-shrink:0}
+  @keyframes fadeDown{from{opacity:0;transform:translateY(-14px)}to{opacity:1;transform:translateY(0)}}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
 </style>
 </head>
 <body>
@@ -343,8 +187,6 @@
   <!-- Settings panel -->
   <div class="settings-panel" id="settingsPanel">
     <div class="settings-title">⚙️ API設定</div>
-
-    <!-- TTS APIキー -->
     <div class="setting-row">
       <label>Google Cloud TTS APIキー</label>
       <div class="setting-input-row">
@@ -354,13 +196,11 @@
       </div>
       <div class="key-status" id="ttsKeyStatus"></div>
       <div class="setting-hint">
-        <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a> でAPIキーを取得してください。キーはこのブラウザにのみ保存されます。
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>
+        でAPIキーを取得してください。キーはこのブラウザにのみ保存されます。
       </div>
     </div>
-
     <hr class="divider">
-
-    <!-- Google Drive OAuth -->
     <div class="setting-row">
       <label>Google Drive 接続</label>
       <div class="setting-input-row">
@@ -375,13 +215,11 @@
     <!-- Google Drive panel -->
     <div class="drive-panel">
       <div class="drive-header">
-        <span class="drive-title">
-          📁 Googleドライブから読み込む
-        </span>
+        <span class="drive-title">📁 Googleドライブから読み込む</span>
         <button class="btn-gdrive" id="driveAuthBtn" onclick="handleDriveAuth()">🔗 ログイン</button>
       </div>
       <div class="drive-file-area" id="driveFileArea">
-        <button class="btn btn-primary" style="margin-top:10px;" onclick="openPicker()">
+        <button class="btn btn-primary" style="margin-top:10px;width:100%;" onclick="openPicker()">
           📄 ファイルを選択する
         </button>
       </div>
@@ -391,7 +229,7 @@
     <div class="textarea-wrap">
       <div class="sec-label"><span class="dot"></span>テキスト入力</div>
       <textarea id="textInput"
-        placeholder="ここにテキストを入力してください…&#10;&#10;空行で段落を区切ると、段落ごとに処理します。"
+        placeholder="ここにテキストを入力してください…&#10;&#10;Googleドライブから読み込むか、直接テキストを貼り付けてください。"
         maxlength="8000"></textarea>
       <div class="char-row">
         <span class="char-warn" id="charWarn">⚠ 上限に近づいています</span>
@@ -439,7 +277,7 @@
       <audio id="audioEl" controls></audio>
     </div>
 
-    <!-- Generate & Play -->
+    <!-- Generate -->
     <div class="section-title">🎙 音声を生成（MP3・即時）</div>
     <div class="btn-group">
       <button class="btn btn-primary" id="generateBtn" onclick="generateSpeech()">
@@ -473,11 +311,10 @@
 
 <script>
 // ============================================================
-// Settings panel
+// 設定パネル
 // ============================================================
 function toggleSettings() {
-  const p = document.getElementById('settingsPanel');
-  p.classList.toggle('show');
+  document.getElementById('settingsPanel').classList.toggle('show');
 }
 
 // ============================================================
@@ -487,21 +324,27 @@ const TTS_KEY_STORAGE = 'vr_tts_api_key';
 
 function saveTtsKey() {
   const val = document.getElementById('ttsKeyInput').value.trim();
-  if (!val) { showKeyStatus('ttsKeyStatus', 'APIキーを入力してください', false); return; }
+  if (!val) { showKeyStatus('APIキーを入力してください', false); return; }
   localStorage.setItem(TTS_KEY_STORAGE, val);
   document.getElementById('ttsKeyInput').value = '';
-  showKeyStatus('ttsKeyStatus', '✓ 保存しました（このブラウザにのみ保存）', true);
+  showKeyStatus('✓ 保存しました（このブラウザにのみ保存）', true);
   checkKeyStatus();
 }
 
 function clearTtsKey() {
   localStorage.removeItem(TTS_KEY_STORAGE);
   document.getElementById('ttsKeyInput').value = '';
-  showKeyStatus('ttsKeyStatus', 'APIキーを削除しました', false);
+  showKeyStatus('APIキーを削除しました', false);
   checkKeyStatus();
 }
 
 function getTtsKey() { return localStorage.getItem(TTS_KEY_STORAGE) || ''; }
+
+function showKeyStatus(msg, ok) {
+  const el = document.getElementById('ttsKeyStatus');
+  el.className = `key-status ${ok ? 'ok' : 'ng'}`;
+  el.textContent = msg;
+}
 
 function checkKeyStatus() {
   const key = getTtsKey();
@@ -509,26 +352,15 @@ function checkKeyStatus() {
   if (key) {
     el.className = 'key-status ok';
     el.textContent = `✓ APIキー設定済み（末尾: …${key.slice(-6)}）`;
-    el.style.display = 'block';
   } else {
     el.className = 'key-status ng';
     el.textContent = '⚠ APIキー未設定 — 設定パネルで入力してください';
-    el.style.display = 'block';
   }
 }
-
-function showKeyStatus(id, msg, ok) {
-  const el = document.getElementById(id);
-  el.className = `key-status ${ok ? 'ok' : 'ng'}`;
-  el.textContent = msg;
-  el.style.display = 'block';
-}
-
-// 起動時にチェック
 checkKeyStatus();
 
 // ============================================================
-// Char count
+// 文字数カウント
 // ============================================================
 const textInput   = document.getElementById('textInput');
 const charCountEl = document.getElementById('charCount');
@@ -536,12 +368,12 @@ const charWarnEl  = document.getElementById('charWarn');
 textInput.addEventListener('input', () => {
   const n = textInput.value.length;
   charCountEl.textContent = n.toLocaleString();
-  charCountEl.style.color = n > 7000 ? '#ff6584' : '';
+  charCountEl.style.color  = n > 7000 ? '#ff6584' : '';
   charWarnEl.style.display = n > 7000 ? 'inline' : 'none';
 });
 
 // ============================================================
-// Speed slider（0.25〜2.0は0.05刻み、2.0超は0.25刻み）
+// 速度スライダー
 // ============================================================
 const rateSlider = document.getElementById('rateSlider');
 rateSlider.addEventListener('input', () => {
@@ -551,68 +383,67 @@ rateSlider.addEventListener('input', () => {
 });
 
 // ============================================================
-// Voice list per language
+// 音声リスト
 // ============================================================
 const voiceMap = {
   'ja-JP': [
-    { v: 'ja-JP-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'ja-JP-Standard-B', l: 'Standard-B（女性）' },
-    { v: 'ja-JP-Standard-C', l: 'Standard-C（男性）' },
-    { v: 'ja-JP-Standard-D', l: 'Standard-D（男性）' },
+    {v:'ja-JP-Standard-A',l:'Standard-A（女性）'},
+    {v:'ja-JP-Standard-B',l:'Standard-B（女性）'},
+    {v:'ja-JP-Standard-C',l:'Standard-C（男性）'},
+    {v:'ja-JP-Standard-D',l:'Standard-D（男性）'},
   ],
   'en-US': [
-    { v: 'en-US-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'en-US-Standard-B', l: 'Standard-B（男性）' },
-    { v: 'en-US-Standard-C', l: 'Standard-C（女性）' },
-    { v: 'en-US-Standard-D', l: 'Standard-D（男性）' },
+    {v:'en-US-Standard-A',l:'Standard-A（女性）'},
+    {v:'en-US-Standard-B',l:'Standard-B（男性）'},
+    {v:'en-US-Standard-C',l:'Standard-C（女性）'},
+    {v:'en-US-Standard-D',l:'Standard-D（男性）'},
   ],
   'en-GB': [
-    { v: 'en-GB-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'en-GB-Standard-B', l: 'Standard-B（男性）' },
-    { v: 'en-GB-Standard-C', l: 'Standard-C（女性）' },
-    { v: 'en-GB-Standard-D', l: 'Standard-D（男性）' },
+    {v:'en-GB-Standard-A',l:'Standard-A（女性）'},
+    {v:'en-GB-Standard-B',l:'Standard-B（男性）'},
+    {v:'en-GB-Standard-C',l:'Standard-C（女性）'},
+    {v:'en-GB-Standard-D',l:'Standard-D（男性）'},
   ],
   'zh-CN': [
-    { v: 'cmn-CN-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'cmn-CN-Standard-B', l: 'Standard-B（男性）' },
-    { v: 'cmn-CN-Standard-C', l: 'Standard-C（男性）' },
-    { v: 'cmn-CN-Standard-D', l: 'Standard-D（女性）' },
+    {v:'cmn-CN-Standard-A',l:'Standard-A（女性）'},
+    {v:'cmn-CN-Standard-B',l:'Standard-B（男性）'},
+    {v:'cmn-CN-Standard-C',l:'Standard-C（男性）'},
+    {v:'cmn-CN-Standard-D',l:'Standard-D（女性）'},
   ],
   'ko-KR': [
-    { v: 'ko-KR-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'ko-KR-Standard-B', l: 'Standard-B（女性）' },
-    { v: 'ko-KR-Standard-C', l: 'Standard-C（男性）' },
-    { v: 'ko-KR-Standard-D', l: 'Standard-D（男性）' },
+    {v:'ko-KR-Standard-A',l:'Standard-A（女性）'},
+    {v:'ko-KR-Standard-B',l:'Standard-B（女性）'},
+    {v:'ko-KR-Standard-C',l:'Standard-C（男性）'},
+    {v:'ko-KR-Standard-D',l:'Standard-D（男性）'},
   ],
   'fr-FR': [
-    { v: 'fr-FR-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'fr-FR-Standard-B', l: 'Standard-B（男性）' },
-    { v: 'fr-FR-Standard-C', l: 'Standard-C（女性）' },
-    { v: 'fr-FR-Standard-D', l: 'Standard-D（男性）' },
+    {v:'fr-FR-Standard-A',l:'Standard-A（女性）'},
+    {v:'fr-FR-Standard-B',l:'Standard-B（男性）'},
+    {v:'fr-FR-Standard-C',l:'Standard-C（女性）'},
+    {v:'fr-FR-Standard-D',l:'Standard-D（男性）'},
   ],
   'de-DE': [
-    { v: 'de-DE-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'de-DE-Standard-B', l: 'Standard-B（男性）' },
-    { v: 'de-DE-Standard-C', l: 'Standard-C（女性）' },
-    { v: 'de-DE-Standard-D', l: 'Standard-D（男性）' },
+    {v:'de-DE-Standard-A',l:'Standard-A（女性）'},
+    {v:'de-DE-Standard-B',l:'Standard-B（男性）'},
+    {v:'de-DE-Standard-C',l:'Standard-C（女性）'},
+    {v:'de-DE-Standard-D',l:'Standard-D（男性）'},
   ],
   'es-ES': [
-    { v: 'es-ES-Standard-A', l: 'Standard-A（女性）' },
-    { v: 'es-ES-Standard-B', l: 'Standard-B（男性）' },
-    { v: 'es-ES-Standard-C', l: 'Standard-C（女性）' },
-    { v: 'es-ES-Standard-D', l: 'Standard-D（男性）' },
+    {v:'es-ES-Standard-A',l:'Standard-A（女性）'},
+    {v:'es-ES-Standard-B',l:'Standard-B（男性）'},
+    {v:'es-ES-Standard-C',l:'Standard-C（女性）'},
+    {v:'es-ES-Standard-D',l:'Standard-D（男性）'},
   ],
 };
-
 function updateVoiceList() {
-  const lang  = document.getElementById('langSelect').value;
-  const sel   = document.getElementById('voiceSelect');
-  const list  = voiceMap[lang] || voiceMap['ja-JP'];
+  const lang = document.getElementById('langSelect').value;
+  const sel  = document.getElementById('voiceSelect');
+  const list = voiceMap[lang] || voiceMap['ja-JP'];
   sel.innerHTML = list.map(x => `<option value="${x.v}">${x.l}</option>`).join('');
 }
 
 // ============================================================
-// Status
+// ステータス表示
 // ============================================================
 function setStatus(msg, type = 'info') {
   const el = document.getElementById('statusMsg');
@@ -679,19 +510,15 @@ async function generateSpeech() {
       throw new Error(err.error?.message || `HTTP ${res.status}`);
     }
 
-    const data      = await res.json();
-    const b64       = data.audioContent;
-    const binary    = atob(b64);
-    const bytes     = new Uint8Array(binary.length);
+    const data   = await res.json();
+    const binary = atob(data.audioContent);
+    const bytes  = new Uint8Array(binary.length);
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-    // 古いURLを解放
     if (currentMp3Url) URL.revokeObjectURL(currentMp3Url);
-
     currentMp3Blob = new Blob([bytes], { type: 'audio/mpeg' });
     currentMp3Url  = URL.createObjectURL(currentMp3Blob);
 
-    // プレーヤーに設定して自動再生
     const audioEl = document.getElementById('audioEl');
     audioEl.src   = currentMp3Url;
     document.getElementById('audioPlayer').classList.add('show');
@@ -699,7 +526,6 @@ async function generateSpeech() {
 
     progressFill.style.width = '100%';
     progressPct.textContent  = '100%';
-
     const kb = (currentMp3Blob.size / 1024).toFixed(1);
     setStatus(`✓ MP3生成完了（${kb} KB）— 再生中。MP3保存ボタンでダウンロードできます`, 'success');
     dlBtn.disabled = false;
@@ -724,20 +550,27 @@ function downloadMp3() {
 }
 
 // ============================================================
-// Google Drive 連携 + Picker API
+// Google Drive + Picker API
 // ============================================================
-const CLIENT_ID   = '818344559221-1rud3377jb5vg32rpkcjcqh80m669as3.apps.googleusercontent.com';
-const APP_ID      = '818344559221';
-const SCOPES      = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly';
-const REDIRECT    = location.href.split('#')[0];
+const CLIENT_ID = '818344559221-1rud3377jb5vg32rpkcjcqh80m669as3.apps.googleusercontent.com';
+const APP_ID    = '818344559221';
+const SCOPES    = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/documents.readonly';
+const REDIRECT  = location.href.split('#')[0];
 
-let accessToken   = null;
-let pickerApiLoaded = false;
+let accessToken    = null;
+let pickerApiReady = false;
 
-// Picker APIをロード
-gapi.load('picker', () => { pickerApiLoaded = true; });
+// Picker APIを事前ロード
+function onGapiLoad() {
+  gapi.load('picker', () => { pickerApiReady = true; });
+}
+if (typeof gapi !== 'undefined') {
+  onGapiLoad();
+} else {
+  window.addEventListener('load', onGapiLoad);
+}
 
-// ページ読み込み時にURLハッシュからトークンを取得
+// ページ読み込み時にハッシュからトークン取得
 (function checkToken() {
   const hash  = new URLSearchParams(window.location.hash.slice(1));
   const token = hash.get('access_token');
@@ -751,15 +584,11 @@ gapi.load('picker', () => { pickerApiLoaded = true; });
 function handleDriveAuth() {
   if (accessToken) {
     accessToken = null;
-    ['driveAuthBtn','driveAuthBtnSettings'].forEach(id => {
-      const b = document.getElementById(id);
-      if (b) {
-        b.textContent = id === 'driveAuthBtn' ? '🔗 ログイン' : '🔗 Googleでログイン';
-        b.className   = id === 'driveAuthBtn' ? 'btn-gdrive' : 'btn-sm btn-save-key';
-      }
-    });
+    document.getElementById('driveAuthBtn').textContent = '🔗 ログイン';
+    document.getElementById('driveAuthBtn').className   = 'btn-gdrive';
+    document.getElementById('driveAuthBtnSettings').textContent = '🔗 Googleでログイン';
     document.getElementById('driveFileArea').classList.remove('show');
-    setStatus('Googleドライブからログアウトしました', 'info');
+    setStatus('ログアウトしました', 'info');
     return;
   }
   const params = new URLSearchParams({
@@ -772,48 +601,54 @@ function handleDriveAuth() {
 }
 
 function onDriveLoggedIn() {
-  ['driveAuthBtn','driveAuthBtnSettings'].forEach(id => {
-    const b = document.getElementById(id);
-    if (b) {
-      b.textContent = id === 'driveAuthBtn' ? '✓ 接続済み（ログアウト）' : '✓ 接続済み（ログアウト）';
-      b.className   = id === 'driveAuthBtn' ? 'btn-gdrive connected' : 'btn-sm btn-clear-key';
-    }
-  });
+  document.getElementById('driveAuthBtn').textContent = '✓ 接続済み（ログアウト）';
+  document.getElementById('driveAuthBtn').className   = 'btn-gdrive connected';
+  document.getElementById('driveAuthBtnSettings').textContent = '✓ 接続済み（ログアウト）';
   document.getElementById('driveFileArea').classList.add('show');
   setStatus('Googleドライブに接続しました。「ファイルを選択する」をクリックしてください', 'success');
 }
 
-// Google Picker を開く
+// Picker を開く
 function openPicker() {
   if (!accessToken) {
     setStatus('先にGoogleでログインしてください', 'error');
     return;
   }
-  if (!pickerApiLoaded) {
-    setStatus('Picker APIを読み込み中です。少し待ってから再試行してください', 'info');
-    gapi.load('picker', () => { pickerApiLoaded = true; openPicker(); });
-    return;
+
+  function buildAndShow() {
+    try {
+      const view = new gapi.picker.DocsView()
+        .setMimeTypes('application/vnd.google-apps.document')
+        .setIncludeFolders(true)
+        .setSelectFolderEnabled(false);
+
+      const picker = new gapi.picker.PickerBuilder()
+        .setAppId(APP_ID)
+        .setOAuthToken(accessToken)
+        .addView(view)
+        .setCallback(pickerCallback)
+        .setTitle('Googleドキュメントを選択')
+        .build();
+
+      picker.setVisible(true);
+    } catch(err) {
+      setStatus('Picker エラー: ' + err.message, 'error');
+      console.error(err);
+    }
   }
 
-  const apiKey = getTtsKey();
-
-  const view = new gapi.picker.DocsView(gapi.picker.ViewId.DOCUMENTS)
-    .setMimeTypes('application/vnd.google-apps.document')
-    .setIncludeFolders(true);
-
-  const picker = new gapi.picker.PickerBuilder()
-    .setAppId(APP_ID)
-    .setOAuthToken(accessToken)
-    .addView(view)
-    .setCallback(pickerCallback)
-    .setTitle('Googleドキュメントを選択')
-    .build();
-
-  if (apiKey) picker.setDeveloperKey(apiKey);
-  picker.setVisible(true);
+  if (pickerApiReady) {
+    buildAndShow();
+  } else {
+    setStatus('Picker APIを読み込み中…少しお待ちください', 'info');
+    gapi.load('picker', () => {
+      pickerApiReady = true;
+      buildAndShow();
+    });
+  }
 }
 
-// ファイル選択後のコールバック
+// ファイル選択コールバック
 async function pickerCallback(data) {
   if (data.action === gapi.picker.Action.PICKED) {
     const file = data.docs[0];
@@ -836,7 +671,7 @@ async function loadDocText(fileId, fileName) {
 
     textInput.value = text;
     const n = text.length;
-    charCountEl.textContent = n.toLocaleString();
+    charCountEl.textContent  = n.toLocaleString();
     charCountEl.style.color  = n > 7000 ? '#ff6584' : '';
     charWarnEl.style.display = n > 7000 ? 'inline' : 'none';
 
