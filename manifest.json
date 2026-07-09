@@ -1,0 +1,14 @@
+{
+  "name": "InkNote - 自由ノート",
+  "short_name": "InkNote",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F7F5EF",
+  "theme_color": "#20242B",
+  "description": "手書き・テキスト・画像を自由に配置できる無限キャンバスのノートアプリ",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
