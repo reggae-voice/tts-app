@@ -351,7 +351,7 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="topbar">
-  <div class="brand">InkNote <small>v7.0</small></div>
+  <div class="brand">InkNote <small>v7.1</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -1633,8 +1633,8 @@ selBox.addEventListener("pointerdown", function(e){
         pushSnapshot(snapshot);
         updateSelUI();
         tapObj = null;
-      } else if (sel.length === 1 && sel[0].type === "text" &&
-                 (isDouble || tool === "text")) {
+      } else if (sel.length === 1 && sel[0].type === "text") {
+        // 選択済みテキストはもう1タップで即入力(ダブルタップ不要)
         startTextEdit(sel[0]);
         tapObj = null;
       } else if (sel.length === 1 && sel[0].type === "shape" && isDouble) {
