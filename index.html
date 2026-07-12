@@ -81,6 +81,17 @@
     transform:scale(calc(1 / var(--ws,1)));
     transform-origin:center;
   }
+  /* テキストの幅(段落)変更ハンドル: 右辺中央 */
+  .whandle{
+    position:absolute;right:-13px;top:50%;width:26px;height:44px;
+    margin-top:-22px;border-radius:9px;background:#fff;
+    border:2px solid var(--accent);box-shadow:0 1px 5px rgba(20,24,32,.3);
+    touch-action:none;display:none;
+    color:var(--accent);font-size:13px;line-height:40px;text-align:center;
+    font-weight:800;cursor:ew-resize;
+    transform:scale(calc(1 / var(--ws,1)));
+    transform-origin:center;
+  }
   .handle::after{
     content:"";position:absolute;left:50%;top:50%;width:10px;height:10px;
     margin:-5px 0 0 -5px;border-radius:50%;background:var(--accent);
@@ -351,7 +362,7 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="topbar">
-  <div class="brand">InkNote <small>v7.2</small></div>
+  <div class="brand">InkNote <small>v7.3</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -768,6 +779,10 @@ selBox.id = "selBox";
 var selHandle = document.createElement("div");
 selHandle.className = "handle";
 selBox.appendChild(selHandle);
+var selWHandle = document.createElement("div");
+selWHandle.className = "whandle";
+selWHandle.textContent = "⇔";
+selBox.appendChild(selWHandle);
 world.appendChild(selBox);
 
 /* ---------- ビュー変換 ---------- */
@@ -1083,6 +1098,9 @@ function updateSelUI() {
     return;
   }
   var b = selBBox();
+  // 幅ハンドルは単一テキスト選択時のみ
+  selWHandle.style.display =
+    (sel.length === 1 && sel[0].type === "text") ? "block" : "none";
   selBox.style.display = "block";
   selBox.style.left = b.x + "px";
   selBox.style.top = b.y + "px";
@@ -1165,7 +1183,31 @@ $("#clearBtn").onclick = function(){
 };
 
 /* ---------- オブジェクトの移動/リサイズ(共通ロジック) ---------- */
-function moveObject(o, dx, dy) {
+/* A4モード: 用紙の上端(A4横は左端)より外に出さない。下・右はページが増えるので自由 */
+function clampToSheet(o) {
+  if (canvasMode === "inf" || !o) return false;
+  var b = objBBox(o);
+  // DOM実寸が未確定(初回描画前など)でも正しく効くよう、既知の幅・高さで補完
+  if (o.type === "text" || o.type === "image") {
+    b = { x: o.x, y: o.y,
+          w: Math.max(b.w || 0, o.w || 0),
+          h: Math.max(b.h || 0, o.h || 0, 30) };
+  }
+  var dx = 0, dy = 0;
+  if (canvasMode === "a4v") {
+    if (b.y < 0) dy = -b.y;                       // 上にはみ出さない
+    if (b.x < 0) dx = -b.x;
+    else if (b.x + b.w > A4W) dx = A4W - (b.x + b.w);
+  } else {
+    if (b.x < 0) dx = -b.x;                       // 左にはみ出さない
+    if (b.y < 0) dy = -b.y;
+    else if (b.y + b.h > A4W) dy = A4W - (b.y + b.h);   // 横置き用紙の高さ=794
+  }
+  if (!dx && !dy) return false;
+  moveObjectRaw(o, dx, dy);
+  return true;
+}
+function moveObjectRaw(o, dx, dy) {
   if (o.type === "stroke") {
     for (var i = 0; i < o.points.length; i++) { o.points[i].x += dx; o.points[i].y += dy; }
     inkDirty = true;
@@ -1177,6 +1219,10 @@ function moveObject(o, dx, dy) {
     o.el.style.left = o.x + "px";
     o.el.style.top = o.y + "px";
   }
+}
+function moveObject(o, dx, dy) {
+  moveObjectRaw(o, dx, dy);
+  clampToSheet(o);          // A4モードでは用紙内に留める
 }
 function resizeObject(o, b0, scale) {
   if (o.type === "image") {
@@ -1387,6 +1433,7 @@ function createTextAt(w) {
   pushUndo();
   objects.push(o);
   makeTextEl(o);
+  clampToSheet(o);
   setSelection([o]);
   startTextEdit(o);
 }
@@ -1612,7 +1659,7 @@ function attachObjHandlers(o) {
 /* ---------- selBox(グループ枠)のドラッグ移動とリサイズ ---------- */
 selBox.addEventListener("pointerdown", function(e){
   if (!sel.length || pinch) return;
-  if (e.target === selHandle) return; // ハンドルは別処理
+  if (e.target === selHandle || e.target === selWHandle) return; // ハンドルは別処理
   e.preventDefault();
   e.stopPropagation();
   var snapshot = serializeScene();
@@ -1648,6 +1695,36 @@ selBox.addEventListener("pointerdown", function(e){
     }
   });
 });
+/* テキストの幅変更: 文字が折り返し直され、段落の形を整えられる */
+selWHandle.addEventListener("pointerdown", function(e){
+  if (sel.length !== 1 || sel[0].type !== "text" || pinch) return;
+  e.preventDefault();
+  e.stopPropagation();
+  var o = sel[0];
+  var w0 = o.w;
+  var startX = e.clientX;
+  var snapshot = serializeScene();
+  drag(e, {
+    move: function(ev, dxs, dys, moved){
+      if (pinch) return;
+      if (moved) hideCtxWhileDrag = true;
+      var nw = w0 + (ev.clientX - startX) / view.s;
+      o.w = Math.max(60, Math.min(4000, nw));
+      o.el.style.width = o.w + "px";
+      updateSelUI();
+    },
+    up: function(ev, moved){
+      hideCtxWhileDrag = false;
+      if (moved) {
+        pushSnapshot(snapshot);
+        clampToSheet(o);
+        scheduleSave();
+      }
+      updateSelUI();
+    }
+  });
+});
+
 selHandle.addEventListener("pointerdown", function(e){
   if (!sel.length || pinch) return;
   e.preventDefault();
@@ -3770,6 +3847,7 @@ function insertTextAtCenter(txt) {
   pushUndo();
   objects.push(o);
   makeTextEl(o);
+  clampToSheet(o);
   switchTool("select");
   setSelection([o]);
   scheduleSave();
