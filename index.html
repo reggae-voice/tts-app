@@ -98,11 +98,29 @@
   }
 
   /* ===== 上部バー ===== */
+  /* Androidの「引っ張って更新」を無効化(画面を下へスワイプ=上へ戻る操作が
+     ブラウザの更新ジェスチャーに奪われ、パンが途中でキャンセルされるのを防ぐ) */
+  html,body{overscroll-behavior:none;overscroll-behavior-y:none}
   #topbar{
     position:fixed;top:0;left:0;right:0;
     padding:calc(env(safe-area-inset-top) + 8px) 14px 8px;
     display:flex;align-items:center;gap:10px;
     pointer-events:none;z-index:20;
+    transition:transform .18s ease, opacity .18s ease;
+  }
+  body.bar-hidden #topbar{
+    transform:translateY(-140%);opacity:0;pointer-events:none;
+  }
+  #barToggle{
+    position:fixed;z-index:21;
+    top:calc(env(safe-area-inset-top) + 6px);right:10px;
+    width:34px;height:26px;border:none;border-radius:0 0 10px 10px;
+    background:rgba(32,36,43,.82);color:#cfd3da;font-size:11px;
+    cursor:pointer;padding:0;line-height:26px;
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  }
+  body.bar-hidden #barToggle{
+    top:0;border-radius:0 0 10px 10px;background:rgba(32,36,43,.62);
   }
   #topbar > *{pointer-events:auto}
   .brand{
@@ -205,6 +223,12 @@
   #zoomChip{bottom:calc(env(safe-area-inset-bottom) + 84px)}
   #fitChip{bottom:calc(env(safe-area-inset-bottom) + 122px)}
   #posChip{bottom:calc(env(safe-area-inset-bottom) + 160px);color:#ffd98a}
+  #topChip{
+    position:fixed;left:14px;
+    bottom:calc(env(safe-area-inset-bottom) + 176px);
+    background:rgba(32,36,43,.85);color:#cfd3da;font-size:11.5px;font-weight:600;
+    padding:7px 12px;border-radius:999px;z-index:25;border:none;cursor:pointer;
+  }
   #mapChip{
     position:fixed;left:14px;
     bottom:calc(env(safe-area-inset-bottom) + 130px);
@@ -361,8 +385,9 @@ window.onerror = function(msg, src, line){
   🗺 マップで全体を見てジャンプ
 </div>
 
+<button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v7.3</small></div>
+  <div class="brand">InkNote <small>v7.4</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -502,6 +527,7 @@ window.onerror = function(msg, src, line){
 <button id="posChip">☆ 位置</button>
 <button id="pasteChip">📋 貼り付け</button>
 <button id="mapChip">🗺 マップ</button>
+<button id="topChip" style="display:none">⤒ 先頭</button>
 <div id="editHandle" title="ドラッグで移動">✥</div>
 
 <div id="cropModal">
@@ -786,17 +812,33 @@ selBox.appendChild(selWHandle);
 world.appendChild(selBox);
 
 /* ---------- ビュー変換 ---------- */
+function sheetExtent() {
+  // 用紙が伸びる方向の総延長(内容+表示範囲+1ページ分の余白)
+  var vert = (canvasMode === "a4v");
+  var SH = vert ? A4H : A4W;   // 伸びる方向の1ページ長
+  var cb = contentBBox();
+  var used = cb ? (vert ? (cb.y + cb.h) : (cb.x + cb.w)) : 0;
+  var n = Math.max(1, Math.ceil(Math.max(used, 0) / SH) + 1);
+  return n * SH;
+}
 function clampView() {
-  if (canvasMode === "a4v") {
+  if (canvasMode === "inf") return;
+  var vert = (canvasMode === "a4v");
+  if (vert) {
     var pw = A4W * view.s;
-    if (pw <= innerWidth - 16) view.x = (innerWidth - pw) / 2;       // 用紙を中央固定
+    if (pw <= innerWidth - 16) view.x = (innerWidth - pw) / 2;   // 用紙を中央固定
     else view.x = Math.max(innerWidth - pw - 12, Math.min(12, view.x));
-    view.y = Math.min(24, view.y);                                   // 先頭より上に行かない
-  } else if (canvasMode === "a4h") {
-    var ph = A4W * view.s;                                           // 横置き用紙の高さ=794
+    // 縦: 先頭より上へは行かず、末尾より下へも行き過ぎない(必ず戻れる)
+    var totalH = sheetExtent() * view.s;
+    var minY = Math.min(24, innerHeight - totalH - 24);
+    view.y = Math.max(minY, Math.min(24, view.y));
+  } else {
+    var ph = A4W * view.s;                                        // 横置き用紙の高さ=794
     if (ph <= innerHeight - 16) view.y = (innerHeight - ph) / 2;
     else view.y = Math.max(innerHeight - ph - 12, Math.min(12, view.y));
-    view.x = Math.min(24, view.x);
+    var totalW = sheetExtent() * view.s;
+    var minX = Math.min(24, innerWidth - totalW - 24);
+    view.x = Math.max(minX, Math.min(24, view.x));
   }
 }
 function applyView() {
@@ -2358,6 +2400,16 @@ $("#mzSlider").addEventListener("input", function(){
 });
 $("#mzSlider").addEventListener("pointerdown", function(e){ e.stopPropagation(); });
 $("#mapChip").onclick = openMini;
+$("#barToggle").onclick = function(){
+  var hidden = document.body.classList.toggle("bar-hidden");
+  this.textContent = hidden ? "▼" : "▲";
+};
+$("#topChip").onclick = function(){
+  // 用紙の先頭(1ページ目の上端)へ戻る
+  if (canvasMode === "a4v") animateView({ s: view.s, x: view.x, y: 24 });
+  else if (canvasMode === "a4h") animateView({ s: view.s, x: 24, y: view.y });
+  else animateView({ s: view.s, x: view.x, y: 24 });
+};
 minimapEl.addEventListener("pointerdown", function(e){
   e.preventDefault();
   e.stopPropagation();
@@ -3159,6 +3211,7 @@ function maybeSheets() {
 }
 function applyCanvasMode() {
   var th = THEMES[themeName] || THEMES.cream;
+  $("#topChip").style.display = (canvasMode === "inf") ? "none" : "";
   if (canvasMode === "inf") {
     sheetLayer.style.display = "none";
     document.body.style.background = th.paper;
