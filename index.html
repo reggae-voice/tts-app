@@ -222,6 +222,12 @@
     border-radius:18px;padding:14px 16px;
     box-shadow:0 10px 30px rgba(15,18,24,.4);
     display:none;flex-direction:column;gap:12px;z-index:29;
+    box-sizing:border-box;
+    /* はみ出す場合はパネルごと等比縮小する(レイアウトは崩さない)。
+       それでも入らない極端に狭い画面では、パネル内を横スクロールできる。 */
+    transform-origin:top left;
+    overflow:auto;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
   }
   #penPanel.show,#shapePanel.show,#eraserPanel.show,#lassoPanel.show{display:flex}
   /* パネル右上の「⇥」畳みボタン */
@@ -251,8 +257,8 @@
   .st-row{display:flex;align-items:center;gap:8px;padding:9px 4px;flex-wrap:wrap}
   .st-label{font-size:11px;color:var(--ui-dim);width:48px;font-weight:600;flex-shrink:0}
   #stylePanel .swatch{width:30px;height:30px}
-  .prow{display:flex;align-items:center;gap:10px}
-  .plabel{font-size:11px;color:var(--ui-dim);width:52px;font-weight:600}
+  .prow{display:flex;align-items:center;gap:10px;flex-wrap:nowrap;white-space:nowrap}
+  .plabel{font-size:11px;color:var(--ui-dim);width:52px;flex:0 0 52px;font-weight:600}
   .swatch{
     width:34px;height:34px;border-radius:50%;border:3px solid transparent;cursor:pointer;
     box-shadow:inset 0 0 0 2px rgba(255,255,255,.12);
@@ -450,7 +456,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v8.2</small></div>
+  <div class="brand">InkNote <small>v8.5</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -769,7 +775,6 @@ var FIREBASE_CONFIG = {
   projectId: "inknote-e2994",
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
-
 
 /* =========================================================
    InkNote v2.0
@@ -3012,17 +3017,38 @@ function showPopover(p) {
   if (tuckedPanel === p) hideTab();
   p.classList.add("show");
   requestAnimationFrame(function(){
+    // まず素の寸法を測る(前回のscaleを外してから)
+    p.style.transform = "none";
+    p.style.left = "0px";
+    p.style.top = "0px";
+    p.style.bottom = "auto";
     var tb = $("#toolbar").getBoundingClientRect();
     var pr = p.getBoundingClientRect();
-    if (!pr.width) return;   // 計測不能環境ではCSS既定位置のまま
-    var top = tb.top - pr.height - 10;
+    var natW = pr.width, natH = pr.height;
+    if (!natW) return;                  // 計測不能環境ではCSS既定位置のまま
+
+    // 画面に入らない分だけ等比縮小(行の並びは保ったまま小さくする)
+    var maxW = innerWidth - 16;
+    var maxH = innerHeight - 150;       // 上部バーとツールバーの分を残す
+    var s = Math.min(1, maxW / natW, maxH / natH);
+    if (s < 0.62) s = 0.62;             // 読めなくなるほど小さくはしない
+    // 縮小しても入りきらない極端な画面では、パネル内を横スクロールさせる
+    p.style.maxWidth = (natW * s > maxW) ? (maxW / s) + "px" : "";
+    p.style.maxHeight = (natH * s > maxH) ? (maxH / s) + "px" : "";
+    pr = p.getBoundingClientRect();
+    var w = Math.min(pr.width, natW) * s;
+    var h = Math.min(pr.height, natH) * s;
+    w = Math.min(w, maxW);
+    h = Math.min(h, maxH);
+
+    var top = tb.top - h - 10;
     if (top < 56) top = tb.bottom + 10;
-    var left = Math.max(8, Math.min(innerWidth - pr.width - 8,
-                                    tb.left + tb.width / 2 - pr.width / 2));
+    top = Math.max(50, Math.min(innerHeight - h - 8, top));
+    var left = Math.max(8, Math.min(innerWidth - w - 8,
+                                    tb.left + tb.width / 2 - w / 2));
     p.style.left = left + "px";
-    p.style.top = Math.max(50, Math.min(innerHeight - pr.height - 8, top)) + "px";
-    p.style.bottom = "auto";
-    p.style.transform = "none";
+    p.style.top = top + "px";
+    p.style.transform = (s < 1) ? "scale(" + s.toFixed(3) + ")" : "none";
   });
 }
 function togglePopover(p) {
