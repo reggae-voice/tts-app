@@ -57,6 +57,7 @@
     background:rgba(255,255,255,.92);
     touch-action:auto;
     -webkit-user-select:text;user-select:text;
+    -webkit-touch-callout:default;      /* 長押しメニュー(コピー/貼付)を有効に */
     cursor:text;
     caret-color:var(--accent);
     color:#222 !important;   /* 編集中は白背景なので常に濃色で見える */
@@ -456,7 +457,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v8.5</small></div>
+  <div class="brand">InkNote <small>v9.2</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -501,9 +502,11 @@ window.onerror = function(msg, src, line){
   <div class="prow">
     <span class="plabel">モード</span>
     <button class="stybtn ls-mode sel" data-m="select">選択</button>
+    <button class="stybtn ls-mode" data-m="shot">📋 コピー</button>
+    <button class="stybtn ls-mode" data-m="save">💾 保存</button>
     <button class="stybtn ls-mode" data-m="cut">✂ カッター</button>
   </div>
-  <div class="prow" style="color:var(--ui-dim);font-size:11px">カッター: 囲んだ境界で手書き線を2つに分割(内側が選択されます)</div>
+  <div class="prow" style="color:var(--ui-dim);font-size:11px" id="lsHint">選択: 囲んだものを掴む(📋で画像コピーも可)</div>
 </div>
 
 <div id="eraserPanel"><button class="pnl-tuck" data-tuck="1" title="端に寄せる">⇥</button>
@@ -619,6 +622,7 @@ window.onerror = function(msg, src, line){
 
 <div id="ctxbar">
   <button id="ctxCopy" title="画像としてコピー">📋</button>
+  <button id="ctxSave" title="画像として保存">💾</button>
   <button id="ctxEdit" title="編集">✎</button>
   <button id="ctxStyle" title="スタイル">Aa</button>
   <button id="ctxCrop" title="トリミング">✂</button>
@@ -908,6 +912,13 @@ function sheetExtent() {
   var n = Math.max(1, Math.ceil(Math.max(used, 0) / SH) + 1);
   return n * SH;
 }
+/* A4モードの基準倍率: 用紙の幅(A4横なら高さ)が画面にちょうど収まる大きさ。
+   スマホなら約50%、タブレットならほぼ等倍になり、紙一枚を見渡せる。 */
+function sheetFitScale() {
+  if (canvasMode === "a4v") return Math.max(0.2, Math.min(1.6, (innerWidth - 24) / A4W));
+  if (canvasMode === "a4h") return Math.max(0.2, Math.min(1.6, (innerHeight - 150) / A4W));
+  return 1;
+}
 function clampView() {
   if (canvasMode === "inf") return;
   var vert = (canvasMode === "a4v");
@@ -1022,17 +1033,22 @@ function renderInk() {
 }
 function drawGrid() {
   if (bgStyle !== "plain") drawGridBody();
-  clearGridOverImages();   // 画像の上にドット/罫線が重ならないようにする
+  clearGridOverObjects();   // 画像・テキストの上にドット/罫線が重ならないようにする
 }
-/* 画像の領域はグリッドを消す(画像はDOM要素で、キャンバスより下にあるため) */
-function clearGridOverImages() {
+/* 画像とテキストの領域はグリッドを消す。
+   これらはDOM要素でキャンバスより下にあるため、消さないとドットが文字に重なる。
+   (手書き線・図形はこの後に描かれるので、今までどおり文字の上に描ける) */
+function clearGridOverObjects() {
+  if (view.s < TEXT_DOM_MIN) return;   // 極小表示ではテキストもcanvas描画になる
   for (var i = 0; i < objects.length; i++) {
     var o = objects[i];
-    if (o.type !== "image") continue;
-    var sx = o.x * view.s + view.x;
-    var sy = o.y * view.s + view.y;
-    var sw = o.w * view.s;
-    var sh = o.h * view.s;
+    if (o.type !== "image" && o.type !== "text") continue;
+    var b = objBBox(o);
+    var sx = b.x * view.s + view.x;
+    var sy = b.y * view.s + view.y;
+    var sw = b.w * view.s;
+    var sh = b.h * view.s;
+    if (!sw || !sh) continue;
     if (sx > innerWidth || sy > innerHeight || sx + sw < 0 || sy + sh < 0) continue;
     ictx.clearRect(sx, sy, sw, sh);
   }
@@ -1644,7 +1660,9 @@ function createTextAt(w) {
   setSelection([o]);
   startTextEdit(o);
 }
-function startTextEdit(o) {
+/* pt を渡すと、その画面座標(タップした場所)にキャレットを置く。
+   省略時は末尾へ(新規作成・Ｔボタン・✎から開いた場合) */
+function startTextEdit(o, pt) {
   if (editingObj && editingObj !== o) commitText();
   editingObj = o;
   var el = o.el;
@@ -1656,19 +1674,43 @@ function startTextEdit(o) {
   try { el.focus(); } catch (err) {}
   setTimeout(function(){
     el.focus();
-    // キャレットを末尾へ
-    try {
-      var r = document.createRange();
-      r.selectNodeContents(el);
-      r.collapse(false);
-      var s = getSelection();
-      s.removeAllRanges();
-      s.addRange(r);
-    } catch (err) {}
+    placeCaret(el, pt);
     ensureEditingVisible();
   }, 30);
   el.addEventListener("blur", onTextBlur);
   el.addEventListener("input", onTextInput);
+  el.addEventListener("paste", onTextPaste);
+}
+/* 貼り付け時: LaTeX/Markdownを読める文字に直してから挿入する */
+function onTextPaste(e) {
+  var cd = e.clipboardData || window.clipboardData;
+  if (!cd) return;
+  var raw = cd.getData("text/plain");
+  if (!raw) return;
+  e.preventDefault();
+  var txt = cleanPastedText(raw);
+  var changed = (txt !== raw);
+  try {
+    var s = getSelection();
+    if (s && s.rangeCount) {
+      var r = s.getRangeAt(0);
+      r.deleteContents();
+      var node = document.createTextNode(txt);
+      r.insertNode(node);
+      r.setStartAfter(node);
+      r.collapse(true);
+      s.removeAllRanges();
+      s.addRange(r);
+    } else {
+      document.execCommand("insertText", false, txt);
+    }
+  } catch (err) {
+    try { document.execCommand("insertText", false, txt); } catch (e2) {}
+  }
+  onTextInput();
+  statusEl.textContent = changed
+    ? "貼り付け: 数式・記法を読みやすく整形しました"
+    : "貼り付けました";
 }
 var lastMeasure = 0;
 function onTextInput() {
@@ -1677,6 +1719,135 @@ function onTextInput() {
   if (now - lastMeasure < 150) return;
   lastMeasure = now;
   if (editingObj) measureObj(editingObj);
+}
+/* =========================================================
+   貼り付け整形: AIの回答などに含まれるLaTeX/Markdown記法を
+   そのまま読める文字に直す(例: \text{NaCl} → NaCl, NiCl_2 → NiCl₂)
+========================================================= */
+var SUP_MAP = { "0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹",
+                "+":"⁺","-":"⁻","n":"ⁿ","i":"ⁱ" };
+var SUB_MAP = { "0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉",
+                "+":"₊","-":"₋","x":"ₓ","a":"ₐ","e":"ₑ" };
+/* コマンド名 → 記号。長いものから順に置換する(\\le より \\leq を先に) */
+var TEX_SYM = [
+  ["approx","≈"], ["times","×"], ["cdot","·"], ["pm","±"], ["mp","∓"],
+  ["leqq","≤"], ["leq","≤"], ["le","≤"], ["geqq","≥"], ["geq","≥"], ["ge","≥"],
+  ["neq","≠"], ["ne","≠"], ["rightarrow","→"], ["Rightarrow","⇒"], ["to","→"],
+  ["leftarrow","←"], ["alpha","α"], ["beta","β"], ["gamma","γ"], ["Delta","Δ"], ["delta","δ"],
+  ["theta","θ"], ["lambda","λ"], ["mu","μ"], ["pi","π"], ["rho","ρ"],
+  ["sigma","σ"], ["tau","τ"], ["phi","φ"], ["Omega","Ω"], ["omega","ω"],
+  ["sim","~"], ["propto","∝"], ["infty","∞"], ["partial","∂"],
+  ["circ","°"], ["degree","°"], ["quad","  "], ["qquad","    "]
+];
+function mapScript(str, map) {
+  var out = "";
+  for (var i = 0; i < str.length; i++) {
+    var ch = map[str[i]];
+    if (!ch) return null;      // 1文字でも変換できなければ諦める
+    out += ch;
+  }
+  return out;
+}
+function cleanPastedText(t) {
+  if (!t) return "";
+  var s = String(t);
+  var hasTex = /[\\$]/.test(s);   // LaTeX由来かどうか(\ や $ を含むか)
+
+  // 数式の囲みを外す: $$...$$, $...$, \(...\), \[...\]
+  s = s.replace(/\$\$([\s\S]*?)\$\$/g, "$1");
+  s = s.replace(/\$([^$\n]+)\$/g, "$1");
+  s = s.replace(/\\\(([\s\S]*?)\\\)/g, "$1");
+  s = s.replace(/\\\[([\s\S]*?)\\\]/g, "$1");
+
+  // \text{...} \mathrm{...} などの装飾は中身だけ残す
+  s = s.replace(/\\(?:text|mathrm|mathbf|mathit|textbf|textit|operatorname|rm|bf|it)\s*\{([^{}]*)\}/g, "$1");
+
+  // 分数・平方根
+  s = s.replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "$1/$2");
+  s = s.replace(/\\sqrt\s*\{([^{}]*)\}/g, "√$1");
+
+  // コマンド記号(\approx など)。単語境界で区切り、長い名前から置換
+  for (var i = 0; i < TEX_SYM.length; i++) {
+    var re = new RegExp("\\\\" + TEX_SYM[i][0] + "(?![A-Za-z])", "g");
+    s = s.replace(re, TEX_SYM[i][1]);
+  }
+
+  // 上付き・下付き: ^{2} _{2} は常に変換。
+  // 波括弧のない ^2 / _2 は、元が数式(\ や $ を含む)だった時だけ変換する。
+  // → "report_2026.pdf" のような普通の下線付き文字列を壊さないため。
+  s = s.replace(/\^\{([^{}]+)\}/g, function(m, a){ return mapScript(a, SUP_MAP) || m; });
+  s = s.replace(/_\{([^{}]+)\}/g, function(m, a){ return mapScript(a, SUB_MAP) || m; });
+  if (hasTex) {
+    s = s.replace(/\^([\w+\-])(?![\w])/g, function(m, b){ return mapScript(b, SUP_MAP) || m; });
+    s = s.replace(/_([\w+\-])(?![\w])/g, function(m, b){ return mapScript(b, SUB_MAP) || m; });
+  }
+
+  // 残った制御記号を整理
+  s = s.replace(/\\left|\\right/g, "");
+  s = s.replace(/\\[,;:!]/g, " ");     // \, \; などの空白コマンド
+  s = s.replace(/\\([%&_#$])/g, "$1"); // エスケープ文字
+  s = s.replace(/[{}]/g, "");
+
+  // Markdownの強調・見出し・箇条書き
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2");
+  s = s.replace(/`([^`]+)`/g, "$1");
+  s = s.replace(/^#{1,6}\s+/gm, "");
+  s = s.replace(/^\s*[-*+]\s+/gm, "・");
+
+  return s.replace(/[ \t]+$/gm, "");
+}
+
+/* 長押しした場所の単語を選択状態にする(標準のコピー/貼り付けメニューが使える) */
+function selectWordAt(el, pt) {
+  var s;
+  try { s = getSelection(); } catch (e) { return; }
+  if (!s) return;
+  placeCaret(el, pt);
+  try {
+    if (s.modify) {
+      s.modify("move", "backward", "word");
+      s.modify("extend", "forward", "word");
+      if (String(s).trim()) return;
+    }
+  } catch (e) {}
+  try {                       // modify非対応(Firefox等)は全選択でフォールバック
+    var r = document.createRange();
+    r.selectNodeContents(el);
+    s.removeAllRanges();
+    s.addRange(r);
+  } catch (e) {}
+}
+
+/* タップした画面位置に対応する文字位置へキャレットを移動する */
+function placeCaret(el, pt) {
+  var s;
+  try { s = getSelection(); } catch (e) { return; }
+  if (!s) return;
+  var r = null;
+  if (pt) {
+    // ブラウザによってAPIが違うので両方試す
+    if (document.caretPositionFromPoint) {
+      var cp = document.caretPositionFromPoint(pt.x, pt.y);
+      if (cp && el.contains(cp.offsetNode)) {
+        r = document.createRange();
+        r.setStart(cp.offsetNode, cp.offset);
+        r.collapse(true);
+      }
+    } else if (document.caretRangeFromPoint) {
+      var cr = document.caretRangeFromPoint(pt.x, pt.y);
+      if (cr && el.contains(cr.startContainer)) r = cr;
+    }
+  }
+  if (!r) {                       // 取れない場合は末尾へ
+    r = document.createRange();
+    r.selectNodeContents(el);
+    r.collapse(false);
+  }
+  try {
+    s.removeAllRanges();
+    s.addRange(r);
+  } catch (e) {}
 }
 function onTextBlur() { commitText(); }
 /* キーボードを確実に閉じる(iPad/Androidはblurだけだと残ることがある) */
@@ -1756,6 +1927,7 @@ function commitText() {
   var el = o.el;
   el.removeEventListener("blur", onTextBlur);
   el.removeEventListener("input", onTextInput);
+  el.removeEventListener("paste", onTextPaste);
   var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
   o.text = raw.replace(/\n$/, "");
   // ★キーボードを閉じるのは contenteditable を外す「前」に行う。
@@ -1864,10 +2036,28 @@ function attachObjHandlers(o) {
       });
       return;
     }
+    // 長押し(テキスト): 編集モードに入り、その場の単語を選択状態にする
+    // → そのまま指で範囲を広げてコピー/切り取り/貼り付けができる
+    var lpTimer = null;
+    var lpFired = false;
+    if (o.type === "text") {
+      var lpX = e.clientX, lpY = e.clientY;
+      lpTimer = setTimeout(function(){
+        lpFired = true;
+        setSelection([o]);
+        startTextEdit(o, { x: lpX, y: lpY });
+        setTimeout(function(){ selectWordAt(o.el, { x: lpX, y: lpY }); }, 60);
+        statusEl.textContent = "長押し: 文字を選択できます(端をドラッグで範囲を広げる)";
+      }, 480);
+    }
+    var clearLP = function(){ if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+
     // 【誤移動防止】未選択オブジェクト: ドラッグ=画面スクロール / タップ=選択
     // 移動は「選択して青枠をドラッグ」に統一(PDFページの上でも自由にスクロールできる)
     drag(e, {
       move: function(ev, dxs, dys){
+        if (Math.abs(dxs) > 6 || Math.abs(dys) > 6) clearLP();   // 動いたら長押しは中止
+        if (lpFired) return;
         if (pinch) return;
         view.x += dxs;
         view.y += dys;
@@ -1875,6 +2065,8 @@ function attachObjHandlers(o) {
         updateSelUI();
       },
       up: function(ev, moved){
+        clearLP();
+        if (lpFired) return;
         if (moved) return;
         if (o.type === "text" && tool === "text") {
           setSelection([o]);
@@ -1916,7 +2108,8 @@ selBox.addEventListener("pointerdown", function(e){
         tapObj = null;
       } else if (sel.length === 1 && sel[0].type === "text") {
         // 選択済みテキストはもう1タップで即入力(ダブルタップ不要)
-        startTextEdit(sel[0]);
+        // タップした場所にキャレットを置く(途中の修正ができる)
+        startTextEdit(sel[0], { x: ev.clientX, y: ev.clientY });
         tapObj = null;
       } else if (sel.length === 1 && sel[0].type === "shape" && isDouble) {
         shapeTextEdit(sel[0]);   // 図形の中をダブルタップ=ラベル入力
@@ -2672,6 +2865,48 @@ minimapEl.addEventListener("pointerdown", function(e){
   collapseMini();
 });
 
+/* ---------- 投げ縄: 囲んだ範囲を画像にする ----------
+   dest = "clipboard" → クリップボードへコピー / "file" → PNGとして保存 */
+function performLassoShot(path, dest) {
+  var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (var i = 0; i < path.length; i++) {
+    var p = path[i];
+    if (p.x < x1) x1 = p.x;
+    if (p.y < y1) y1 = p.y;
+    if (p.x > x2) x2 = p.x;
+    if (p.y > y2) y2 = p.y;
+  }
+  var w = x2 - x1, h = y2 - y1;
+  if (w < 8 || h < 8) { statusEl.textContent = "範囲が小さすぎます"; return; }
+  var c = renderPageToCanvas({ x: x1, y: y1, w: w, h: h }, 0);
+  if (!c) { statusEl.textContent = "書き出せませんでした"; return; }
+  switchTool("select");
+  if (dest === "file") { saveCanvasPNG(c, "inknote_shot"); return; }
+  copyCanvasToClipboard(c);
+}
+/* 画像をPNGとして保存 */
+function saveCanvasPNG(c, name) {
+  var pg = findPage(currentId);
+  var fname = (name || (pg ? pg.title : "inknote")) + ".png";
+  downloadURL(c.toDataURL("image/png"), fname);
+  statusEl.textContent = "💾 " + fname + " を保存しました";
+}
+/* 画像をクリップボードへコピー(非対応時は理由を案内し、保存を促す) */
+function copyCanvasToClipboard(c) {
+  if (!navigator.clipboard || !window.ClipboardItem || !c.toBlob) {
+    statusEl.textContent = "この環境ではコピー不可(https必須)。💾保存をお使いください";
+    return;
+  }
+  c.toBlob(function(blob){
+    if (!blob) { statusEl.textContent = "コピーできませんでした"; return; }
+    navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(function(){
+      statusEl.textContent = "📋 クリップボードにコピーしました(貼り付け可)";
+    }).catch(function(){
+      statusEl.textContent = "コピーを拒否されました。💾保存をお使いください";
+    });
+  }, "image/png");
+}
+
 /* ---------- 投げ縄カッター: 囲んだ境界で線を分割 ---------- */
 function performLassoCut(path) {
   var snap = serializeScene();
@@ -2745,6 +2980,8 @@ function finishLasso() {
   inkDirty = true;
   if (!path || path.length < 3) return;
   if (lassoMode === "cut") { performLassoCut(path); return; }
+  if (lassoMode === "shot") { performLassoShot(path, "clipboard"); return; }
+  if (lassoMode === "save") { performLassoShot(path, "file"); return; }
   var picked = objects.filter(function(o){
     if (o.type === "stroke") {
       var n = 0;
@@ -3148,6 +3385,12 @@ function applyPenToSelectedStrokes(kind) {
     });
   }
 })();
+var LS_HINT = {
+  select: "選択: 囲んだものを掴む(移動・複製・削除)",
+  shot:   "コピー: 囲んだ範囲をクリップボードへ(他アプリに貼り付け)",
+  save:   "保存: 囲んだ範囲をPNG画像としてダウンロード",
+  cut:    "カッター: 囲んだ境界で手書き線を2つに分割(内側が選択されます)"
+};
 (function(){
   var ls = document.querySelectorAll(".ls-mode");
   for (var i = 0; i < ls.length; i++)
@@ -3155,6 +3398,8 @@ function applyPenToSelectedStrokes(kind) {
       lassoMode = this.getAttribute("data-m");
       var all = document.querySelectorAll(".ls-mode");
       for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
+      $("#lsHint").textContent = LS_HINT[lassoMode] || "";
+      statusEl.textContent = LS_HINT[lassoMode] || "";
     });
 })();
 (function(){
@@ -3254,10 +3499,15 @@ $("#fingerToggle").onclick = function(){
 $("#fingerToggle").classList.toggle("on", fingerDraws);
 $("#hlToggle").classList.toggle("on", !!pen.highlighter);
 $("#zoomChip").onclick = function(){
-  // 今見ている場所を中心にしたまま100%へ(場所を見失わない)
+  // 今見ている場所を中心にしたまま基準倍率へ(場所を見失わない)
+  // A4モードの基準は「用紙が画面にちょうど収まる大きさ」(スマホなら約50%)
+  var target = (canvasMode === "inf") ? 1 : sheetFitScale();
   var cx = innerWidth / 2, cy = innerHeight / 2;
   var wpt = toWorld(cx, cy);
-  animateView({ s: 1, x: cx - wpt.x, y: cy - wpt.y });
+  animateView({ s: target, x: cx - wpt.x, y: cy - wpt.y });
+  statusEl.textContent = (canvasMode === "inf")
+    ? "100%(等倍)"
+    : "用紙全体が見える大きさ(" + Math.round(target * 100) + "%)";
 };
 
 /* ---------- ツールバーをドラッグで移動(位置は記憶) ---------- */
@@ -3569,6 +3819,13 @@ function applyCanvasMode() {
       : "repeating-linear-gradient(to right, transparent 0, transparent " + (SW - 2) + "px, rgba(0,0,0,.16) " + (SW - 2) + "px, rgba(0,0,0,.16) " + SW + "px)";
     document.body.style.background = GUTTER;
     updateSheets();
+    // 切り替え直後は用紙がちょうど画面に収まる大きさで表示する
+    var fit = sheetFitScale();
+    if (view.s > fit) {          // 既に用紙より小さく見ている場合はそのまま
+      view.s = fit;
+      if (canvasMode === "a4v") view.y = 24;
+      else view.x = 24;
+    }
   }
   applyView();
   inkDirty = true;
@@ -4340,6 +4597,7 @@ function copySelection() {
   } catch (e) { copyFallbackDownload(c); }
 }
 function insertTextAtCenter(txt) {
+  txt = cleanPastedText(txt);      // LaTeX/Markdownを整形してから配置
   var cwp = toWorld(innerWidth / 2, innerHeight / 2);
   var o = { id: idSeq++, type: "text", x: cwp.x - 130, y: cwp.y, w: 260,
             text: txt, fontSize: 22, color: (THEMES[themeName] || THEMES.cream).pen };
@@ -4382,6 +4640,12 @@ function pasteFromClipboard() {
   });
 }
 $("#ctxCopy").onclick = copySelection;
+$("#ctxSave").onclick = function(){
+  if (!sel.length) return;
+  var c = renderPageToCanvas(selBBox(), 16);
+  if (!c) { statusEl.textContent = "書き出せませんでした"; return; }
+  saveCanvasPNG(c, "inknote_選択");
+};
 $("#ctxCrop").onclick = function(){
   var s1 = (sel.length === 1) ? sel[0] : null;
   if (s1 && s1.type === "image") openCropForObject(s1);
