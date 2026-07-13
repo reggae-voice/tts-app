@@ -2,10 +2,14 @@
    - HTML(アプリ本体): ネットワーク優先 → 常に最新版を取得、オフライン時のみキャッシュを使用
    - 静的アセット(CDNライブラリ等): キャッシュ優先 → 高速起動
 */
-var CACHE = "inknote-v4";
+var CACHE = "inknote-v5";
 
 self.addEventListener("install", function(e){
   self.skipWaiting();   // 新しいSWを即座に有効化
+});
+
+self.addEventListener("message", function(e){
+  if (e.data === "skipWaiting") self.skipWaiting();
 });
 
 self.addEventListener("activate", function(e){
@@ -63,9 +67,9 @@ self.addEventListener("fetch", function(e){
   var isHTML = req.mode === "navigate" || accept.indexOf("text/html") !== -1;
 
   if (isHTML) {
-    // ネットワーク優先: GitHubに上げた最新版が必ず反映される
+    // ネットワーク優先 + no-store: ブラウザ側のキャッシュも使わず、常に最新を取得する
     e.respondWith(
-      fetch(req).then(function(res){
+      fetch(new Request(req.url, { cache: "no-store" })).then(function(res){
         var copy = res.clone();
         caches.open(CACHE).then(function(c){ c.put(req, copy); });
         return res;

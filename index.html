@@ -450,7 +450,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v8.1</small></div>
+  <div class="brand">InkNote <small>v8.2</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -723,6 +723,10 @@ window.onerror = function(msg, src, line){
       <button class="toggle on" id="mmToggle"></button>
       <span style="color:var(--ui-dim);font-size:11px">左下に鳥瞰ミニマップを表示</span>
     </div>
+    <div class="st-row"><span class="st-label">更新</span>
+      <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
+      <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
+    </div>
     <div class="st-row"><span class="st-label">暗記</span>
       <button class="toggle" id="msToggle"></button>
       <span style="color:var(--ui-dim);font-size:11px">マーカー部分を紙色で隠す(暗記シート)</span>
@@ -765,6 +769,7 @@ var FIREBASE_CONFIG = {
   projectId: "inknote-e2994",
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
+
 
 /* =========================================================
    InkNote v2.0
@@ -3660,6 +3665,28 @@ $("#mmToggle").onclick = function(){
   $("#mapChip").style.display = showMini ? "" : "none";
   saveSettings();
 };
+$("#updateApp").onclick = function(){
+  // キャッシュとService Workerを完全に破棄して最新版を取り直す
+  // (IndexedDBのノートには一切触れないので、書いた内容は消えない)
+  statusEl.textContent = "最新版を取得しています…";
+  saveDocNow();
+  var jobs = [];
+  if (window.caches && caches.keys) {
+    jobs.push(caches.keys().then(function(ks){
+      return Promise.all(ks.map(function(k){ return caches.delete(k); }));
+    }));
+  }
+  if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+    jobs.push(navigator.serviceWorker.getRegistrations().then(function(rs){
+      return Promise.all(rs.map(function(r){ return r.unregister(); }));
+    }));
+  }
+  Promise.all(jobs).catch(function(){}).then(function(){
+    setTimeout(function(){
+      location.replace(location.pathname + "?u=" + Date.now());   // キャッシュ回避で再読込
+    }, 300);
+  });
+};
 $("#msToggle").onclick = function(){
   memorizeMode = !memorizeMode;
   this.classList.toggle("on", memorizeMode);
@@ -4962,7 +4989,29 @@ if (window.matchMedia) {
 
 /* ---------- PWA: Service Worker登録(https配信時のみ有効) ---------- */
 if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
-  navigator.serviceWorker.register("sw.js").catch(function(){});
+  // updateViaCache:"none" → sw.js自体をキャッシュから読まない(更新が確実に届く)
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+    .then(function(reg){
+      reg.update();                                   // 起動のたびに新版を確認
+      setInterval(function(){ reg.update(); }, 60 * 60 * 1000);
+      reg.addEventListener("updatefound", function(){
+        var nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener("statechange", function(){
+          if (nw.state === "installed" && navigator.serviceWorker.controller) {
+            statusEl.textContent = "新しいバージョンを取得しました。まもなく再読み込みします…";
+          }
+        });
+      });
+    })
+    .catch(function(){});
+  // 新しいSWが有効化されたら一度だけ自動リロード(最新画面に切り替わる)
+  var swReloaded = false;
+  navigator.serviceWorker.addEventListener("controllerchange", function(){
+    if (swReloaded) return;
+    swReloaded = true;
+    location.reload();
+  });
 }
 
 /* ---------- 同期: 前回ログイン済みなら起動時に自動接続 ---------- */
