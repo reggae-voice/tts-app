@@ -67,6 +67,18 @@
   .obj-text.editing:empty::before{content:"ここに入力…";color:#a9a294}
   .obj-img img{display:block;width:100%;height:100%;pointer-events:none;-webkit-user-drag:none}
   .obj-text.empty:not(.editing){outline:1.5px dashed #c9c2b0;outline-offset:2px}
+  /* 文字入力中は、キーボードと重なるUIを隠す(✥グリップだけ残す) */
+  body.editing-mode #toolbar,
+  body.editing-mode #zoomChip,
+  body.editing-mode #fitChip,
+  body.editing-mode #posChip,
+  body.editing-mode #pasteChip,
+  body.editing-mode #mapChip,
+  body.editing-mode #topChip,
+  body.editing-mode #ctxbar,
+  body.editing-mode #pnlTab{
+    display:none !important;
+  }
   /* 各オブジェクトの再描画を独立させ、入力中に全体が再描画されるのを防ぐ */
   .obj{contain:layout style}
   .obj-text.editing{will-change:contents;contain:none}
@@ -459,7 +471,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v9.6</small></div>
+  <div class="brand">InkNote <small>v9.7</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -809,7 +821,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "9.6";      // ⚙「アプリを更新」でサーバー版と照合する
+var APP_VERSION = "9.7";      // ⚙「アプリを更新」でサーバー版と照合する
 var bookmarks = [];
 var deletedIds = [];          // 削除済みページの墓標(復活防止・削除の同期)
 var booting = true;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
@@ -1681,6 +1693,7 @@ function createTextAt(w) {
 function startTextEdit(o, pt) {
   if (editingObj && editingObj !== o) commitText();
   editingObj = o;
+  document.body.classList.add("editing-mode");   // キーボードと重なるUIを隠す
   var el = o.el;
   el.classList.add("editing");
   el.setAttribute("contenteditable", "true");
@@ -1890,19 +1903,40 @@ editHandle.addEventListener("pointerdown", function(e){
 
 /* 編集中のテキストが「実際に見えている領域」(キーボードを除いた部分)に
    収まるようにビューを自動調整する。キーボードの開閉にも追従する。 */
+/* いま編集しているカーソルの画面上のY座標(取れなければBOX上端) */
+function caretScreenY() {
+  try {
+    var s = getSelection();
+    if (s && s.rangeCount) {
+      var r = s.getRangeAt(0).getBoundingClientRect();
+      if (r && (r.height || r.top)) return r.top + (r.height || 0) / 2;
+    }
+  } catch (e) {}
+  if (editingObj && editingObj.el) {
+    var er = editingObj.el.getBoundingClientRect();
+    if (er && er.height) return er.top + Math.min(er.height / 2, 40);
+  }
+  return null;
+}
+/* カーソルが隠れている時だけ、隠れている分だけ画面を動かす。
+   すでに見えていれば一切スクロールしない(触った瞬間に画面が飛ぶのを防ぐ) */
 function ensureEditingVisible() {
   if (!editingObj) return;
   var vv = window.visualViewport;
   var visH = vv ? vv.height : innerHeight;
   var visTop = vv ? vv.offsetTop : 0;
-  var sy = editingObj.y * view.s + view.y;           // テキスト上端の画面Y
-  var upper = visTop + 70;                            // 上部バーの下
-  var lower = visTop + visH - 100;                    // キーボードの上に少し余裕
-  if (sy < upper || sy > lower) {
-    var target = visTop + Math.min(visH * 0.22, 150); // 可視領域の上寄りへ
-    view.y += (target - sy);
+  var y = caretScreenY();
+  if (y == null) { positionEditHandle(); return; }
+  var upper = visTop + 70;                 // 上部バーの下
+  var lower = visTop + visH - 24;          // キーボードのすぐ上
+  if (y < upper) {
+    view.y += (upper - y);                 // 足りない分だけ下げる
+    applyView();
+  } else if (y > lower) {
+    view.y -= (y - lower);                 // 足りない分だけ上げる
     applyView();
   }
+  // 見えている場合は何もしない(画面はそのまま)
   positionEditHandle();
 }
 if (window.visualViewport) {
@@ -1916,6 +1950,7 @@ if (window.visualViewport) {
 }
 function commitText() {
   if (!editingObj) return;
+  document.body.classList.remove("editing-mode");
   editHandle.classList.remove("show");
   var o = editingObj;
   editingObj = null;
