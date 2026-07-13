@@ -101,6 +101,27 @@
   /* Androidの「引っ張って更新」を無効化(画面を下へスワイプ=上へ戻る操作が
      ブラウザの更新ジェスチャーに奪われ、パンが途中でキャンセルされるのを防ぐ) */
   html,body{overscroll-behavior:none;overscroll-behavior-y:none}
+
+  /* ===== 印刷: 画面のUIをすべて隠し、用紙ページだけを紙サイズで出す ===== */
+  #printLayer{display:none}
+  @media print{
+    @page{size:A4 portrait;margin:0}
+    body.print-landscape{}
+    html,body{background:#fff !important;margin:0;padding:0}
+    /* 画面用の要素はすべて非表示 */
+    #stage,#toolbar,#topbar,#barToggle,#ctxbar,#hint,#pagesScrim,
+    #zoomChip,#fitChip,#posChip,#pasteChip,#mapChip,#topChip,#minimap,#miniZoom,
+    #penPanel,#shapePanel,#eraserPanel,#lassoPanel,#stylePanel,#menuPanel,
+    #pagesPanel,#posPanel,#expPanel,#syncPanel,#cropModal,#editHandle{
+      display:none !important;
+    }
+    #printLayer{display:block !important;margin:0;padding:0}
+    #printLayer img{
+      display:block;width:100%;height:auto;
+      page-break-after:always;break-after:page;
+    }
+    #printLayer img:last-child{page-break-after:auto;break-after:auto}
+  }
   #topbar{
     position:fixed;top:0;left:0;right:0;
     padding:calc(env(safe-area-inset-top) + 8px) 14px 8px;
@@ -385,9 +406,11 @@ window.onerror = function(msg, src, line){
   🗺 マップで全体を見てジャンプ
 </div>
 
+<style id="printPageRule"></style>
+<div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v7.4</small></div>
+  <div class="brand">InkNote <small>v7.7</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -606,10 +629,13 @@ window.onerror = function(msg, src, line){
       <div class="swatch st-bubble" data-b="#BFD4FF" style="background:#BFD4FF"></div>
       <div class="swatch st-bubble" data-b="#C4EBCB" style="background:#C4EBCB"></div>
       <div class="swatch st-bubble" data-b="#E4D2FF" style="background:#E4D2FF"></div>
+      <div class="swatch st-bubble" data-b="#D5D9E0" style="background:#D5D9E0" title="グレー"></div>
+      <div class="swatch st-bubble" data-b="#3A3F49" style="background:#3A3F49" title="薄い黒"></div>
     </div>
     <div class="st-row"><span class="st-label">形</span>
       <button class="stybtn sel" id="bbPill">● 丸</button>
       <button class="stybtn" id="bbRect">▢ 四角(付箋)</button>
+      <button class="stybtn" id="bbBorder">□ 外枠</button>
     </div>
   </div>
 </div>
@@ -617,6 +643,9 @@ window.onerror = function(msg, src, line){
 <div id="expPanel">
   <div class="pp-head"><span id="expTitle">書き出し範囲を選択</span><button id="exClose">✕</button></div>
   <div class="scrollable" style="overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1">
+    <div class="pp-row exp-opt" data-r="sheet" id="expSheetRow" style="display:none">
+      <span class="pp-title">📄 A4ページとして書き出す(印刷用・推奨)</span>
+    </div>
     <div class="pp-row exp-opt" data-r="all"><span class="pp-title">🌐 全体(すべてのオブジェクト)</span></div>
     <div class="pp-row exp-opt" data-r="view"><span class="pp-title">🔲 今の表示範囲(画面のまま)</span></div>
     <div class="pp-row exp-opt" data-r="pick"><span class="pp-title">✂️ 範囲をドラッグで指定</span></div>
@@ -722,7 +751,9 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var bookmarks = [];          // 位置の記憶 [{id, name, view}] ページごと
+var bookmarks = [];
+var deletedIds = [];          // 削除済みページの墓標(復活防止・削除の同期)
+var booting = true;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
 var shapeKind = "line";      // 図形ツールの種類
 var activeShape = null;      // ドラッグ中の図形
 var eraser = { size: 18, mode: "partial" };  // 消しゴム設定
@@ -1419,11 +1450,30 @@ function applyTextStyle(o) {
     el.style.boxShadow = isRect ? "0 2px 8px rgba(60,50,20,.16)" : "";
   } else {
     el.style.background = "";
-    el.style.borderRadius = "";
-    el.style.padding = "";
+    el.style.borderRadius = o.border ? "10px" : "";
+    el.style.padding = o.border ? "10px 12px" : "";
     el.style.textAlign = "";
     el.style.boxShadow = "";
   }
+  // 外枠(背景なしでも枠だけ付けられる)
+  if (o.border) {
+    el.style.border = "2px solid " + borderColorFor(o);
+    if (!o.bubble) el.style.background = "transparent";
+  } else {
+    el.style.border = "";
+  }
+}
+/* 枠線の色: 背景が暗ければ明るい枠、明るければ文字色ベースの枠 */
+function borderColorFor(o) {
+  if (o.bubble && isDarkColor(o.bubble)) return "rgba(255,255,255,.55)";
+  return o.color || "#1C1E22";
+}
+function isDarkColor(hex) {
+  if (!hex || hex[0] !== "#") return false;
+  var h = hex.slice(1);
+  if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
+  var r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+  return (0.299*r + 0.587*g + 0.114*b) < 140;   // 輝度で判定
 }
 function makeTextEl(o) {
   var el = document.createElement("div");
@@ -2670,6 +2720,7 @@ function refreshStylePanel() {
     bbs[k2].classList.toggle("sel", bbs[k2].getAttribute("data-b") === o.bubble);
   $("#bbPill").classList.toggle("sel", o.bubbleShape !== "rect");
   $("#bbRect").classList.toggle("sel", o.bubbleShape === "rect");
+  $("#bbBorder").classList.toggle("sel", !!o.border);
 }
 function styleChange(fn) {
   var o = curText(); if (!o) return;
@@ -2711,9 +2762,16 @@ $("#bbRect").onclick = function(){
   for (var i = 0; i < bbs.length; i++)
     bbs[i].addEventListener("click", function(){
       var c = this.getAttribute("data-b");
-      styleChange(function(o){ o.bubble = c; });
+      styleChange(function(o){
+        o.bubble = c;
+        // 暗い付箋を選んだら文字を白に、明るい付箋に戻したら黒に(読めなくなるのを防ぐ)
+        if (isDarkColor(c)) { if (!isLight(o.color)) o.color = "#FFFFFF"; }
+        else if (o.color === "#FFFFFF") o.color = "#1C1E22";
+      });
     });
 })();
+function isLight(c){ return c === "#FFFFFF" || c === "#F6F1E3"; }
+$("#bbBorder").onclick = function(){ styleChange(function(o){ o.border = !o.border; }); };
 
 /* =========================================================
    ツールバー
@@ -3066,7 +3124,24 @@ function saveDoc() {
   if (pg) { pg.ts = Date.now(); saveIndex(); }
 }
 function saveDocNow() { clearTimeout(saveTimer); saveDoc(); }
-function saveIndex() { return kvSet("pages_index", { pages: pages, currentId: currentId }); }
+function saveIndex() {
+  return kvSet("pages_index", { pages: pages, currentId: currentId, deleted: deletedIds });
+}
+function isDeleted(id) {
+  for (var i = 0; i < deletedIds.length; i++) if (deletedIds[i].id === id) return true;
+  return false;
+}
+function mergeDeleted(remote) {
+  var seen = {};
+  var out = [];
+  var all = (deletedIds || []).concat(remote || []);
+  for (var i = 0; i < all.length; i++) {
+    var d = all[i];
+    if (!d || d.id == null) continue;
+    if (!seen[d.id]) { seen[d.id] = 1; out.push({ id: d.id, ts: d.ts || Date.now() }); }
+  }
+  return out;
+}
 function findPage(id) {
   for (var i = 0; i < pages.length; i++) if (pages[i].id === id) return pages[i];
   return null;
@@ -3130,6 +3205,7 @@ function deletePage(id) {
   if (!confirm("「" + pg.title + "」を削除しますか?この操作は取り消せません。")) return;
   kvDel("page_" + id);
   cloudDeletePage(id);
+  deletedIds.push({ id: id, ts: Date.now() });   // 墓標: 他端末から復活しないように
   pages = pages.filter(function(p){ return p.id !== id; });
   if (id === currentId) {
     currentId = null;              // 削除済みページを保存し直さないため
@@ -3139,6 +3215,8 @@ function deletePage(id) {
     saveIndex();
     renderPageList();
   }
+  // クラウド側のページ一覧も即更新(これを怠ると次回同期で復活する)
+  if (cloudUser()) cloudPushIndex().catch(function(){});
 }
 
 /* ---------- ページ一覧パネル ---------- */
@@ -3665,8 +3743,8 @@ function drawTextToCanvas(g, o) {
   g.font = (o.bold ? "700 " : "400 ") + fs + "px " + FONT_MAP[o.font || "sans"];
   g.textBaseline = "top";
   var isRectB = (o.bubbleShape === "rect");
-  var padX = o.bubble ? (isRectB ? 14 : 18) : 4;
-  var padY = o.bubble ? (isRectB ? 12 : 10) : 2;
+  var padX = o.bubble ? (isRectB ? 14 : 18) : (o.border ? 12 : 4);
+  var padY = o.bubble ? (isRectB ? 12 : 10) : (o.border ? 10 : 2);
   var maxW = Math.max(20, o.w - padX * 2);
   var lines = [];
   var srcLines = (o.text || "").split("\n");
@@ -3679,11 +3757,17 @@ function drawTextToCanvas(g, o) {
     }
     lines.push(line);
   }
+  var bhAll = lines.length * fs * 1.45 + padY * 2 + 4;
   if (o.bubble) {
-    var bh = lines.length * fs * 1.45 + padY * 2 + 4;
     g.fillStyle = o.bubble;
-    roundRectPath(g, o.x, o.y, o.w, bh, isRectB ? 10 : bh / 2);
+    roundRectPath(g, o.x, o.y, o.w, bhAll, isRectB ? 10 : bhAll / 2);
     g.fill();
+  }
+  if (o.border) {   // 外枠
+    g.strokeStyle = borderColorFor(o);
+    g.lineWidth = 2;
+    roundRectPath(g, o.x, o.y, o.w, bhAll, (o.bubble && !isRectB) ? bhAll / 2 : 10);
+    g.stroke();
   }
   g.fillStyle = o.color || "#222";
   for (var m = 0; m < lines.length; m++) {
@@ -3820,6 +3904,80 @@ function importBackup(file) {
   };
   r.readAsText(file);
 }
+/* A4用紙モード: 用紙の枠どおりにページを切り出し、A4サイズのPDFへ正確に流し込む
+   (書いた内容の外接矩形ではなく用紙そのものを出すので、余白バランスが崩れない) */
+function usedPageCount() {
+  var vert = (canvasMode === "a4v");
+  var SH = vert ? A4H : A4W;      // 伸びる方向の1ページ長
+  var cb = contentBBox();
+  if (!cb) return 1;
+  var used = vert ? (cb.y + cb.h) : (cb.x + cb.w);
+  return Math.max(1, Math.ceil(used / SH));
+}
+function renderSheetPage(i) {
+  // i ページ目(0始まり)の用紙領域をそのままcanvas化。倍率2で印刷に耐える解像度に
+  var vert = (canvasMode === "a4v");
+  var SW = vert ? A4W : A4H;      // 用紙の幅
+  var SH = vert ? A4H : A4W;      // 用紙の高さ
+  var ox = vert ? 0 : i * SW;     // このページの左上(ワールド座標)
+  var oy = vert ? i * SH : 0;
+  var SCALE = 2;
+  var c = document.createElement("canvas");
+  c.width = Math.round(SW * SCALE);
+  c.height = Math.round(SH * SCALE);
+  var g = c.getContext("2d");
+  g.fillStyle = (THEMES[themeName] || THEMES.cream).paper;
+  g.fillRect(0, 0, c.width, c.height);
+  g.setTransform(SCALE, 0, 0, SCALE, -ox * SCALE, -oy * SCALE);
+  for (var k = 0; k < objects.length; k++) {
+    var o = objects[k];
+    if (o.type === "image" && o.el) {
+      var im = o.el.querySelector("img");
+      if (im) { try { g.drawImage(im, o.x, o.y, o.w, o.h); } catch (e) {} }
+    } else if (o.type === "text") {
+      drawTextToCanvas(g, o);
+    }
+  }
+  for (var j = 0; j < objects.length; j++) {
+    if (objects[j].type === "stroke") drawStrokeTo(g, objects[j]);
+    else if (objects[j].type === "shape") drawShapeTo(g, objects[j]);
+  }
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  return c;
+}
+function exportSheets() {
+  var vert = (canvasMode === "a4v");
+  var n = usedPageCount();
+  if (exportFmt === "png") {
+    // PNGは1ページずつ保存
+    for (var i = 0; i < n; i++) {
+      var c1 = renderSheetPage(i);
+      downloadURL(c1.toDataURL("image/png"), "inknote_p" + (i + 1) + ".png");
+    }
+    statusEl.textContent = n + "ページをPNG書き出ししました";
+    return;
+  }
+  statusEl.textContent = "PDF生成中…";
+  loadJsPdf().then(function(){
+    // A4実寸(mm)でページを作り、余白ゼロでピッタリ貼る
+    var pdf = new window.jspdf.jsPDF({
+      orientation: vert ? "p" : "l",
+      unit: "mm", format: "a4"
+    });
+    var pw = vert ? 210 : 297;
+    var ph = vert ? 297 : 210;
+    for (var i = 0; i < n; i++) {
+      if (i > 0) pdf.addPage("a4", vert ? "p" : "l");
+      var c2 = renderSheetPage(i);
+      pdf.addImage(c2.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pw, ph);
+    }
+    var pg = findPage(currentId);
+    pdf.save((pg ? pg.title : "inknote") + ".pdf");
+    statusEl.textContent = n + "ページのA4 PDFを書き出しました";
+  }).catch(function(){
+    statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
+  });
+}
 function doExport(b, margin) {
   var c = renderPageToCanvas(b, margin);
   if (!c) { alert("書き出す内容がありません"); return; }
@@ -3827,6 +3985,7 @@ function doExport(b, margin) {
   else exportPNGCanvas(c);
 }
 function openExp() {
+  $("#expSheetRow").style.display = (canvasMode === "inf") ? "none" : "";
   $("#expTitle").textContent = "書き出し範囲を選択(" + (exportFmt === "pdf" ? "PDF" : "PNG") + ")";
   $("#expSelRow").style.display = sel.length ? "" : "none";
   $("#expPanel").classList.add("show");
@@ -3846,7 +4005,9 @@ $("#exClose").onclick = closeExp;
     opts[i].addEventListener("click", function(){
       var r = this.getAttribute("data-r");
       closeExp();
-      if (r === "all") {
+      if (r === "sheet") {
+        exportSheets();                           // A4用紙をページ単位で正確に出力
+      } else if (r === "all") {
         doExport(null, 40);                       // 全オブジェクト+余白
       } else if (r === "view") {
         var tl = toWorld(0, 0), br = toWorld(innerWidth, innerHeight);
@@ -4086,7 +4247,7 @@ function cloudPushIndex() {
   var u = cloudUser();
   if (!u) return Promise.resolve();
   return fdb().collection("users").doc(u.uid).collection("meta").doc("index")
-    .set({ pages: pages, currentId: currentId, updatedAt: Date.now() });
+    .set({ pages: pages, currentId: currentId, deleted: deletedIds, updatedAt: Date.now() });
 }
 function scheduleCloudPush(id) {
   if (!cloudUser()) return;
@@ -4110,16 +4271,25 @@ function syncAll() {
   if (!u || syncing) return Promise.resolve();
   syncing = true;
   setSyncStatus("同期中…");
-  saveDocNow();
+  if (currentId != null) saveDocNow();
   return fdb().collection("users").doc(u.uid).collection("meta").doc("index").get()
   .then(function(snap){
     var remotePages = (snap.exists && snap.data().pages) || [];
+    var remoteDeleted = (snap.exists && snap.data().deleted) || [];
+    deletedIds = mergeDeleted(remoteDeleted);          // 削除は両端末の和集合
+    remotePages = remotePages.filter(function(p){ return !isDeleted(p.id); });
+    pages = pages.filter(function(p){ return !isDeleted(p.id); });
     var remoteById = {}, localById = {};
     remotePages.forEach(function(p){ remoteById[p.id] = p; });
     pages.forEach(function(p){ localById[p.id] = p; });
     var jobs = Promise.resolve();
     var pulledCurrent = false;
     var merged = [];
+    // 他端末で削除されたページを、この端末からも消す
+    deletedIds.forEach(function(d){
+      kvDel("page_" + d.id);
+      cloudDeletePage(d.id);
+    });
     // ローカル順を保ちつつ、新しい方を採用
     pages.forEach(function(L){
       var R = remoteById[L.id];
@@ -4149,16 +4319,21 @@ function syncAll() {
     }).then(function(){
       return cloudPushIndex();
     }).then(function(){
-      if (pulledCurrent) {
+      if (currentId == null || !findPage(currentId)) {
+        if (pages.length) loadPage(pages[0].id);   // クラウドから復元した場合
+        else { renderPageList(); updatePageBtn(); }
+      } else if (pulledCurrent) {
         loadPage(currentId);         // 現在ページが更新されたら読み直し
       } else {
         renderPageList();
         updatePageBtn();
       }
       setSyncStatus("同期済み " + new Date().toTimeString().slice(0, 5));
+      if (booting) { booting = false; if (!pages.length) createFirstPage(); }
     });
   }).catch(function(){
     setSyncStatus("同期エラー(通信を確認)");
+    if (booting) createFirstPage();     // クラウド不通でもアプリは使える
   }).then(function(){ syncing = false; });
 }
 
@@ -4434,23 +4609,49 @@ function importSharedItems() {
 }
 
 /* ---------- 起動: 旧単一ノートからの移行込み ---------- */
+function syncEnabled() {
+  try {
+    return !!(FIREBASE_CONFIG.apiKey && localStorage.getItem("inknote_sync_on") === "1");
+  } catch (e) { return false; }
+}
+function createFirstPage() {
+  if (!booting) return;
+  booting = false;
+  // v2.0以前(単一ノート)のデータがあれば「ページ1」として引き継ぐ
+  kvGet("default").then(function(old){
+    if (pages.length) { loadPage(pages[0].id); return; }   // 待っている間に同期で復元された
+    var id = Date.now();
+    pages = [{ id: id, title: "ページ1", ts: Date.now() }];
+    if (old && old.json) kvSet("page_" + id, old).then(function(){ loadPage(id); });
+    else loadPage(id);
+  });
+}
 function initAfterStore() {
   kvGet("pages_index").then(function(idx){
     if (idx && idx.pages && idx.pages.length) {
       pages = idx.pages;
+      deletedIds = idx.deleted || [];
+      booting = false;
       var cur = findPage(idx.currentId) ? idx.currentId : pages[0].id;
       loadPage(cur);
+      return;
+    }
+    deletedIds = (idx && idx.deleted) || [];
+    if (syncEnabled()) {
+      // ローカルが空でも、クラウドにノートがあるなら「新規ページ」を作らずに復元する
+      // (これをしないと端末ごと・起動ごとに空ページが増えてしまう)
+      statusEl.textContent = "クラウドから復元中…";
+      var done = false;
+      loadFirebase().then(attachAuth).catch(function(){});
+      var iv = setInterval(function(){
+        if (!booting) { done = true; clearInterval(iv); }
+      }, 200);
+      setTimeout(function(){                    // 応答がなければローカルで開始
+        clearInterval(iv);
+        if (!done && booting) createFirstPage();
+      }, 8000);
     } else {
-      // v2.0以前(単一ノート)のデータがあれば「ページ1」として引き継ぐ
-      kvGet("default").then(function(old){
-        var id = Date.now();
-        pages = [{ id: id, title: "ページ1", ts: Date.now() }];
-        if (old && old.json) {
-          kvSet("page_" + id, old).then(function(){ loadPage(id); });
-        } else {
-          loadPage(id);
-        }
-      });
+      createFirstPage();
     }
   });
 }
@@ -4474,6 +4675,58 @@ window.__ink_debug = function(){
            themeName: themeName, penColor: pen.color, view: view,
            sel: sel, tool: tool, editing: !!editingObj };
 };
+
+/* =========================================================
+   ブラウザ印刷(Ctrl+P / メニューの「印刷…」)への対応
+   印刷直前にA4ページを画像化して印刷専用レイヤーへ流し込む。
+   UIは@media printで隠れるので、A4書き出しと同じ結果が紙に出る。
+========================================================= */
+function buildPrintLayer() {
+  var layer = $("#printLayer");
+  layer.innerHTML = "";
+  var rule = $("#printPageRule");
+  if (canvasMode === "inf") {
+    // 無限キャンバス: 書いた内容全体を1枚に収めて印刷(向きは内容の形で自動判定)
+    var c = renderPageToCanvas(null, 40);
+    if (!c) {
+      rule.textContent = "";
+      return false;
+    }
+    var land = c.width > c.height;
+    rule.textContent = "@media print{@page{size:A4 " + (land ? "landscape" : "portrait") + ";margin:8mm}}";
+    var im = document.createElement("img");
+    im.src = c.toDataURL("image/jpeg", 0.92);
+    layer.appendChild(im);
+    return true;
+  }
+  // A4モード: 用紙の枠どおりにページを切り出す(余白ゼロ=画面どおりの配置)
+  var vert = (canvasMode === "a4v");
+  rule.textContent = "@media print{@page{size:A4 " + (vert ? "portrait" : "landscape") + ";margin:0}}";
+  var n = usedPageCount();
+  for (var i = 0; i < n; i++) {
+    var cp = renderSheetPage(i);
+    var img = document.createElement("img");
+    img.src = cp.toDataURL("image/jpeg", 0.92);
+    layer.appendChild(img);
+  }
+  return true;
+}
+window.addEventListener("beforeprint", function(){
+  try { buildPrintLayer(); } catch (e) {}
+});
+window.addEventListener("afterprint", function(){
+  $("#printLayer").innerHTML = "";   // 印刷後はメモリを解放
+});
+/* Safari等、beforeprintを発火しない環境のフォールバック */
+if (window.matchMedia) {
+  var mq = window.matchMedia("print");
+  var onMQ = function(m){
+    if (m.matches) { try { buildPrintLayer(); } catch (e) {} }
+    else $("#printLayer").innerHTML = "";
+  };
+  if (mq.addEventListener) mq.addEventListener("change", onMQ);
+  else if (mq.addListener) mq.addListener(onMQ);
+}
 
 /* ---------- PWA: Service Worker登録(https配信時のみ有効) ---------- */
 if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
