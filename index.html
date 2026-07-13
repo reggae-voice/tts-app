@@ -69,25 +69,40 @@
   /* ===== 選択ボックス(グループ/ストローク用) ===== */
   #selBox{
     position:absolute;display:none;
-    border:1.5px dashed var(--accent);
-    background:rgba(76,111,255,.04);
+    border:1px solid rgba(76,111,255,.9);
+    border-radius:3px;
+    background:transparent;
     touch-action:none;
   }
   .handle{
-    position:absolute;right:-15px;bottom:-15px;width:30px;height:30px;
-    border-radius:50%;background:#fff;border:2px solid var(--accent);
-    box-shadow:0 1px 5px rgba(20,24,32,.3);
+    position:absolute;right:-11px;bottom:-11px;width:22px;height:22px;
+    border-radius:50%;background:#fff;border:1.5px solid var(--accent);
+    box-shadow:0 1px 4px rgba(20,24,32,.28);
     touch-action:none;
     transform:scale(calc(1 / var(--ws,1)));
     transform-origin:center;
   }
+  /* 指で掴みやすいよう、見た目より広い当たり判定を持たせる */
+  .handle::after,.whandle::after,.rhandle::after{
+    content:"";position:absolute;inset:-12px;
+  }
+  .rhandle{
+    position:absolute;left:50%;top:-34px;margin-left:-12px;
+    width:24px;height:24px;border-radius:50%;
+    background:#fff;border:1.5px solid var(--accent);
+    box-shadow:0 1px 4px rgba(20,24,32,.28);
+    color:var(--accent);font-size:13px;line-height:22px;text-align:center;
+    font-weight:700;cursor:grab;touch-action:none;display:none;
+    transform:scale(calc(1 / var(--ws,1)));
+    transform-origin:center bottom;
+  }
   /* テキストの幅(段落)変更ハンドル: 右辺中央 */
   .whandle{
-    position:absolute;right:-13px;top:50%;width:26px;height:44px;
-    margin-top:-22px;border-radius:9px;background:#fff;
-    border:2px solid var(--accent);box-shadow:0 1px 5px rgba(20,24,32,.3);
+    position:absolute;right:-9px;top:50%;width:18px;height:32px;
+    margin-top:-16px;border-radius:6px;background:#fff;
+    border:1.5px solid var(--accent);box-shadow:0 1px 4px rgba(20,24,32,.28);
     touch-action:none;display:none;
-    color:var(--accent);font-size:13px;line-height:40px;text-align:center;
+    color:var(--accent);font-size:10px;line-height:29px;text-align:center;
     font-weight:800;cursor:ew-resize;
     transform:scale(calc(1 / var(--ws,1)));
     transform-origin:center;
@@ -410,7 +425,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v7.7</small></div>
+  <div class="brand">InkNote <small>v7.8</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -840,6 +855,10 @@ var selWHandle = document.createElement("div");
 selWHandle.className = "whandle";
 selWHandle.textContent = "⇔";
 selBox.appendChild(selWHandle);
+var selRHandle = document.createElement("div");
+selRHandle.className = "rhandle";
+selRHandle.textContent = "↻";
+selBox.appendChild(selRHandle);
 world.appendChild(selBox);
 
 /* ---------- ビュー変換 ---------- */
@@ -919,9 +938,9 @@ function renderInk() {
   for (var j = 0; j < sel.length; j++) {
     if (sel[j].type === "stroke" || sel[j].type === "shape") {
       var b = objBBox(sel[j]);
-      ictx.strokeStyle = "rgba(76,111,255,.55)";
-      ictx.lineWidth = 1.2 / view.s;
-      ictx.setLineDash([5 / view.s, 4 / view.s]);
+      ictx.strokeStyle = "rgba(76,111,255,.75)";
+      ictx.lineWidth = 1 / view.s;
+      ictx.setLineDash([4 / view.s, 4 / view.s]);
       ictx.strokeRect(b.x, b.y, b.w, b.h);
       ictx.setLineDash([]);
     }
@@ -965,7 +984,23 @@ function renderInk() {
   ictx.restore();
 }
 function drawGrid() {
-  if (bgStyle === "plain") return;
+  if (bgStyle !== "plain") drawGridBody();
+  clearGridOverImages();   // 画像の上にドット/罫線が重ならないようにする
+}
+/* 画像の領域はグリッドを消す(画像はDOM要素で、キャンバスより下にあるため) */
+function clearGridOverImages() {
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "image") continue;
+    var sx = o.x * view.s + view.x;
+    var sy = o.y * view.s + view.y;
+    var sw = o.w * view.s;
+    var sh = o.h * view.s;
+    if (sx > innerWidth || sy > innerHeight || sx + sw < 0 || sy + sh < 0) continue;
+    ictx.clearRect(sx, sy, sw, sh);
+  }
+}
+function drawGridBody() {
   var clipped = false;
   if (canvasMode !== "inf") {
     ictx.save();
@@ -1068,6 +1103,18 @@ function drawStroke(o) {
   }
 }
 function drawShape(o) {
+  var rot = o.rot || 0;
+  if (rot) {                      // 中心まわりに回転
+    var rcx = (o.x1 + o.x2) / 2, rcy = (o.y1 + o.y2) / 2;
+    ictx.save();
+    ictx.translate(rcx, rcy);
+    ictx.rotate(rot);
+    ictx.translate(-rcx, -rcy);
+  }
+  drawShapeBody(o);
+  if (rot) ictx.restore();
+}
+function drawShapeBody(o) {
   // 塗りつぶし(四角・楕円)
   if (o.fill && (o.kind === "rect" || o.kind === "ellipse" || o.kind === "pill")) {
     ictx.fillStyle = o.fill;
@@ -1135,8 +1182,23 @@ function objBBox(o) {
   }
   if (o.type === "shape") {
     var pad2 = (o.size || 2) + 4;
-    return { x: Math.min(o.x1, o.x2) - pad2, y: Math.min(o.y1, o.y2) - pad2,
-             w: Math.abs(o.x2 - o.x1) + pad2 * 2, h: Math.abs(o.y2 - o.y1) + pad2 * 2 };
+    var sx1 = Math.min(o.x1, o.x2), sy1 = Math.min(o.y1, o.y2);
+    var sx2 = Math.max(o.x1, o.x2), sy2 = Math.max(o.y1, o.y2);
+    if (o.rot) {   // 回転後の4隅から外接矩形を求める
+      var bcx = (o.x1 + o.x2) / 2, bcy = (o.y1 + o.y2) / 2;
+      var cs = Math.cos(o.rot), sn = Math.sin(o.rot);
+      var xs = [], ys = [];
+      var corners = [[sx1, sy1], [sx2, sy1], [sx2, sy2], [sx1, sy2]];
+      for (var ci = 0; ci < 4; ci++) {
+        var dxr = corners[ci][0] - bcx, dyr = corners[ci][1] - bcy;
+        xs.push(bcx + dxr * cs - dyr * sn);
+        ys.push(bcy + dxr * sn + dyr * cs);
+      }
+      sx1 = Math.min.apply(null, xs); sx2 = Math.max.apply(null, xs);
+      sy1 = Math.min.apply(null, ys); sy2 = Math.max.apply(null, ys);
+    }
+    return { x: sx1 - pad2, y: sy1 - pad2,
+             w: (sx2 - sx1) + pad2 * 2, h: (sy2 - sy1) + pad2 * 2 };
   }
   // DOM要素はレイアウト実寸(transformの影響を受けない)をそのまま使える
   var w = o.el ? o.el.offsetWidth : (o.w || 100);
@@ -1171,9 +1233,11 @@ function updateSelUI() {
     return;
   }
   var b = selBBox();
-  // 幅ハンドルは単一テキスト選択時のみ
+  // 幅ハンドルは単一テキスト選択時のみ / 回転ハンドルは単一図形選択時のみ
   selWHandle.style.display =
     (sel.length === 1 && sel[0].type === "text") ? "block" : "none";
+  selRHandle.style.display =
+    (sel.length === 1 && sel[0].type === "shape") ? "block" : "none";
   selBox.style.display = "block";
   selBox.style.left = b.x + "px";
   selBox.style.top = b.y + "px";
@@ -1751,7 +1815,8 @@ function attachObjHandlers(o) {
 /* ---------- selBox(グループ枠)のドラッグ移動とリサイズ ---------- */
 selBox.addEventListener("pointerdown", function(e){
   if (!sel.length || pinch) return;
-  if (e.target === selHandle || e.target === selWHandle) return; // ハンドルは別処理
+  if (e.target === selHandle || e.target === selWHandle ||
+      e.target === selRHandle) return;                 // ハンドルは別処理
   e.preventDefault();
   e.stopPropagation();
   var snapshot = serializeScene();
@@ -1787,6 +1852,45 @@ selBox.addEventListener("pointerdown", function(e){
     }
   });
 });
+/* 図形の回転: 中心まわりに回し、15°付近では自動で吸着 */
+selRHandle.addEventListener("pointerdown", function(e){
+  if (sel.length !== 1 || sel[0].type !== "shape" || pinch) return;
+  e.preventDefault();
+  e.stopPropagation();
+  var o = sel[0];
+  var snapshot = serializeScene();
+  var cx = (o.x1 + o.x2) / 2, cy = (o.y1 + o.y2) / 2;
+  var w0 = toWorld(e.clientX, e.clientY);
+  var a0 = Math.atan2(w0.y - cy, w0.x - cx);
+  var r0 = o.rot || 0;
+  drag(e, {
+    move: function(ev, dxs, dys, moved){
+      if (pinch) return;
+      if (moved) hideCtxWhileDrag = true;
+      var w = toWorld(ev.clientX, ev.clientY);
+      var a = Math.atan2(w.y - cy, w.x - cx);
+      var rot = r0 + (a - a0);
+      var step = Math.PI / 12;                     // 15°
+      var near = Math.round(rot / step) * step;
+      if (Math.abs(rot - near) < 0.05) rot = near; // 吸着
+      o.rot = rot;
+      inkDirty = true;
+      updateSelUI();
+      var deg = Math.round((rot * 180 / Math.PI) % 360);
+      statusEl.textContent = "回転 " + deg + "°";
+    },
+    up: function(ev, moved){
+      hideCtxWhileDrag = false;
+      if (moved) {
+        pushSnapshot(snapshot);
+        clampToSheet(o);
+        scheduleSave();
+      }
+      updateSelUI();
+    }
+  });
+});
+
 /* テキストの幅変更: 文字が折り返し直され、段落の形を整えられる */
 selWHandle.addEventListener("pointerdown", function(e){
   if (sel.length !== 1 || sel[0].type !== "text" || pinch) return;
@@ -1942,6 +2046,13 @@ function canvasHitTest(wx, wy) {
   return null;
 }
 function shapeHit(o, wx, wy, th) {
+  if (o.rot) {   // 回転している図形は、判定点を逆回転して元の向きで判定
+    var hcx = (o.x1 + o.x2) / 2, hcy = (o.y1 + o.y2) / 2;
+    var ca = Math.cos(-o.rot), sa = Math.sin(-o.rot);
+    var rx0 = wx - hcx, ry0 = wy - hcy;
+    wx = hcx + rx0 * ca - ry0 * sa;
+    wy = hcy + rx0 * sa + ry0 * ca;
+  }
   if (o.kind === "line" || o.kind === "arrow")
     return distToSeg(wx, wy, { x: o.x1, y: o.y1 }, { x: o.x2, y: o.y2 }) < th;
   var x1 = Math.min(o.x1, o.x2), x2 = Math.max(o.x1, o.x2);
