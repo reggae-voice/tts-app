@@ -64,6 +64,9 @@
   .obj-text.editing:empty::before{content:"ここに入力…";color:#a9a294}
   .obj-img img{display:block;width:100%;height:100%;pointer-events:none;-webkit-user-drag:none}
   .obj-text.empty:not(.editing){outline:1.5px dashed #c9c2b0;outline-offset:2px}
+  /* 各オブジェクトの再描画を独立させ、入力中に全体が再描画されるのを防ぐ */
+  .obj{contain:layout style}
+  .obj-text.editing{will-change:contents;contain:none}
   .obj-text.empty:not(.editing)::before{content:"テキスト(ダブルタップで入力)";color:#b9b2a0}
 
   /* ===== 選択ボックス(グループ/ストローク用) ===== */
@@ -221,6 +224,28 @@
     display:none;flex-direction:column;gap:12px;z-index:29;
   }
   #penPanel.show,#shapePanel.show,#eraserPanel.show,#lassoPanel.show{display:flex}
+  /* パネル右上の「⇥」畳みボタン */
+  .pnl-tuck{
+    position:absolute;top:6px;right:8px;
+    width:26px;height:26px;border:none;border-radius:8px;
+    background:rgba(255,255,255,.08);color:var(--ui-dim);
+    font-size:12px;line-height:26px;text-align:center;padding:0;
+    cursor:pointer;
+  }
+  .pnl-tuck:hover{background:rgba(255,255,255,.16);color:#e8eaee}
+  /* 端に寄せた時に残る小さなタブ */
+  .pnl-tab{
+    position:fixed;z-index:29;display:none;
+    width:40px;height:52px;border:none;
+    border-radius:14px 0 0 14px;
+    background:var(--ui-bg2);border:1px solid var(--ui-line);border-right:none;
+    box-shadow:-4px 6px 18px rgba(15,18,24,.35);
+    color:#e8eaee;font-size:17px;line-height:52px;text-align:center;padding:0;
+    cursor:pointer;
+    animation:tabIn .18s ease;
+  }
+  .pnl-tab.show{display:block}
+  @keyframes tabIn{from{transform:translateX(20px);opacity:0}to{transform:translateX(0);opacity:1}}
   .stybtn{border:none;border-radius:10px;padding:9px 12px;background:#20242B;color:var(--ui-text);font-size:12.5px;cursor:pointer}
   .stybtn.sel{background:var(--accent-soft);outline:2px solid var(--accent)}
   .st-row{display:flex;align-items:center;gap:8px;padding:9px 4px;flex-wrap:wrap}
@@ -425,7 +450,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v7.8</small></div>
+  <div class="brand">InkNote <small>v8.1</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -436,7 +461,9 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
 </div>
 
-<div id="penPanel">
+<button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
+
+<div id="penPanel"><button class="pnl-tuck" data-tuck="1" title="端に寄せる">⇥</button>
   <div class="prow">
     <span class="plabel">カラー</span>
     <div class="swatch" data-color="#1C1E22" style="background:#1C1E22"></div>
@@ -464,7 +491,7 @@ window.onerror = function(msg, src, line){
   </div>
 </div>
 
-<div id="lassoPanel">
+<div id="lassoPanel"><button class="pnl-tuck" data-tuck="1" title="端に寄せる">⇥</button>
   <div class="prow">
     <span class="plabel">モード</span>
     <button class="stybtn ls-mode sel" data-m="select">選択</button>
@@ -473,7 +500,7 @@ window.onerror = function(msg, src, line){
   <div class="prow" style="color:var(--ui-dim);font-size:11px">カッター: 囲んだ境界で手書き線を2つに分割(内側が選択されます)</div>
 </div>
 
-<div id="eraserPanel">
+<div id="eraserPanel"><button class="pnl-tuck" data-tuck="1" title="端に寄せる">⇥</button>
   <div class="prow">
     <span class="plabel">サイズ</span>
     <button class="sizebtn er-size" data-s="10"><i style="width:7px;height:7px;border-radius:50%"></i></button>
@@ -489,7 +516,7 @@ window.onerror = function(msg, src, line){
   <div class="prow" style="color:var(--ui-dim);font-size:11px">部分消しは手書き線が対象。図形・テキストは「線ごと」か選択→削除で</div>
 </div>
 
-<div id="shapePanel">
+<div id="shapePanel"><button class="pnl-tuck" data-tuck="1" title="端に寄せる">⇥</button>
   <div class="prow">
     <span class="plabel">図形</span>
     <button class="stybtn sh-kind sel" data-k="line">─ 直線</button>
@@ -1169,6 +1196,17 @@ function drawShapeBody(o) {
 (function loop(){ renderInk(); maybeRenderMini(); maybeSheets(); requestAnimationFrame(loop); })();
 
 /* ---------- bbox ---------- */
+/* DOM要素の実寸を測ってキャッシュする(測定は必要な時だけ) */
+function measureObj(o) {
+  if (!o || !o.el) return;
+  var w = o.el.offsetWidth, h = o.el.offsetHeight;
+  if (w) o._mw = w;
+  if (h) o._mh = h;
+}
+function measureAll() {
+  for (var i = 0; i < objects.length; i++)
+    if (objects[i].type === "text" || objects[i].type === "image") measureObj(objects[i]);
+}
 function objBBox(o) {
   if (o.type === "stroke") {
     var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
@@ -1200,9 +1238,11 @@ function objBBox(o) {
     return { x: sx1 - pad2, y: sy1 - pad2,
              w: (sx2 - sx1) + pad2 * 2, h: (sy2 - sy1) + pad2 * 2 };
   }
-  // DOM要素はレイアウト実寸(transformの影響を受けない)をそのまま使える
-  var w = o.el ? o.el.offsetWidth : (o.w || 100);
-  var h = o.el ? o.el.offsetHeight : (o.h || 40);
+  // DOM要素の実寸はキャッシュから読む。
+  // (毎フレームoffsetWidthを読むと、入力中はレイアウトが毎回無効化され
+  //  強制再レイアウトの往復が起きて、文字入力がもたつく原因になる)
+  var w = (o._mw != null) ? o._mw : (o.el ? o.el.offsetWidth : 0) || (o.w || 100);
+  var h = (o._mh != null) ? o._mh : (o.el ? o.el.offsetHeight : 0) || (o.h || 40);
   return { x: o.x, y: o.y, w: w, h: h };
 }
 function selBBox() {
@@ -1500,6 +1540,7 @@ var FONT_MAP = {
 };
 function applyTextStyle(o) {
   var el = o.el;
+  setTimeout(function(){ measureObj(o); }, 0);   // スタイル変更後に実寸を測り直す
   el.style.fontSize = o.fontSize + "px";
   el.style.color = o.color || "#222";
   el.style.fontFamily = FONT_MAP[o.font || "sans"];
@@ -1617,8 +1658,26 @@ function startTextEdit(o) {
     ensureEditingVisible();
   }, 30);
   el.addEventListener("blur", onTextBlur);
+  el.addEventListener("input", onTextInput);
+}
+var lastMeasure = 0;
+function onTextInput() {
+  // 入力のたびに実寸を測ると重い。150msに1回だけ測る
+  var now = Date.now();
+  if (now - lastMeasure < 150) return;
+  lastMeasure = now;
+  if (editingObj) measureObj(editingObj);
 }
 function onTextBlur() { commitText(); }
+/* キーボードを確実に閉じる(iPad/Androidはblurだけだと残ることがある) */
+function blurKeyboard() {
+  try {
+    var a = document.activeElement;
+    if (a && a.blur) a.blur();
+    var s = getSelection();
+    if (s && s.removeAllRanges) s.removeAllRanges();
+  } catch (e) {}
+}
 /* 編集中テキストの移動グリップ: キーボードを開いたままドラッグで移動できる */
 function positionEditHandle() {
   if (!editingObj) { editHandle.classList.remove("show"); return; }
@@ -1686,13 +1745,20 @@ function commitText() {
   editingObj = null;
   var el = o.el;
   el.removeEventListener("blur", onTextBlur);
-  el.classList.remove("editing");
-  el.removeAttribute("contenteditable");
+  el.removeEventListener("input", onTextInput);
   var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
   o.text = raw.replace(/\n$/, "");
+  // ★キーボードを閉じるのは contenteditable を外す「前」に行う。
+  //   属性を外した後だと要素がフォーカス対象でなくなり、blurが効かず
+  //   iPadなどでキーボードが出たまま残ってしまう。
+  el.blur();
+  blurKeyboard();
+  el.classList.remove("editing");
+  el.removeAttribute("contenteditable");
   el.textContent = o.text;
   // 空でも削除しない: 枠だけ先に配置してレイアウトを決められる
   el.classList.toggle("empty", o.text.trim() === "");
+  measureObj(o);               // 確定後の実寸を記録(以後は測り直さない)
   switchTool("select");        // 置いたら次は「移動」が基本
   setSelection([o]);
   scheduleSave();
@@ -1702,6 +1768,7 @@ function commitText() {
    画像オブジェクト(DOM)
 ========================================================= */
 function makeImageEl(o) {
+  o._mw = o.w; o._mh = o.h;      // 画像は寸法が既知(測定不要)
   var el = document.createElement("div");
   el.className = "obj obj-img";
   el.style.left = o.x + "px";
@@ -1913,6 +1980,7 @@ selWHandle.addEventListener("pointerdown", function(e){
       hideCtxWhileDrag = false;
       if (moved) {
         pushSnapshot(snapshot);
+        measureObj(o);
         clampToSheet(o);
         scheduleSave();
       }
@@ -1958,7 +2026,13 @@ stage.addEventListener("pointerdown", function(e){
   if (pinch) return;
   hintEl.style.opacity = 0;
   closePopovers();
-  if (editingObj) return; // blur -> commitTextに任せる(この操作はキャレット解除)
+  if (editingObj) {
+    // 入力中に他を触ったら、その場で確定してキーボードを閉じる
+    // (blur任せだと、preventDefaultする環境で確定が漏れる)
+    commitText();
+    blurKeyboard();
+    return;
+  }
 
   if (locked) {
     // 🔒 ロック中: 選択もクイック作成もせず、スクロールのみ
@@ -1978,7 +2052,9 @@ stage.addEventListener("pointerdown", function(e){
   // 意図しないテキストBOXが生成されるのを防ぐ。
 
   var w0 = toWorld(e.clientX, e.clientY);
-  var hitStroke = canvasHitTest(w0.x, w0.y);
+  // Ｔ(テキスト)ツール中は線を無視する。
+  // マーカーや手書き線の上でも、その場にテキストBOXを置けるようにするため。
+  var hitStroke = (tool === "text") ? null : canvasHitTest(w0.x, w0.y);
 
   if (hitStroke) {
     // 未選択の線: ドラッグ=画面スクロール / タップ=選択(誤移動防止)
@@ -2095,6 +2171,7 @@ function distToSeg(px, py, a, b) {
 capture.addEventListener("pointerdown", function(e){
   hintEl.style.opacity = 0;
   closePopovers();   // 描き始めたら設定パネルは自動で閉じる
+  if (editingObj) { commitText(); blurKeyboard(); }   // 描き始めたら入力を確定
   if (pinch) return;
   // palm rejection: ペン描画中の指タッチは無視
   if (activeStroke && e.pointerType === "touch") return;
@@ -2892,7 +2969,42 @@ var shapePanel = $("#shapePanel");
 var eraserPanel = $("#eraserPanel");
 var lassoPanel = $("#lassoPanel");
 /* 設定パネルはツールバーの近くに開き、キャンバスに触れたら自動で閉じる */
+var tuckedPanel = null;      // 端に寄せてあるパネル
+var PANEL_ICON = { penPanel: "🖊", shapePanel: "▱", eraserPanel: "🩹", lassoPanel: "➰" };
+function hideTab() {
+  $("#pnlTab").classList.remove("show");
+  tuckedPanel = null;
+}
+/* パネルを画面の端にスーッと寄せて、小さなタブだけ残す */
+function tuckPanel(p) {
+  var r = p.getBoundingClientRect();
+  p.classList.remove("show");
+  tuckedPanel = p;
+  var tab = $("#pnlTab");
+  tab.textContent = PANEL_ICON[p.id] || "⚙";
+  // パネルがあった高さのあたり、画面の右端に寄せる
+  var top = Math.max(60, Math.min(innerHeight - 90, (r.top || innerHeight / 2) + 8));
+  tab.style.top = top + "px";
+  tab.style.right = "0px";
+  tab.classList.add("show");
+  statusEl.textContent = "設定を右端に寄せました(タブでいつでも復帰)";
+}
+$("#pnlTab").onclick = function(){
+  var p = tuckedPanel;
+  hideTab();
+  if (p) showPopover(p);
+};
+(function(){
+  var ts = document.querySelectorAll(".pnl-tuck");
+  for (var i = 0; i < ts.length; i++)
+    ts[i].addEventListener("click", function(e){
+      e.stopPropagation();
+      tuckPanel(this.parentNode);
+    });
+})();
 function showPopover(p) {
+  if (tuckedPanel && tuckedPanel !== p) hideTab();   // 別の設定を開いたらタブは消す
+  if (tuckedPanel === p) hideTab();
   p.classList.add("show");
   requestAnimationFrame(function(){
     var tb = $("#toolbar").getBoundingClientRect();
@@ -2917,6 +3029,10 @@ function closePopovers() {
   shapePanel.classList.remove("show");
   eraserPanel.classList.remove("show");
   lassoPanel.classList.remove("show");
+}
+/* キャンバス操作時: パネルは閉じるが、寄せてあるタブは残す(すぐ戻せるように) */
+function closePopoversKeepTab() {
+  closePopovers();
 }
 function switchTool(t) {
   var btn = document.querySelector('.tbtn[data-tool="' + t + '"]');
@@ -2946,6 +3062,10 @@ function selectToolBtn(btn) {
   if (t === "lasso" && tool === "lasso") togglePopover(lassoPanel);
   else if (t === "lasso") showPopover(lassoPanel);
   else lassoPanel.classList.remove("show");
+  // 設定を持つ別の道具に移った時だけタブを片付ける
+  // (選択・テキストなど設定のない道具では、寄せたタブをそのまま残す)
+  var HAS_PANEL = { pen: 1, shape: 1, eraser: 1, lasso: 1 };
+  if (tuckedPanel && HAS_PANEL[t] && tuckedPanel.id !== t + "Panel") hideTab();
   tool = t;
   var btns = document.querySelectorAll(".tbtn[data-tool]");
   for (var i = 0; i < btns.length; i++) btns[i].classList.toggle("active", btns[i] === btn);
@@ -3277,6 +3397,7 @@ function loadPage(id) {
     var maxId = 0;
     for (var i = 0; i < objects.length; i++) maxId = Math.max(maxId, objects[i].id || 0);
     idSeq = Math.max(idSeq, maxId + 1);
+    setTimeout(measureAll, 60);   // 実寸をまとめて測ってキャッシュ
     hintEl.style.opacity = objects.length ? 0 : "";
     statusEl.textContent = objects.length ? "保存済み ✓" : "新規ノート";
     updatePageBtn();
