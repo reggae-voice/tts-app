@@ -44,6 +44,8 @@
 
   /* ===== オブジェクト ===== */
   .obj{position:absolute;touch-action:none}
+  /* テキストは長押しでの文字選択を許可する(画面スクロールはJSで処理) */
+  .obj-text{touch-action:auto;-webkit-touch-callout:default}
   .obj.selected{outline:1.5px dashed var(--accent);outline-offset:3px}
   .obj-text{
     min-height:1em;padding:2px 4px;line-height:1.45;
@@ -457,7 +459,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v9.2</small></div>
+  <div class="brand">InkNote <small>v9.6</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -807,6 +809,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
+var APP_VERSION = "9.6";      // ⚙「アプリを更新」でサーバー版と照合する
 var bookmarks = [];
 var deletedIds = [];          // 削除済みページの墓標(復活防止・削除の同期)
 var booting = true;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
@@ -1478,23 +1481,36 @@ function drag(e, handlers) {
   var startX = e.clientX, startY = e.clientY;
   var lastX = e.clientX, lastY = e.clientY;
   var moved = false;
+  var released = false;
   try { el.setPointerCapture(id); } catch (err) {}
+  function detach() {
+    el.removeEventListener("pointermove", onMove);
+    el.removeEventListener("pointerup", onUp);
+    el.removeEventListener("pointercancel", onUp);
+  }
   function onMove(ev) {
-    if (ev.pointerId !== id) return;
+    if (ev.pointerId !== id || released) return;
     if (!moved && Math.hypot(ev.clientX - startX, ev.clientY - startY) > 6) moved = true;
     if (handlers.move) handlers.move(ev, ev.clientX - lastX, ev.clientY - lastY, moved);
     lastX = ev.clientX; lastY = ev.clientY;
   }
   function onUp(ev) {
     if (ev.pointerId !== id) return;
-    el.removeEventListener("pointermove", onMove);
-    el.removeEventListener("pointerup", onUp);
-    el.removeEventListener("pointercancel", onUp);
+    detach();
+    if (released) return;
     if (handlers.up) handlers.up(ev, moved);
   }
   el.addEventListener("pointermove", onMove);
   el.addEventListener("pointerup", onUp);
   el.addEventListener("pointercancel", onUp);
+  // 長押しでブラウザに指を返すための中断口
+  return {
+    release: function(){
+      released = true;
+      detach();
+      try { el.releasePointerCapture(id); } catch (err) {}
+    }
+  };
 }
 
 /* ---------- ピンチズーム(2本指・全画面共通) ---------- */
@@ -1547,7 +1563,7 @@ document.addEventListener("touchmove", function(e){
   // Apple Pencilはタップ時に微小なtouchmoveを発するため、ここで
   // preventDefaultするとSafariがタップをキャンセルしclickが発火しなくなる。
   var pass = t && t.closest ? t.closest(
-    '.editing, .scrollable, input, button, ' +
+    '.editing, .obj-text, .scrollable, input, button, ' +
     '#toolbar, #topbar, #ctxbar, #miniZoom, #editHandle, ' +
     '#penPanel, #shapePanel, #eraserPanel, #lassoPanel, ' +
     '#stylePanel, #menuPanel, #pagesPanel, #posPanel, #expPanel, #syncPanel'
@@ -1798,27 +1814,6 @@ function cleanPastedText(t) {
   return s.replace(/[ \t]+$/gm, "");
 }
 
-/* 長押しした場所の単語を選択状態にする(標準のコピー/貼り付けメニューが使える) */
-function selectWordAt(el, pt) {
-  var s;
-  try { s = getSelection(); } catch (e) { return; }
-  if (!s) return;
-  placeCaret(el, pt);
-  try {
-    if (s.modify) {
-      s.modify("move", "backward", "word");
-      s.modify("extend", "forward", "word");
-      if (String(s).trim()) return;
-    }
-  } catch (e) {}
-  try {                       // modify非対応(Firefox等)は全選択でフォールバック
-    var r = document.createRange();
-    r.selectNodeContents(el);
-    s.removeAllRanges();
-    s.addRange(r);
-  } catch (e) {}
-}
-
 /* タップした画面位置に対応する文字位置へキャレットを移動する */
 function placeCaret(el, pt) {
   var s;
@@ -2036,28 +2031,10 @@ function attachObjHandlers(o) {
       });
       return;
     }
-    // 長押し(テキスト): 編集モードに入り、その場の単語を選択状態にする
-    // → そのまま指で範囲を広げてコピー/切り取り/貼り付けができる
-    var lpTimer = null;
-    var lpFired = false;
-    if (o.type === "text") {
-      var lpX = e.clientX, lpY = e.clientY;
-      lpTimer = setTimeout(function(){
-        lpFired = true;
-        setSelection([o]);
-        startTextEdit(o, { x: lpX, y: lpY });
-        setTimeout(function(){ selectWordAt(o.el, { x: lpX, y: lpY }); }, 60);
-        statusEl.textContent = "長押し: 文字を選択できます(端をドラッグで範囲を広げる)";
-      }, 480);
-    }
-    var clearLP = function(){ if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
-
     // 【誤移動防止】未選択オブジェクト: ドラッグ=画面スクロール / タップ=選択
     // 移動は「選択して青枠をドラッグ」に統一(PDFページの上でも自由にスクロールできる)
     drag(e, {
       move: function(ev, dxs, dys){
-        if (Math.abs(dxs) > 6 || Math.abs(dys) > 6) clearLP();   // 動いたら長押しは中止
-        if (lpFired) return;
         if (pinch) return;
         view.x += dxs;
         view.y += dys;
@@ -2065,8 +2042,6 @@ function attachObjHandlers(o) {
         updateSelUI();
       },
       up: function(ev, moved){
-        clearLP();
-        if (lpFired) return;
         if (moved) return;
         if (o.type === "text" && tool === "text") {
           setSelection([o]);
@@ -2107,8 +2082,9 @@ selBox.addEventListener("pointerdown", function(e){
         updateSelUI();
         tapObj = null;
       } else if (sel.length === 1 && sel[0].type === "text") {
-        // 選択済みテキストはもう1タップで即入力(ダブルタップ不要)
-        // タップした場所にキャレットを置く(途中の修正ができる)
+        // 選択済みテキストはもう1タップで編集開始。
+        // 編集に入ったあとの「文字の選択」は、ブラウザ標準の操作
+        // (長押し・ダブルタップ・ハンドルのドラッグ)にそのまま任せる。
         startTextEdit(sel[0], { x: ev.clientX, y: ev.clientY });
         tapObj = null;
       } else if (sel.length === 1 && sel[0].type === "shape" && isDouble) {
@@ -2230,7 +2206,12 @@ stage.addEventListener("pointerdown", function(e){
   hintEl.style.opacity = 0;
   closePopovers();
   if (editingObj) {
-    // 入力中に他を触ったら、その場で確定してキーボードを閉じる
+    // ★編集中のテキストの「中」を触った場合は何もしない。
+    //   ここで確定してしまうと、文字を選択しようとタッチした瞬間に
+    //   編集が終わってしまい、範囲選択ができない(選択ループの原因)。
+    //   文字の選択・カーソル移動はブラウザ標準の動作に任せる。
+    if (editingObj.el && e.target && editingObj.el.contains(e.target)) return;
+    // 入力中に「他を」触ったら、その場で確定してキーボードを閉じる
     // (blur任せだと、preventDefaultする環境で確定が漏れる)
     commitText();
     blurKeyboard();
@@ -2374,7 +2355,11 @@ function distToSeg(px, py, a, b) {
 capture.addEventListener("pointerdown", function(e){
   hintEl.style.opacity = 0;
   closePopovers();   // 描き始めたら設定パネルは自動で閉じる
-  if (editingObj) { commitText(); blurKeyboard(); }   // 描き始めたら入力を確定
+  // 描き始めたら入力を確定(ただし編集中の文字の上での操作は除く)
+  if (editingObj && !(editingObj.el && e.target && editingObj.el.contains(e.target))) {
+    commitText();
+    blurKeyboard();
+  }
   if (pinch) return;
   // palm rejection: ペン描画中の指タッチは無視
   if (activeStroke && e.pointerType === "touch") return;
@@ -3949,10 +3934,29 @@ $("#mmToggle").onclick = function(){
   saveSettings();
 };
 $("#updateApp").onclick = function(){
-  // キャッシュとService Workerを完全に破棄して最新版を取り直す
-  // (IndexedDBのノートには一切触れないので、書いた内容は消えない)
-  statusEl.textContent = "最新版を取得しています…";
+  // ノート(IndexedDB)には触れず、アプリの配信物だけを取り直す
+  statusEl.textContent = "サーバーの最新版を確認中…";
   saveDocNow();
+  var url = location.pathname + "?u=" + Date.now();
+
+  // ①サーバーの実物を no-store で取得し、本当に新しい版があるか確かめる
+  fetch(url, { cache: "no-store" }).then(function(res){
+    return res.text();
+  }).then(function(txt){
+    var m = /<small>v([\d.]+)<\/small>/.exec(txt);
+    var server = m ? m[1] : "?";
+    if (server !== "?" && server === APP_VERSION) {
+      statusEl.textContent = "サーバーも v" + server + " です(GitHubの反映待ちの可能性)";
+    } else {
+      statusEl.textContent = "v" + server + " を取得します…";
+    }
+    return hardRefresh(url);
+  }).catch(function(){
+    statusEl.textContent = "通信できません。オフラインの可能性があります";
+  });
+};
+/* キャッシュとService Workerを完全に捨ててから読み直す */
+function hardRefresh(url) {
   var jobs = [];
   if (window.caches && caches.keys) {
     jobs.push(caches.keys().then(function(ks){
@@ -3964,12 +3968,13 @@ $("#updateApp").onclick = function(){
       return Promise.all(rs.map(function(r){ return r.unregister(); }));
     }));
   }
-  Promise.all(jobs).catch(function(){}).then(function(){
-    setTimeout(function(){
-      location.replace(location.pathname + "?u=" + Date.now());   // キャッシュ回避で再読込
-    }, 300);
+  return Promise.all(jobs).catch(function(){}).then(function(){
+    // 少し待ってから遷移(解除の反映を確実にする)
+    return new Promise(function(res){
+      setTimeout(function(){ location.replace(url); res(); }, 400);
+    });
   });
-};
+}
 $("#msToggle").onclick = function(){
   memorizeMode = !memorizeMode;
   this.classList.toggle("on", memorizeMode);
