@@ -76,7 +76,10 @@
   body.editing-mode #mapChip,
   body.editing-mode #topChip,
   body.editing-mode #ctxbar,
-  body.editing-mode #pnlTab{
+  body.editing-mode #pnlTab,
+  body.editing-mode #tbTab,
+  body.editing-mode #topbar,
+  body.editing-mode #barToggle{
     display:none !important;
   }
   /* 各オブジェクトの再描画を独立させ、入力中に全体が再描画されるのを防ぐ */
@@ -164,6 +167,18 @@
   }
   body.bar-hidden #topbar{
     transform:translateY(-140%);opacity:0;pointer-events:none;
+  }
+  #tbTuck{
+    width:26px;height:26px;border:none;border-radius:8px;
+    background:rgba(255,255,255,.06);color:var(--ui-dim);
+    font-size:12px;line-height:26px;text-align:center;padding:0;
+    cursor:pointer;margin-right:2px;flex:0 0 auto;
+  }
+  #tbTuck:hover{background:rgba(255,255,255,.16);color:#e8eaee}
+  body.tb-tucked #toolbar{display:none}
+  #tbTab{
+    bottom:calc(env(safe-area-inset-bottom) + 20px);
+    top:auto;
   }
   #barToggle{
     position:fixed;z-index:21;
@@ -375,6 +390,10 @@
     background:var(--ui-bg);border-radius:12px;padding:4px;
     box-shadow:0 4px 16px rgba(15,18,24,.35);gap:2px;
   }
+  /* その他のボタンは ⋯ を押したときだけ出す(常時は3つだけで邪魔にならない) */
+  #ctxExtra{display:none;gap:2px}
+  #ctxbar.expanded #ctxExtra{display:inline-flex}
+  #ctxbar.expanded #ctxMore{background:rgba(255,255,255,.16)}
   #ctxbar button{
     border:none;background:transparent;color:var(--ui-text);
     font-size:14px;font-weight:600;padding:8px 10px;border-radius:9px;cursor:pointer;
@@ -471,7 +490,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v9.7</small></div>
+  <div class="brand">InkNote <small>v9.9</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -577,8 +596,11 @@ window.onerror = function(msg, src, line){
   <div class="prow" style="color:var(--ui-dim);font-size:11px">図形を選択してＴを押すと中に文字を入力 / 直線・矢印は水平・垂直に自動吸着</div>
 </div>
 
+<button class="pnl-tab" id="tbTab" title="ツールバーを開く">🖊</button>
+
 <div id="toolbar">
   <div id="tbGrip" title="ドラッグで移動">⠿</div>
+  <button id="tbTuck" title="小さく畳む">⇱</button>
   <button class="tbtn active" data-tool="select" title="選択">
     <svg viewBox="0 0 24 24"><path d="M5 3l14 8-6.5 1.5L15 19l-3 1.5-2.5-6.5L5 17V3z"/></svg>
     選択
@@ -635,14 +657,17 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="ctxbar">
-  <button id="ctxCopy" title="画像としてコピー">📋</button>
-  <button id="ctxSave" title="画像として保存">💾</button>
   <button id="ctxEdit" title="編集">✎</button>
   <button id="ctxStyle" title="スタイル">Aa</button>
-  <button id="ctxCrop" title="トリミング">✂</button>
-  <button id="ctxDup" title="複製">⧉</button>
-  <button id="ctxFront" title="前面へ">⬆</button>
   <button id="ctxDel" class="del" title="削除">🗑</button>
+  <button id="ctxMore" title="その他">⋯</button>
+  <span id="ctxExtra">
+    <button id="ctxCopy" title="画像としてコピー">📋</button>
+    <button id="ctxSave" title="画像として保存">💾</button>
+    <button id="ctxCrop" title="トリミング">✂</button>
+    <button id="ctxDup" title="複製">⧉</button>
+    <button id="ctxFront" title="前面へ">⬆</button>
+  </span>
 </div>
 
 <div id="pagesScrim"></div>
@@ -821,7 +846,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "9.7";      // ⚙「アプリを更新」でサーバー版と照合する
+var APP_VERSION = "9.9";      // ⚙「アプリを更新」でサーバー版と照合する
 var bookmarks = [];
 var deletedIds = [];          // 削除済みページの墓標(復活防止・削除の同期)
 var booting = true;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
@@ -1298,6 +1323,7 @@ function selBBox() {
 
 /* ---------- 選択の表示 ---------- */
 function setSelection(list) {
+  ctxbar.classList.remove("expanded");   // 選択が変わったら「その他」は畳む
   // 前の選択の見た目を解除
   for (var i = 0; i < sel.length; i++)
     if (sel[i].el) sel[i].el.classList.remove("selected");
@@ -1337,13 +1363,40 @@ function updateSelUI() {
   $("#ctxEdit").style.display = (isText || isShape) ? "" : "none";
   $("#ctxStyle").style.display = (isText || isShape || hasStroke) ? "" : "none";
   $("#ctxCrop").style.display = isImage ? "" : "none";
-  // 邪魔にならないよう選択物の「下」に表示(下端が詰まる時だけ上へ)
-  var sx = b.x * view.s + view.x;
-  var syBottom = (b.y + b.h) * view.s + view.y;
-  var top = syBottom + 12;
-  if (top > innerHeight - 150) top = Math.max(60, b.y * view.s + view.y - 50);
-  ctxbar.style.left = Math.max(8, Math.min(innerWidth - 250, sx)) + "px";
-  ctxbar.style.top = Math.min(innerHeight - 120, Math.max(60, top)) + "px";
+  // 選択メニューは必ず「BOXの外側」に置く(文字の上に被せない)
+  var cw = ctxbar.offsetWidth || (ctxbar.classList.contains("expanded") ? 330 : 190);
+  var ch = ctxbar.offsetHeight || 44;
+  var r = {                                   // BOXの画面上の矩形
+    x: b.x * view.s + view.x,
+    y: b.y * view.s + view.y,
+    w: b.w * view.s,
+    h: b.h * view.s
+  };
+  var M = 10;                                 // BOXとの間隔
+  var TOP_LIMIT = 56, BOT_LIMIT = innerHeight - 96;   // 使ってよい画面の範囲
+  var cand = [
+    { x: r.x, y: r.y + r.h + M },             // 下
+    { x: r.x, y: r.y - ch - M },              // 上
+    { x: r.x + r.w + M, y: Math.max(TOP_LIMIT, r.y) },   // 右
+    { x: r.x - cw - M, y: Math.max(TOP_LIMIT, r.y) }     // 左
+  ];
+  var placed = null;
+  for (var ci = 0; ci < cand.length; ci++) {
+    var c = cand[ci];
+    var cx = Math.max(8, Math.min(innerWidth - cw - 8, c.x));
+    var cy = c.y;
+    if (cy < TOP_LIMIT || cy + ch > BOT_LIMIT) continue;         // 画面外
+    if (cx + cw > r.x && cx < r.x + r.w &&
+        cy + ch > r.y && cy < r.y + r.h) continue;               // BOXに重なる
+    placed = { x: cx, y: cy };
+    break;
+  }
+  if (!placed) {
+    // BOXが画面いっぱいで外に置けない時は、画面下端(ツールバーの上)へ逃がす
+    placed = { x: Math.max(8, Math.min(innerWidth - cw - 8, r.x)), y: BOT_LIMIT - ch };
+  }
+  ctxbar.style.left = placed.x + "px";
+  ctxbar.style.top = placed.y + "px";
 }
 
 /* ---------- undo/redo/保存 ---------- */
@@ -1870,11 +1923,32 @@ function blurKeyboard() {
 /* 編集中テキストの移動グリップ: キーボードを開いたままドラッグで移動できる */
 function positionEditHandle() {
   if (!editingObj) { editHandle.classList.remove("show"); return; }
-  var vvTop = window.visualViewport ? window.visualViewport.offsetTop : 0;
-  var sx = editingObj.x * view.s + view.x;
-  var sy = editingObj.y * view.s + view.y;
-  editHandle.style.left = Math.max(6, Math.min(innerWidth - 44, sx - 6)) + "px";
-  editHandle.style.top = Math.max(vvTop + 56, sy - 46) + "px";
+  var vv = window.visualViewport;
+  var vvTop = vv ? vv.offsetTop : 0;
+  var visH = vv ? vv.height : innerHeight;
+  var HS = 40;                                  // グリップの大きさ
+  var b = objBBox(editingObj);
+  var rx = b.x * view.s + view.x;
+  var ry = b.y * view.s + view.y;
+  var rw = b.w * view.s;
+
+  // 文字の上に被せない: BOXの「左外」に置く。入らなければ「右外」、
+  // どちらも無理なら上外へ逃がす。
+  var x, y;
+  if (rx - HS - 8 >= 6) {
+    x = rx - HS - 8;                            // 左の外側
+  } else if (rx + rw + 8 + HS <= innerWidth - 6) {
+    x = rx + rw + 8;                            // 右の外側
+  } else {
+    x = Math.max(6, rx - HS - 8);               // 画面端に寄せる
+  }
+  // 縦は編集中のカーソル付近(画面内に収める)
+  var cy = caretScreenY();
+  y = (cy != null ? cy : ry) - HS / 2;
+  y = Math.max(vvTop + 56, Math.min(vvTop + visH - HS - 12, y));
+
+  editHandle.style.left = Math.round(x) + "px";
+  editHandle.style.top = Math.round(y) + "px";
   editHandle.classList.add("show");
 }
 editHandle.addEventListener("pointerdown", function(e){
@@ -3260,6 +3334,19 @@ $("#pnlTab").onclick = function(){
   var p = tuckedPanel;
   hideTab();
   if (p) showPopover(p);
+};
+/* ツールバーを畳む/戻す(キーボードや本文と重なる時に) */
+$("#tbTuck").onclick = function(e){
+  e.stopPropagation();
+  closePopovers();
+  hideTab();
+  document.body.classList.add("tb-tucked");
+  $("#tbTab").classList.add("show");
+  statusEl.textContent = "ツールバーを畳みました(右下のタブで復帰)";
+};
+$("#tbTab").onclick = function(){
+  document.body.classList.remove("tb-tucked");
+  $("#tbTab").classList.remove("show");
 };
 (function(){
   var ts = document.querySelectorAll(".pnl-tuck");
@@ -4679,6 +4766,11 @@ function pasteFromClipboard() {
     statusEl.textContent = "貼り付けが許可されませんでした";
   });
 }
+$("#ctxMore").onclick = function(e){
+  e.stopPropagation();
+  ctxbar.classList.toggle("expanded");
+  updateSelUI();
+};
 $("#ctxCopy").onclick = copySelection;
 $("#ctxSave").onclick = function(){
   if (!sel.length) return;
