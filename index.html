@@ -490,7 +490,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v9.9</small></div>
+  <div class="brand">InkNote <small>v10.1</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -753,6 +753,14 @@ window.onerror = function(msg, src, line){
       <button class="stybtn th-opt" data-t="dark">ダーク</button>
       <button class="stybtn th-opt" data-t="board">黒板</button>
     </div>
+    <div class="st-row" id="pgOpsRow" style="display:none">
+      <span class="st-label">ページ</span>
+      <button class="stybtn" id="pgInsert">⤵ 空白ページを挿入</button>
+      <button class="stybtn" id="pgRemove">⤴ 空白ページを詰める</button>
+    </div>
+    <div class="st-row" id="pgOpsHint" style="display:none;color:var(--ui-dim);font-size:11px">
+      画面上部に見えているページの「前」にA4を1枚差し込みます(以降の内容が1ページ分ずれます)
+    </div>
     <div class="st-row"><span class="st-label">サイズ</span>
       <button class="stybtn cv-opt sel" data-cv="inf">無限</button>
       <button class="stybtn cv-opt" data-cv="a4v">A4縦</button>
@@ -846,7 +854,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "9.9";      // ⚙「アプリを更新」でサーバー版と照合する
+var APP_VERSION = "10.1";      // ⚙「アプリを更新」でサーバー版と照合する
 var bookmarks = [];
 var deletedIds = [];          // 削除済みページの墓標(復活防止・削除の同期)
 var booting = true;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
@@ -3802,6 +3810,102 @@ function addPage() {
   pages.push({ id: id, title: "ページ" + (pages.length + 1), ts: Date.now() });
   loadPage(id);
 }
+/* =========================================================
+   A4モードのページ挿入/詰め
+   用紙は縦(a4v)ならy方向、横(a4h)ならx方向に A4H(=1123px)刻みで並ぶ。
+   境界より後ろにある物をまるごと1ページ分ずらすことで実現する。
+========================================================= */
+function currentSheetIndex() {
+  var w = toWorld(12, 90);                       // 画面上部に見えているページ
+  var pos = (canvasMode === "a4v") ? w.y : w.x;
+  return Math.max(0, Math.floor(pos / A4H));
+}
+function shiftObjectsFrom(boundary, delta) {
+  var vert = (canvasMode === "a4v");
+  var n = 0;
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    var b = objBBox(o);
+    var start = vert ? b.y : b.x;
+    if (start >= boundary - 0.5) {               // 境界より後ろから始まる物だけ
+      moveObjectRaw(o, vert ? 0 : delta, vert ? delta : 0);
+      n++;
+    }
+  }
+  return n;
+}
+function insertBlankPage() {
+  if (canvasMode === "inf") return;
+  var idx = currentSheetIndex();
+  pushUndo();
+  var n = shiftObjectsFrom(idx * A4H, A4H);      // 以降を1ページ分うしろへ
+  inkDirty = true;
+  updateSheets();
+  applyView();
+  scheduleSave();
+  statusEl.textContent = (idx + 1) + "ページ目の前に空白ページを挿入しました" +
+    (n ? "(" + n + "個を移動)" : "");
+}
+function removeBlankPage() {
+  if (canvasMode === "inf") return;
+  var idx = currentSheetIndex();
+  var vert = (canvasMode === "a4v");
+  var top = idx * A4H, bottom = top + A4H;
+  for (var i = 0; i < objects.length; i++) {     // 中身があるページは詰めない
+    var b = objBBox(objects[i]);
+    var s = vert ? b.y : b.x;
+    var e = s + (vert ? b.h : b.w);
+    if (e > top + 0.5 && s < bottom - 0.5) {
+      statusEl.textContent = "このページには内容があります(空白ページのみ詰められます)";
+      return;
+    }
+  }
+  pushUndo();
+  var n = shiftObjectsFrom(bottom, -A4H);        // 以降を1ページ分まえへ
+  inkDirty = true;
+  updateSheets();
+  applyView();
+  scheduleSave();
+  statusEl.textContent = (idx + 1) + "ページ目(空白)を詰めました" +
+    (n ? "(" + n + "個を移動)" : "");
+}
+$("#pgInsert").onclick = function(){ insertBlankPage(); closeMenu(); };
+$("#pgRemove").onclick = function(){ removeBlankPage(); closeMenu(); };
+
+/* ページの複製: 中身ごとコピーして、元のページの直後に差し込む */
+function duplicatePage(id) {
+  var pg = findPage(id);
+  if (!pg) return;
+  saveDocNow();                        // 編集中の内容を確定してから複製する
+  var newId = Date.now();
+  var copyTitle = pg.title + " のコピー";
+
+  var makeCopy = function(doc){
+    var idx = pages.map(function(p){ return p.id; }).indexOf(id);
+    pages.splice(idx + 1, 0, { id: newId, title: copyTitle, ts: Date.now() });
+    var body = doc && doc.json ? { json: doc.json, ts: Date.now() } : { json: "[]", ts: Date.now() };
+    return kvSet("page_" + newId, body).then(function(){
+      return saveIndex();
+    }).then(function(){
+      if (cloudUser()) {
+        cloudPushPage(newId).catch(function(){});
+        cloudPushIndex().catch(function(){});
+      }
+      renderPageList();
+      updatePageBtn();
+      statusEl.textContent = "「" + copyTitle + "」を作成しました";
+    });
+  };
+
+  if (id === currentId) {
+    // 開いているページは、いまの内容をそのまま写す
+    // (serializeSceneは既にJSON文字列を返すので、二重にstringifyしない)
+    makeCopy({ json: serializeScene() });
+  } else {
+    kvGet("page_" + id).then(function(doc){ return makeCopy(doc); })
+      .catch(function(){ makeCopy(null); });
+  }
+}
 function switchPage(id) {
   if (id === currentId) { closePages(); return; }
   saveDocNow();
@@ -3855,12 +3959,17 @@ function renderPageList() {
       ren.textContent = "✎";
       ren.title = "名前を変更";
       ren.addEventListener("click", function(ev){ ev.stopPropagation(); renamePage(pg.id); });
+      var dup = document.createElement("button");
+      dup.textContent = "⧉";
+      dup.title = "複製";
+      dup.addEventListener("click", function(ev){ ev.stopPropagation(); duplicatePage(pg.id); });
       var del = document.createElement("button");
       del.textContent = "🗑";
       del.title = "削除";
       del.addEventListener("click", function(ev){ ev.stopPropagation(); deletePage(pg.id); });
       row.appendChild(title);
       row.appendChild(ren);
+      row.appendChild(dup);
       row.appendChild(del);
       list.appendChild(row);
     })(pages[i]);
@@ -3910,6 +4019,9 @@ function maybeSheets() {
 function applyCanvasMode() {
   var th = THEMES[themeName] || THEMES.cream;
   $("#topChip").style.display = (canvasMode === "inf") ? "none" : "";
+  var showOps = (canvasMode !== "inf") ? "" : "none";
+  $("#pgOpsRow").style.display = showOps;      // A4のときだけ出す
+  $("#pgOpsHint").style.display = showOps;
   if (canvasMode === "inf") {
     sheetLayer.style.display = "none";
     document.body.style.background = th.paper;
