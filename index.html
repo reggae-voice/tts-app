@@ -320,6 +320,61 @@
   #zoomChip{bottom:calc(env(safe-area-inset-bottom) + 84px)}
   #fitChip{bottom:calc(env(safe-area-inset-bottom) + 122px)}
   #posChip{bottom:calc(env(safe-area-inset-bottom) + 160px);color:#ffd98a}
+  /* ===== 縦スクロールスライダー(A4モード) ===== */
+  #vscroll{
+    position:fixed;z-index:26;display:none;
+    touch-action:none;
+  }
+  #vscroll.on{display:block}
+  /* --- 縦(A4縦): 右端 --- */
+  #vscroll.v{
+    right:2px;width:30px;
+    top:calc(env(safe-area-inset-top) + 90px);
+    bottom:calc(env(safe-area-inset-bottom) + 120px);
+  }
+  #vscroll.v #vsTrack{
+    position:absolute;right:10px;top:0;bottom:0;width:4px;
+    background:rgba(120,126,140,.18);border-radius:2px;
+  }
+  #vscroll.v #vsThumb{
+    position:absolute;right:3px;width:18px;height:52px;
+    background:rgba(70,80,96,.55);border-radius:9px;
+    box-shadow:0 1px 5px rgba(15,18,24,.3);
+    -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+    transition:background .15s, width .15s, right .15s;
+  }
+  #vscroll.v.drag #vsThumb{background:var(--accent);width:24px;right:0}
+  #vscroll.v #vsPage{
+    position:absolute;right:34px;top:0;
+    background:var(--ui-bg);color:#e8eaee;font-size:13px;font-weight:700;
+    padding:7px 12px;border-radius:10px;white-space:nowrap;
+    box-shadow:0 4px 14px rgba(15,18,24,.4);display:none;
+  }
+  /* --- 横(A4横): 下端(ツールバーの上) --- */
+  #vscroll.h{
+    left:14px;right:14px;height:30px;
+    bottom:calc(env(safe-area-inset-bottom) + 92px);
+  }
+  #vscroll.h #vsTrack{
+    position:absolute;bottom:10px;left:0;right:0;height:4px;
+    background:rgba(120,126,140,.18);border-radius:2px;
+  }
+  #vscroll.h #vsThumb{
+    position:absolute;bottom:3px;height:18px;width:52px;
+    background:rgba(70,80,96,.55);border-radius:9px;
+    box-shadow:0 1px 5px rgba(15,18,24,.3);
+    -webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);
+    transition:background .15s, height .15s, bottom .15s;
+  }
+  #vscroll.h.drag #vsThumb{background:var(--accent);height:24px;bottom:0}
+  #vscroll.h #vsPage{
+    position:absolute;bottom:34px;left:0;
+    background:var(--ui-bg);color:#e8eaee;font-size:13px;font-weight:700;
+    padding:7px 12px;border-radius:10px;white-space:nowrap;
+    box-shadow:0 4px 14px rgba(15,18,24,.4);display:none;
+  }
+  #vscroll.drag #vsPage{display:block}
+  body.editing-mode #vscroll{display:none !important}
   #topChip{
     position:fixed;left:14px;
     bottom:calc(env(safe-area-inset-bottom) + 176px);
@@ -587,7 +642,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v10.4</small></div>
+  <div class="brand">InkNote <small>v10.6</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -735,6 +790,11 @@ window.onerror = function(msg, src, line){
 <button id="pasteChip">📋 貼り付け</button>
 <button id="mapChip">🗺 マップ</button>
 <button id="topChip" style="display:none">⤒ 先頭</button>
+<div id="vscroll">
+  <div id="vsTrack"></div>
+  <div id="vsThumb"></div>
+  <div id="vsPage"></div>
+</div>
 <div id="editHandle" title="ドラッグで移動">✥</div>
 
 <div id="cropModal">
@@ -945,6 +1005,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -972,7 +1033,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "10.4";
+var APP_VERSION = "10.6";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1118,6 +1179,7 @@ function applyView() {
   document.body.classList.toggle("tiny-zoom", view.s < TEXT_DOM_MIN);
   world.style.transform = "translate(" + view.x + "px," + view.y + "px) scale(" + view.s + ")";
   world.style.setProperty("--ws", view.s);
+  if (window.__syncVScroll) window.__syncVScroll();
   var pct = view.s * 100;
   $("#zoomChip").textContent =
     (pct >= 10 ? Math.round(pct) : pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)) + "%";
@@ -3073,6 +3135,99 @@ $("#barToggle").onclick = function(){
   var hidden = document.body.classList.toggle("bar-hidden");
   this.textContent = hidden ? "▼" : "▲";
 };
+/* =========================================================
+   縦スクロールスライダー(A4モード)
+   右端のつまみで一気に移動できる。位置はビューと双方向に同期。
+========================================================= */
+(function(){
+  var vs = $("#vscroll"), thumb = $("#vsThumb"), pageEl = $("#vsPage");
+  var dragging = false;
+
+  function scrollRange() {
+    // world座標での可動域: 先頭(24) 〜 末尾
+    var vert = (canvasMode === "a4v");
+    var total = sheetExtent() * view.s;                 // 画面px換算の総延長
+    var span = total - (vert ? innerHeight : innerWidth) + 48;
+    return Math.max(1, span);
+  }
+  function trackLen() {
+    // つまみが動ける距離(縦は高さ、横は幅ベース)
+    return (canvasMode === "a4v")
+      ? vs.clientHeight - thumb.offsetHeight
+      : vs.clientWidth - thumb.offsetWidth;
+  }
+
+  /* ビュー位置 → つまみ位置 */
+  window.__syncVScroll = function() {
+    if (canvasMode === "inf") { vs.classList.remove("on"); return; }
+    var vert = (canvasMode === "a4v");
+    vs.classList.add("on");
+    vs.classList.toggle("v", vert);      // A4縦: 右端の縦スライダー
+    vs.classList.toggle("h", !vert);     // A4横: 下端の横スライダー
+    var pos = 24 - (vert ? view.y : view.x);            // 0=先頭
+    var ratio = Math.max(0, Math.min(1, pos / scrollRange()));
+    if (vert) {
+      thumb.style.top = (ratio * trackLen()) + "px";
+      thumb.style.left = "";
+    } else {
+      thumb.style.left = (ratio * trackLen()) + "px";
+      thumb.style.top = "";
+    }
+    if (dragging) {
+      var pgN = Math.floor((pos / view.s) / A4H) + 1;
+      var total = Math.max(1, Math.round(sheetExtent() / A4H));
+      pageEl.textContent = pgN + " / " + total + " ページ";
+      if (vert) {
+        pageEl.style.top = Math.max(0, Math.min(trackLen(), parseFloat(thumb.style.top))) + "px";
+        pageEl.style.left = "";
+      } else {
+        var pl = Math.max(0, Math.min(trackLen() - 60, parseFloat(thumb.style.left)));
+        pageEl.style.left = pl + "px";
+        pageEl.style.top = "";
+      }
+    }
+  };
+
+  /* つまみ位置 → ビュー位置 */
+  function applyFromRatio(ratio) {
+    var vert = (canvasMode === "a4v");
+    var pos = ratio * scrollRange();
+    if (vert) view.y = 24 - pos;
+    else view.x = 24 - pos;
+    clampView();
+    applyView();
+    updateSelUI();
+  }
+
+  vs.addEventListener("pointerdown", function(e){
+    if (canvasMode === "inf") return;
+    e.preventDefault();
+    e.stopPropagation();
+    dragging = true;
+    vs.classList.add("drag");
+    try { vs.setPointerCapture(e.pointerId); } catch (err) {}
+    var move = function(ev){
+      var r = vs.getBoundingClientRect();
+      var vert = (canvasMode === "a4v");
+      var ratio = vert
+        ? (ev.clientY - r.top - thumb.offsetHeight / 2) / trackLen()
+        : (ev.clientX - r.left - thumb.offsetWidth / 2) / trackLen();
+      applyFromRatio(Math.max(0, Math.min(1, ratio)));
+    };
+    move(e);                                            // 押した位置へ即ジャンプ
+    var up = function(ev){
+      dragging = false;
+      vs.classList.remove("drag");
+      vs.removeEventListener("pointermove", move);
+      vs.removeEventListener("pointerup", up);
+      vs.removeEventListener("pointercancel", up);
+    };
+    vs.addEventListener("pointermove", move);
+    vs.addEventListener("pointerup", up);
+    vs.addEventListener("pointercancel", up);
+  });
+})();
+
 $("#topChip").onclick = function(){
   // 用紙の先頭(1ページ目の上端)へ戻る
   if (canvasMode === "a4v") animateView({ s: view.s, x: view.x, y: 24 });
