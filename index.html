@@ -454,6 +454,103 @@
   .pp-row{display:flex;align-items:center;gap:6px;padding:11px 10px;border-radius:12px;color:var(--ui-text);font-size:14px}
   .pp-row.current{background:var(--accent-soft)}
   .pp-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  /* ===== カード表示(Keep風の2列グリッド) ===== */
+  #ppList.grid{
+    display:grid;grid-template-columns:1fr 1fr;gap:10px;
+    align-content:start;padding:2px;
+  }
+  .pp-card{
+    border-radius:14px;overflow:hidden;cursor:pointer;
+    background:rgba(255,255,255,.05);
+    border:1px solid var(--ui-line);
+    display:flex;flex-direction:column;
+  }
+  .pp-card.current{outline:2px solid var(--accent)}
+  .pp-thumb{
+    width:100%;aspect-ratio:4/3;object-fit:cover;display:block;
+    background:#F4EFE2;border:none;
+  }
+  div.pp-thumb{
+    display:flex;align-items:center;justify-content:center;
+    color:#b9b2a0;font-size:26px;
+  }
+  .pp-card-body{padding:7px 9px 2px;display:flex;align-items:center;gap:2px}
+  .pp-card-title{
+    flex:1;font-size:12.5px;font-weight:600;color:var(--ui-text);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .pp-card-menu{
+    border:none;background:none;color:var(--ui-dim);font-size:15px;
+    padding:1px 3px;cursor:pointer;flex:0 0 auto;
+  }
+  .pp-card-date{font-size:10px;color:var(--ui-dim);padding:0 9px 7px}
+  /* ===== フォルダタブ ===== */
+  #ppFolders{
+    display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px;
+    -webkit-overflow-scrolling:touch;flex:0 0 auto;
+  }
+  .pf-tab{
+    border:1px solid var(--ui-line);background:none;color:var(--ui-dim);
+    border-radius:999px;padding:5px 12px;font-size:12px;white-space:nowrap;
+    cursor:pointer;flex:0 0 auto;
+  }
+  .pf-tab.sel{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+  .pp-ctrl{
+    border:none;background:rgba(255,255,255,.07);color:var(--ui-dim);
+    border-radius:9px;padding:5px 9px;font-size:12px;cursor:pointer;
+  }
+  /* ===== アクションシート ===== */
+  #sheetScrim{
+    position:fixed;inset:0;background:rgba(10,12,16,.45);
+    display:none;z-index:60;
+  }
+  #sheetScrim.show{display:block}
+  #actionSheet{
+    position:fixed;left:50%;transform:translateX(-50%) translateY(120%);
+    bottom:calc(env(safe-area-inset-bottom) + 10px);
+    width:min(420px, calc(100vw - 20px));
+    background:var(--ui-bg2);border:1px solid var(--ui-line);
+    border-radius:18px;padding:12px;z-index:61;
+    box-shadow:0 -8px 30px rgba(10,12,16,.45);
+    transition:transform .2s ease;
+  }
+  #actionSheet.show{transform:translateX(-50%) translateY(0)}
+  #asTitle{
+    color:var(--ui-dim);font-size:12px;font-weight:700;
+    padding:2px 6px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .as-item{
+    display:block;width:100%;border:none;text-align:left;
+    background:rgba(255,255,255,.05);color:var(--ui-text);
+    border-radius:12px;padding:13px 14px;font-size:14px;margin-top:6px;
+    cursor:pointer;
+  }
+  .as-item:active{background:rgba(255,255,255,.14)}
+  .as-item.danger{color:#ff7a7a}
+  .as-item.cancel{background:none;color:var(--ui-dim);text-align:center}
+  /* ===== 入力ダイアログ ===== */
+  #inputDlg{
+    position:fixed;left:50%;top:22%;transform:translateX(-50%);
+    width:min(380px, calc(100vw - 32px));
+    background:var(--ui-bg2);border:1px solid var(--ui-line);
+    border-radius:16px;padding:16px;z-index:62;display:none;
+    box-shadow:0 12px 40px rgba(10,12,16,.5);
+  }
+  #inputDlg.show{display:block}
+  #idLabel{color:var(--ui-text);font-size:13.5px;font-weight:600;margin-bottom:10px}
+  #idInput{
+    width:100%;box-sizing:border-box;border:1px solid var(--ui-line);
+    background:rgba(255,255,255,.06);color:var(--ui-text);
+    border-radius:10px;padding:11px 12px;font-size:15px;outline:none;
+  }
+  #idInput:focus{border-color:var(--accent)}
+  .id-row{display:flex;gap:8px;margin-top:12px}
+  .id-row button{
+    flex:1;border:none;border-radius:10px;padding:11px;font-size:13.5px;
+    font-weight:700;cursor:pointer;
+  }
+  #idCancel{background:rgba(255,255,255,.07);color:var(--ui-dim)}
+  #idOk{background:var(--accent);color:#fff}
   .pp-row button{border:none;background:transparent;color:var(--ui-dim);font-size:15px;padding:6px 8px;cursor:pointer}
   .pp-foot{display:flex;gap:8px;padding-top:10px}
   #ppAdd,#psAdd,.sync-primary{flex:1;border:none;border-radius:12px;padding:12px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:700;cursor:pointer}
@@ -490,7 +587,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v10.1</small></div>
+  <div class="brand">InkNote <small>v10.4</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -671,8 +768,29 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="pagesScrim"></div>
+<!-- アクションシート(prompt/confirm非依存: PWAでも確実に動く) -->
+<div id="sheetScrim"></div>
+<div id="actionSheet">
+  <div id="asTitle"></div>
+  <div id="asBody"></div>
+</div>
+<div id="inputDlg">
+  <div id="idLabel"></div>
+  <input id="idInput" type="text">
+  <div class="id-row">
+    <button id="idCancel">キャンセル</button>
+    <button id="idOk">OK</button>
+  </div>
+</div>
+
 <div id="pagesPanel">
-  <div class="pp-head"><span>ノート一覧</span><button id="ppClose">✕</button></div>
+  <div class="pp-head"><span>ノート一覧</span>
+    <span style="flex:1"></span>
+    <button class="pp-ctrl" id="ppSort" title="並び順">🕒 変更順</button>
+    <button class="pp-ctrl" id="ppView" title="表示切替">▦</button>
+    <button id="ppClose">✕</button>
+  </div>
+  <div id="ppFolders"></div>
   <div id="ppList" class="scrollable"></div>
   <div class="pp-foot">
     <button id="ppAdd">＋ 新しいページ</button>
@@ -854,7 +972,15 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "10.1";      // ⚙「アプリを更新」でサーバー版と照合する
+var APP_VERSION = "10.4";
+var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
+var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
+var listFolder = "";          // 表示中のフォルダ("" = すべて)
+var folders = [];             // フォルダ一覧(空フォルダも保持する)
+try {
+  listView = localStorage.getItem("inknote_listview") || "grid";
+  listSort = localStorage.getItem("inknote_listsort") || "ts";
+} catch (e) {}      // ⚙「アプリを更新」でサーバー版と照合する
 var bookmarks = [];
 var deletedIds = [];          // 削除済みページの墓標(復活防止・削除の同期)
 var booting = true;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
@@ -3749,10 +3875,43 @@ function saveDoc() {
   });
   var pg = findPage(currentId);
   if (pg) { pg.ts = Date.now(); saveIndex(); }
+  scheduleThumb(pid);
+}
+/* ---- サムネイル: 保存が落ち着いたら小さなJPEGを作って残す(端末内のみ) ---- */
+var thumbTimer = null;
+function scheduleThumb(pid) {
+  clearTimeout(thumbTimer);
+  thumbTimer = setTimeout(function(){ makeThumb(pid); }, 1200);
+}
+function makeThumb(pid) {
+  if (pid !== currentId) return;             // 既に切替済みなら作らない
+  try {
+    if (!objects.length) { kvDel("thumb_" + pid); return; }
+    var c = renderPageToCanvas(null, 24);
+    if (!c || !c.width) return;
+    var W = 240, H = 180;                     // 4:3の小さなカード画像
+    var s = Math.max(W / c.width, H / c.height);
+    var t = document.createElement("canvas");
+    t.width = W; t.height = H;
+    var g = t.getContext("2d");
+    g.fillStyle = (THEMES[themeName] || THEMES.cream).paper;
+    g.fillRect(0, 0, W, H);
+    g.drawImage(c, 0, 0, W / s, H / s, 0, 0, W, H);
+    kvSet("thumb_" + pid, { png: t.toDataURL("image/jpeg", 0.7), ts: Date.now() });
+  } catch (e) {}
 }
 function saveDocNow() { clearTimeout(saveTimer); saveDoc(); }
 function saveIndex() {
-  return kvSet("pages_index", { pages: pages, currentId: currentId, deleted: deletedIds });
+  return kvSet("pages_index", { pages: pages, currentId: currentId,
+                                deleted: deletedIds, folders: folders });
+}
+function ensureFolder(name) {
+  name = (name || "").trim();
+  if (!name) return;
+  if (folders.indexOf(name) === -1) {
+    folders.push(name);
+    folders.sort(function(a,b){ return a.localeCompare(b, "ja"); });
+  }
 }
 function isDeleted(id) {
   for (var i = 0; i < deletedIds.length; i++) if (deletedIds[i].id === id) return true;
@@ -3915,19 +4074,29 @@ function switchPage(id) {
 function renamePage(id) {
   var pg = findPage(id);
   if (!pg) return;
-  var t = prompt("ページ名を入力", pg.title);
-  if (t && t.trim()) {
-    pg.title = t.trim();
-    saveIndex();
-    renderPageList();
-    updatePageBtn();
-  }
+  askText("ページ名を入力", pg.title, function(t){
+    if (t && t.trim()) {
+      pg.title = t.trim();
+      saveIndex();
+      if (cloudUser()) cloudPushIndex().catch(function(){});
+      renderPageList();
+      updatePageBtn();
+    }
+  });
 }
 function deletePage(id) {
   var pg = findPage(id);
   if (!pg) return;
-  if (!confirm("「" + pg.title + "」を削除しますか?この操作は取り消せません。")) return;
+  showSheet("「" + pg.title + "」を削除しますか?(取り消せません)", [
+    { label: "🗑 削除する", danger: true, fn: function(){ deletePageNow(id); } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+function deletePageNow(id) {
+  var pg = findPage(id);
+  if (!pg) return;
   kvDel("page_" + id);
+  kvDel("thumb_" + id);
   cloudDeletePage(id);
   deletedIds.push({ id: id, ts: Date.now() });   // 墓標: 他端末から復活しないように
   pages = pages.filter(function(p){ return p.id !== id; });
@@ -3944,37 +4113,284 @@ function deletePage(id) {
 }
 
 /* ---------- ページ一覧パネル ---------- */
+/* ---- アクションシート: prompt/confirmの代わり(PWAでも確実に動く) ---- */
+function showSheet(title, items) {
+  var sc = $("#sheetScrim"), sh = $("#actionSheet");
+  $("#asTitle").textContent = title || "";
+  var body = $("#asBody");
+  body.innerHTML = "";
+  function close() {
+    sh.classList.remove("show");
+    sc.classList.remove("show");
+    sc.onclick = null;
+  }
+  items.forEach(function(it){
+    var b = document.createElement("button");
+    b.className = "as-item" + (it.danger ? " danger" : "") + (it.cancel ? " cancel" : "");
+    b.textContent = it.label;
+    b.addEventListener("click", function(){
+      close();
+      if (it.fn) setTimeout(it.fn, 30);
+    });
+    body.appendChild(b);
+  });
+  sc.onclick = close;
+  sc.classList.add("show");
+  sh.classList.add("show");
+}
+function askText(label, def, cb) {
+  var dlg = $("#inputDlg"), inp = $("#idInput");
+  $("#idLabel").textContent = label;
+  inp.value = def || "";
+  $("#sheetScrim").classList.add("show");
+  dlg.classList.add("show");
+  setTimeout(function(){ inp.focus(); inp.select(); }, 60);
+  function done(val) {
+    dlg.classList.remove("show");
+    $("#sheetScrim").classList.remove("show");
+    $("#sheetScrim").onclick = null;
+    inp.onkeydown = null;
+    if (cb) cb(val);
+  }
+  $("#idOk").onclick = function(){ done(inp.value); };
+  $("#idCancel").onclick = function(){ done(null); };
+  $("#sheetScrim").onclick = function(){ done(null); };
+  inp.onkeydown = function(e){
+    if (e.key === "Enter") { e.preventDefault(); done(inp.value); }
+    if (e.key === "Escape") done(null);
+  };
+}
+function setPageFolder(pg, folder) {
+  pg.folder = (folder || "").trim();
+  ensureFolder(pg.folder);
+  saveIndex();
+  if (cloudUser()) cloudPushIndex().catch(function(){});
+  renderPageList();
+  statusEl.textContent = pg.folder
+    ? "「" + pg.title + "」を 📁" + pg.folder + " に入れました"
+    : "「" + pg.title + "」をフォルダから出しました";
+}
+/* フォルダの管理(選択中のタブをもう一度タップ) */
+function folderMenu(f) {
+  var n = pages.filter(function(p){ return (p.folder||"") === f; }).length;
+  showSheet("📁 " + f + "(" + n + "ページ)", [
+    { label: "✎ フォルダ名を変更", fn: function(){
+        askText("新しいフォルダ名", f, function(t){
+          if (!t || !t.trim() || t.trim() === f) return;
+          var nf = t.trim();
+          ensureFolder(nf);
+          folders = folders.filter(function(x){ return x !== f; });
+          pages.forEach(function(p){ if ((p.folder||"") === f) p.folder = nf; });
+          if (listFolder === f) listFolder = nf;
+          saveIndex();
+          if (cloudUser()) cloudPushIndex().catch(function(){});
+          renderPageList();
+        });
+    }},
+    { label: "フォルダを削除(ページは残る)", danger: true, fn: function(){
+        folders = folders.filter(function(x){ return x !== f; });
+        pages.forEach(function(p){ if ((p.folder||"") === f) p.folder = ""; });
+        if (listFolder === f) listFolder = "";
+        saveIndex();
+        if (cloudUser()) cloudPushIndex().catch(function(){});
+        renderPageList();
+        statusEl.textContent = "📁" + f + " を削除しました(中のページは「すべて」に残っています)";
+    }},
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+function pickFolder(pg) {
+  // 既存フォルダの一覧から選ぶ + 新規作成
+  var items = folderList().map(function(f){
+    return { label: "📁 " + f, fn: function(){ setPageFolder(pg, f); } };
+  });
+  items.push({ label: "＋ 新しいフォルダ…", fn: function(){
+    askText("新しいフォルダ名", "", function(name){
+      if (name && name.trim()) setPageFolder(pg, name);
+    });
+  }});
+  if (pg.folder) items.push({ label: "フォルダから出す", fn: function(){ setPageFolder(pg, ""); } });
+  items.push({ label: "キャンセル", cancel: true });
+  showSheet("「" + pg.title + "」の移動先", items);
+}
+function sortedPages() {
+  var arr = pages.slice();
+  if (listSort === "name") arr.sort(function(a,b){ return (a.title||"").localeCompare(b.title||"", "ja"); });
+  else if (listSort === "created") arr.sort(function(a,b){ return a.id - b.id; });
+  else arr.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });   // 変更順(新しい順)
+  return arr;
+}
+function folderList() {
+  // 独立データ(folders)と、ページ側に付いているfolderの和集合
+  var seen = {}, out = [];
+  var add = function(f){ if (f && !seen[f]) { seen[f] = 1; out.push(f); } };
+  for (var i = 0; i < folders.length; i++) add(folders[i]);
+  for (var j = 0; j < pages.length; j++) add(pages[j].folder || "");
+  out.sort(function(a,b){ return a.localeCompare(b, "ja"); });
+  return out;
+}
+function renderFolderTabs() {
+  var wrap = $("#ppFolders");
+  wrap.innerHTML = "";
+  var fl = folderList();
+  var mk = function(label, val){
+    var b = document.createElement("button");
+    b.className = "pf-tab" + (listFolder === val ? " sel" : "");
+    b.textContent = label;
+    b.addEventListener("click", function(){
+      if (val && listFolder === val) { folderMenu(val); return; }  // 選択中を再タップ=管理
+      listFolder = val;
+      renderPageList();
+    });
+    wrap.appendChild(b);
+  };
+  mk("すべて", "");
+  for (var i = 0; i < fl.length; i++) mk("📁 " + fl[i], fl[i]);
+  // フォルダが多い時は「📂」から一覧シートで選べる(横スクロール地獄の回避)
+  if (fl.length >= 4) {
+    var all = document.createElement("button");
+    all.className = "pf-tab";
+    all.textContent = "📂";
+    all.title = "フォルダ一覧";
+    all.addEventListener("click", function(){
+      var items = [{ label: "すべて", fn: function(){ listFolder = ""; renderPageList(); } }];
+      fl.forEach(function(f){
+        var n = pages.filter(function(p){ return (p.folder||"") === f; }).length;
+        items.push({ label: "📁 " + f + "(" + n + ")", fn: function(){
+          listFolder = f; renderPageList();
+        }});
+      });
+      items.push({ label: "キャンセル", cancel: true });
+      showSheet("フォルダを選択", items);
+    });
+    wrap.appendChild(all);
+  }
+  // 「＋」= 新しいフォルダ(mkは使わず専用ボタン: リスナー競合を避ける)
+  var plus = document.createElement("button");
+  plus.className = "pf-tab";
+  plus.textContent = "＋";
+  plus.addEventListener("click", function(){
+    askText("新しいフォルダ名", "", function(name){
+      if (!name || !name.trim()) return;
+      var f = name.trim();
+      var pg = findPage(currentId);
+      if (pg) {
+        showSheet("フォルダ「" + f + "」を作成", [
+          { label: "いま開いている「" + pg.title + "」を入れる", fn: function(){ setPageFolder(pg, f); } },
+          { label: "空のまま作る(あとで⋮から移動)", fn: function(){
+              ensureFolder(f);                         // 独立データとして保存 → 消えない
+              saveIndex();
+              if (cloudUser()) cloudPushIndex().catch(function(){});
+              listFolder = f;
+              renderPageList();
+              statusEl.textContent = "📁" + f + " を作成しました(⋮からページを移動できます)";
+          }},
+          { label: "キャンセル", cancel: true }
+        ]);
+      }
+    });
+  });
+  wrap.appendChild(plus);
+}
+function pageMenu(pg) {
+  showSheet("「" + pg.title + "」", [
+    { label: "✎ 名前を変更", fn: function(){ renamePage(pg.id); } },
+    { label: "⧉ 複製", fn: function(){ duplicatePage(pg.id); } },
+    { label: "📁 フォルダへ移動", fn: function(){ pickFolder(pg); } },
+    { label: "🗑 削除", danger: true, fn: function(){ deletePage(pg.id); } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
 function renderPageList() {
+  renderFolderTabs();
   var list = $("#ppList");
   list.innerHTML = "";
-  for (var i = 0; i < pages.length; i++) {
+  list.className = "scrollable" + (listView === "grid" ? " grid" : "");
+  $("#ppView").textContent = (listView === "grid") ? "☰" : "▦";
+  $("#ppSort").textContent = (listSort === "name") ? "🔤 名前順" : (listSort === "created") ? "📅 作成順" : "🕒 変更順";
+  var arr = sortedPages();
+  if (listFolder) arr = arr.filter(function(p){ return (p.folder || "") === listFolder; });
+
+  for (var i = 0; i < arr.length; i++) {
     (function(pg){
-      var row = document.createElement("div");
-      row.className = "pp-row" + (pg.id === currentId ? " current" : "");
-      var title = document.createElement("span");
-      title.className = "pp-title";
-      title.textContent = pg.title;
-      title.addEventListener("click", function(){ switchPage(pg.id); });
-      var ren = document.createElement("button");
-      ren.textContent = "✎";
-      ren.title = "名前を変更";
-      ren.addEventListener("click", function(ev){ ev.stopPropagation(); renamePage(pg.id); });
-      var dup = document.createElement("button");
-      dup.textContent = "⧉";
-      dup.title = "複製";
-      dup.addEventListener("click", function(ev){ ev.stopPropagation(); duplicatePage(pg.id); });
-      var del = document.createElement("button");
-      del.textContent = "🗑";
-      del.title = "削除";
-      del.addEventListener("click", function(ev){ ev.stopPropagation(); deletePage(pg.id); });
-      row.appendChild(title);
-      row.appendChild(ren);
-      row.appendChild(dup);
-      row.appendChild(del);
-      list.appendChild(row);
-    })(pages[i]);
+      if (listView === "grid") {
+        // ===== カード =====
+        var card = document.createElement("div");
+        card.className = "pp-card" + (pg.id === currentId ? " current" : "");
+        var ph = document.createElement("div");     // まずプレースホルダ
+        ph.className = "pp-thumb";
+        ph.textContent = "📝";
+        card.appendChild(ph);
+        kvGet("thumb_" + pg.id).then(function(th){
+          if (!th || !th.png) return;
+          var im = document.createElement("img");
+          im.className = "pp-thumb";
+          im.src = th.png;
+          card.replaceChild(im, ph);
+        }).catch(function(){});
+        var body = document.createElement("div");
+        body.className = "pp-card-body";
+        var title = document.createElement("span");
+        title.className = "pp-card-title";
+        title.textContent = (pg.folder ? "📁" : "") + pg.title;
+        var menu = document.createElement("button");
+        menu.className = "pp-card-menu";
+        menu.textContent = "⋮";
+        menu.addEventListener("click", function(ev){ ev.stopPropagation(); pageMenu(pg); });
+        body.appendChild(title);
+        body.appendChild(menu);
+        card.appendChild(body);
+        var date = document.createElement("div");
+        date.className = "pp-card-date";
+        date.textContent = new Date(pg.ts || pg.id).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
+        card.appendChild(date);
+        card.addEventListener("click", function(){ switchPage(pg.id); });
+        list.appendChild(card);
+      } else {
+        // ===== 従来のリスト =====
+        var row = document.createElement("div");
+        row.className = "pp-row" + (pg.id === currentId ? " current" : "");
+        var title2 = document.createElement("span");
+        title2.className = "pp-title";
+        title2.textContent = (pg.folder ? "📁 " : "") + pg.title;
+        title2.addEventListener("click", function(){ switchPage(pg.id); });
+        var ren = document.createElement("button");
+        ren.textContent = "✎";
+        ren.title = "名前を変更";
+        ren.addEventListener("click", function(ev){ ev.stopPropagation(); renamePage(pg.id); });
+        var dup = document.createElement("button");
+        dup.textContent = "⧉";
+        dup.title = "複製";
+        dup.addEventListener("click", function(ev){ ev.stopPropagation(); duplicatePage(pg.id); });
+        var del = document.createElement("button");
+        del.textContent = "🗑";
+        del.title = "削除";
+        del.addEventListener("click", function(ev){ ev.stopPropagation(); deletePage(pg.id); });
+        row.appendChild(title2);
+        row.appendChild(ren);
+        row.appendChild(dup);
+        row.appendChild(del);
+        list.appendChild(row);
+      }
+    })(arr[i]);
+  }
+  if (!arr.length) {
+    var empty = document.createElement("div");
+    empty.style.cssText = "grid-column:1/-1;color:var(--ui-dim);font-size:12px;text-align:center;padding:24px 0";
+    empty.textContent = listFolder ? "このフォルダは空です" : "ページがありません";
+    list.appendChild(empty);
   }
 }
+$("#ppView").onclick = function(){
+  listView = (listView === "grid") ? "list" : "grid";
+  try { localStorage.setItem("inknote_listview", listView); } catch (e) {}
+  renderPageList();
+};
+$("#ppSort").onclick = function(){
+  listSort = (listSort === "ts") ? "name" : (listSort === "name") ? "created" : "ts";
+  try { localStorage.setItem("inknote_listsort", listSort); } catch (e) {}
+  renderPageList();
+};
 function openPages() {
   renderPageList();
   updateUsage();
@@ -4346,8 +4762,9 @@ function renderPosList() {
       ren.title = "名前を変更";
       ren.addEventListener("click", function(ev){
         ev.stopPropagation();
-        var t = prompt("位置の名前", bm.name);
-        if (t && t.trim()) { bm.name = t.trim(); renderPosList(); scheduleSave(); }
+        askText("位置の名前", bm.name, function(t){
+          if (t && t.trim()) { bm.name = t.trim(); renderPosList(); scheduleSave(); }
+        });
       });
       var del = document.createElement("button");
       del.textContent = "🗑";
@@ -4378,12 +4795,13 @@ function closePos() {
 $("#posChip").onclick = openPos;
 $("#psClose").onclick = closePos;
 $("#psAdd").onclick = function(){
-  var name = prompt("この位置の名前", "位置" + (bookmarks.length + 1));
-  if (!name || !name.trim()) return;
-  bookmarks.push({ id: Date.now(), name: name.trim(),
-                   view: { x: view.x, y: view.y, s: view.s } });
-  renderPosList();
-  scheduleSave();
+  askText("この位置の名前", "位置" + (bookmarks.length + 1), function(name){
+    if (!name || !name.trim()) return;
+    bookmarks.push({ id: Date.now(), name: name.trim(),
+                     view: { x: view.x, y: view.y, s: view.s } });
+    renderPosList();
+    scheduleSave();
+  });
 };
 
 /* =========================================================
@@ -5040,7 +5458,8 @@ function cloudPushIndex() {
   var u = cloudUser();
   if (!u) return Promise.resolve();
   return fdb().collection("users").doc(u.uid).collection("meta").doc("index")
-    .set({ pages: pages, currentId: currentId, deleted: deletedIds, updatedAt: Date.now() });
+    .set({ pages: pages, currentId: currentId, deleted: deletedIds,
+           folders: folders, updatedAt: Date.now() });
 }
 function scheduleCloudPush(id) {
   if (!cloudUser()) return;
@@ -5069,6 +5488,8 @@ function syncAll() {
   .then(function(snap){
     var remotePages = (snap.exists && snap.data().pages) || [];
     var remoteDeleted = (snap.exists && snap.data().deleted) || [];
+    var remoteFolders = (snap.exists && snap.data().folders) || [];
+    for (var rf = 0; rf < remoteFolders.length; rf++) ensureFolder(remoteFolders[rf]);
     deletedIds = mergeDeleted(remoteDeleted);          // 削除は両端末の和集合
     remotePages = remotePages.filter(function(p){ return !isDeleted(p.id); });
     pages = pages.filter(function(p){ return !isDeleted(p.id); });
@@ -5424,6 +5845,7 @@ function initAfterStore() {
     if (idx && idx.pages && idx.pages.length) {
       pages = idx.pages;
       deletedIds = idx.deleted || [];
+      folders = idx.folders || [];
       booting = false;
       var cur = findPage(idx.currentId) ? idx.currentId : pages[0].id;
       loadPage(cur);
