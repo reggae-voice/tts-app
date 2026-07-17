@@ -121,6 +121,7 @@
   .whandle{
     position:absolute;right:-9px;top:50%;width:18px;height:32px;
     margin-top:-16px;border-radius:6px;background:#fff;
+    /* topはupdateSelUIがJSで上書きし、画面内に収める */
     border:1.5px solid var(--accent);box-shadow:0 1px 4px rgba(20,24,32,.28);
     touch-action:none;display:none;
     color:var(--accent);font-size:10px;line-height:29px;text-align:center;
@@ -406,6 +407,15 @@
     -webkit-user-select:none;user-select:none;
   }
   #editHandle.show{display:block}
+  /* 編集中の確定ボタン: どんな巨大テキストでも必ず抜けられる脱出口 */
+  #editDone{
+    position:fixed;z-index:41;display:none;
+    top:calc(env(safe-area-inset-top) + 10px);right:10px;
+    border:none;border-radius:999px;padding:10px 16px;
+    background:var(--accent);color:#fff;font-size:14px;font-weight:800;
+    box-shadow:0 4px 14px rgba(15,18,24,.4);cursor:pointer;
+  }
+  body.editing-mode #editDone{display:block}
   #cropModal{
     position:fixed;inset:0;background:rgba(10,12,16,.93);z-index:100;
     display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;
@@ -642,7 +652,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v10.6</small></div>
+  <div class="brand">InkNote <small>v10.7</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -796,6 +806,7 @@ window.onerror = function(msg, src, line){
   <div id="vsPage"></div>
 </div>
 <div id="editHandle" title="ドラッグで移動">✥</div>
+<button id="editDone" title="入力を確定">✓ 確定</button>
 
 <div id="cropModal">
   <div id="cropHead">必要な部分をドラッグで囲む</div>
@@ -1005,7 +1016,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1033,7 +1043,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "10.6";
+var APP_VERSION = "10.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1546,6 +1556,21 @@ function updateSelUI() {
   selBox.style.top = b.y + "px";
   selBox.style.width = b.w + "px";
   selBox.style.height = b.h + "px";
+  // ⇔ハンドル: BOXが画面より大きくても見えるよう、
+  // 「BOXの画面上の可視部分」の中央に置く(world座標に逆変換してtopへ)
+  if (selWHandle.style.display !== "none") {
+    var vv0 = window.visualViewport;
+    var visTop0 = vv0 ? vv0.offsetTop : 0;
+    var visH0 = vv0 ? vv0.height : innerHeight;
+    var syTop = b.y * view.s + view.y;                  // BOX上端(画面px)
+    var syBot = (b.y + b.h) * view.s + view.y;          // BOX下端
+    var lo = Math.max(syTop, visTop0 + 80);             // 可視範囲と交差
+    var hi = Math.min(syBot, visTop0 + visH0 - 60);
+    var midScreen = (lo < hi) ? (lo + hi) / 2 : (syTop + syBot) / 2;
+    var localY = (midScreen - view.y) / view.s - b.y;   // selBox内ローカルy
+    localY = Math.max(20, Math.min(b.h - 20, localY));
+    selWHandle.style.top = localY + "px";
+  }
   // メニュー(画面座標に変換して配置)
   ctxbar.style.display = "flex";
   ctxbar.style.visibility = hideCtxWhileDrag ? "hidden" : "visible";
@@ -3637,6 +3662,14 @@ $("#tbTab").onclick = function(){
   document.body.classList.remove("tb-tucked");
   $("#tbTab").classList.remove("show");
 };
+$("#editDone").addEventListener("pointerdown", function(e){
+  // pointerdownで処理する: blurより先に確実に拾う(clickだとキーボードの
+  // 閉じアニメーションと競合して取りこぼす端末がある)
+  e.preventDefault();
+  e.stopPropagation();
+  commitText();
+  blurKeyboard();
+});
 (function(){
   var ts = document.querySelectorAll(".pnl-tuck");
   for (var i = 0; i < ts.length; i++)
