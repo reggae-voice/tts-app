@@ -459,6 +459,8 @@
   #ctxExtra{display:none;gap:2px}
   #ctxbar.expanded #ctxExtra{display:inline-flex}
   #ctxbar.expanded #ctxMore{background:rgba(255,255,255,.16)}
+  #ctxLock.locked-on{background:rgba(255,200,80,.22)}
+  #selBox.locked{border-style:dashed;border-color:#e0a83a}
   #ctxbar button{
     border:none;background:transparent;color:var(--ui-text);
     font-size:14px;font-weight:600;padding:8px 10px;border-radius:9px;cursor:pointer;
@@ -652,7 +654,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v11.1</small></div>
+  <div class="brand">InkNote <small>v11.2</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -827,6 +829,7 @@ window.onerror = function(msg, src, line){
 <div id="ctxbar">
   <button id="ctxEdit" title="編集">✎</button>
   <button id="ctxStyle" title="スタイル">Aa</button>
+  <button id="ctxLock" title="ロック/解除">🔓</button>
   <button id="ctxDel" class="del" title="削除">🗑</button>
   <button id="ctxMore" title="その他">⋯</button>
   <span id="ctxExtra">
@@ -1043,7 +1046,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "11.1";
+var APP_VERSION = "11.2";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1547,11 +1550,13 @@ function updateSelUI() {
   }
   var b = selBBox();
   // 幅ハンドルは単一テキスト選択時のみ / 回転ハンドルは単一図形選択時のみ
+  var selLocked = (sel.length === 1 && sel[0].locked);
   selWHandle.style.display =
-    (sel.length === 1 && sel[0].type === "text") ? "block" : "none";
+    (!selLocked && sel.length === 1 && sel[0].type === "text") ? "block" : "none";
   selRHandle.style.display =
-    (sel.length === 1 && sel[0].type === "shape") ? "block" : "none";
+    (!selLocked && sel.length === 1 && sel[0].type === "shape") ? "block" : "none";
   selBox.style.display = "block";
+  selBox.classList.toggle("locked", sel.length === 1 && sel[0].locked);
   selBox.style.left = b.x + "px";
   selBox.style.top = b.y + "px";
   selBox.style.width = b.w + "px";
@@ -1594,9 +1599,15 @@ function updateSelUI() {
   for (var hs = 0; hs < sel.length; hs++)
     if (sel[hs].type === "stroke") { hasStroke = true; break; }
   var isImage = (s1 && s1.type === "image");
-  $("#ctxEdit").style.display = (isText || isShape) ? "" : "none";
-  $("#ctxStyle").style.display = (isText || isShape || hasStroke) ? "" : "none";
-  $("#ctxCrop").style.display = isImage ? "" : "none";
+  var allLocked = sel.length > 0 && sel.every(function(o){ return o.locked; });
+  $("#ctxLock").textContent = allLocked ? "🔒" : "🔓";
+  $("#ctxLock").classList.toggle("locked-on", allLocked);
+  $("#ctxEdit").style.display = (!allLocked && (isText || isShape)) ? "" : "none";
+  $("#ctxStyle").style.display = (!allLocked && (isText || isShape || hasStroke)) ? "" : "none";
+  $("#ctxCrop").style.display = (!allLocked && isImage) ? "" : "none";
+  $("#ctxDel").style.display = allLocked ? "none" : "";
+  $("#ctxDup").style.display = allLocked ? "none" : "";
+  $("#ctxFront").style.display = allLocked ? "none" : "";
   // 選択メニューは必ず「BOXの外側」に置く(文字の上に被せない)
   var cw = ctxbar.offsetWidth || (ctxbar.classList.contains("expanded") ? 330 : 190);
   var ch = ctxbar.offsetHeight || 44;
@@ -2457,10 +2468,14 @@ selBox.addEventListener("pointerdown", function(e){
   drag(e, {
     move: function(ev, dxs, dys, moved){
       if (pinch) return;
+      if (sel.every(function(o){ return o.locked; })) {   // 全ロック=画面スクロール
+        view.x += dxs; view.y += dys; applyView(); updateSelUI();
+        return;
+      }
       if (moved) hideCtxWhileDrag = true;
       var dx = dxs / view.s, dy = dys / view.s;
-      for (var i = 0; i < sel.length; i++) moveObject(sel[i], dx, dy);
-      for (var r = 0; r < riders.length; r++) moveObject(riders[r], dx, dy);
+      for (var i = 0; i < sel.length; i++) if (!sel[i].locked) moveObject(sel[i], dx, dy);
+      for (var r = 0; r < riders.length; r++) if (!riders[r].locked) moveObject(riders[r], dx, dy);
       updateSelUI();
     },
     up: function(ev, moved){
@@ -2470,14 +2485,11 @@ selBox.addEventListener("pointerdown", function(e){
         pushSnapshot(snapshot);
         updateSelUI();
         tapObj = null;
-      } else if (sel.length === 1 && sel[0].type === "text") {
-        // 選択済みテキストはもう1タップで編集開始。
-        // 編集に入ったあとの「文字の選択」は、ブラウザ標準の操作
-        // (長押し・ダブルタップ・ハンドルのドラッグ)にそのまま任せる。
-        startTextEdit(sel[0], { x: ev.clientX, y: ev.clientY });
+      } else if (sel.length === 1 && sel[0].type === "text" && !sel[0].locked) {
+        startTextEdit(sel[0], { x: ev.clientX, y: ev.clientY });   // ロック時は開かない
         tapObj = null;
-      } else if (sel.length === 1 && sel[0].type === "shape" && isDouble) {
-        shapeTextEdit(sel[0]);   // 図形の中をダブルタップ=ラベル入力
+      } else if (sel.length === 1 && sel[0].type === "shape" && isDouble && !sel[0].locked) {
+        shapeTextEdit(sel[0]);   // 図形ラベル(ロック時は不可)
         tapObj = null;
       } else {
         updateSelUI();
@@ -5591,6 +5603,17 @@ $("#ctxMore").onclick = function(e){
   e.stopPropagation();
   ctxbar.classList.toggle("expanded");
   updateSelUI();
+};
+$("#ctxLock").onclick = function(e){
+  e.stopPropagation();
+  if (!sel.length) return;
+  var anyUnlocked = sel.some(function(o){ return !o.locked; });
+  for (var i = 0; i < sel.length; i++) sel[i].locked = anyUnlocked;
+  updateSelUI();
+  scheduleSave();
+  statusEl.textContent = anyUnlocked
+    ? "🔒 ロックしました(移動・編集・削除されません。解除はこのボタンから)"
+    : "🔓 ロックを解除しました";
 };
 $("#ctxCopy").onclick = copySelection;
 $("#ctxSave").onclick = function(){
