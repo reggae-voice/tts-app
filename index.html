@@ -652,7 +652,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v10.9</small></div>
+  <div class="brand">InkNote <small>v11.1</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -1043,7 +1043,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "10.9";
+var APP_VERSION = "11.1";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1565,11 +1565,24 @@ function updateSelUI() {
     var syTop = b.y * view.s + view.y;                  // BOX上端(画面px)
     var syBot = (b.y + b.h) * view.s + view.y;          // BOX下端
     var lo = Math.max(syTop, visTop0 + 80);             // 可視範囲と交差
-    var hi = Math.min(syBot, visTop0 + visH0 - 60);
+    // A4横では下端の水平スライダー帯(約130px)に入らないよう下限を上げる
+    var botPad = (canvasMode === "a4h") ? 140 : 60;
+    var hi = Math.min(syBot, visTop0 + visH0 - botPad);
     var midScreen = (lo < hi) ? (lo + hi) / 2 : (syTop + syBot) / 2;
     var localY = (midScreen - view.y) / view.s - b.y;   // selBox内ローカルy
     localY = Math.max(20, Math.min(b.h - 20, localY));
     selWHandle.style.top = localY + "px";
+    // A4縦では右端の縦スライダー帯(約46px)と重ならないよう、
+    // BOX右端が画面右端に迫っている時は⇔を内側に寄せる
+    var rxScreen = (b.x + b.w) * view.s + view.x;       // BOX右端(画面px)
+    if (canvasMode === "a4v" && rxScreen > innerWidth - 46) {
+      var overlap = rxScreen - (innerWidth - 46);       // はみ出し量(画面px)
+      var rWorld = overlap / view.s - 9;                // right値(world px)
+      rWorld = Math.min(rWorld, Math.max(0, b.w - 30)); // 小さいBOXでは左に出しすぎない
+      selWHandle.style.right = rWorld + "px";
+    } else {
+      selWHandle.style.right = "";                      // 通常はCSS既定(右端の外)
+    }
   }
   // メニュー(画面座標に変換して配置)
   ctxbar.style.display = "flex";
@@ -1631,6 +1644,10 @@ function rebuildScene(json) {
   var olds = world.querySelectorAll(".obj");
   for (var i = 0; i < olds.length; i++) olds[i].parentNode.removeChild(olds[i]);
   objects = JSON.parse(json);
+  // 過去に溜まった「空のテキストBOX」をここで一掃する
+  objects = objects.filter(function(o){
+    return !(o.type === "text" && (!o.text || !String(o.text).trim()));
+  });
   for (var j = 0; j < objects.length; j++) {
     var o = objects[j];
     if (o.type === "text") makeTextEl(o);
@@ -2266,11 +2283,23 @@ function commitText() {
   el.classList.remove("editing");
   el.removeAttribute("contenteditable");
   el.textContent = o.text;
-  // 空でも削除しない: 枠だけ先に配置してレイアウトを決められる
-  el.classList.toggle("empty", o.text.trim() === "");
+  // ★空のまま確定したBOXは削除する。
+  //   見えない空BOXが溜まると、タップを奪って誤選択・誤移動の原因になる。
+  if (o.text.trim() === "") {
+    var oi = objects.indexOf(o);
+    if (oi !== -1) objects.splice(oi, 1);
+    if (el.parentNode) el.parentNode.removeChild(el);
+    inkDirty = true;
+    switchTool("select");
+    setSelection([]);
+    scheduleSave();
+    return;
+  }
   measureObj(o);               // 確定後の実寸を記録(以後は測り直さない)
-  switchTool("select");        // 置いたら次は「移動」が基本
-  setSelection([o]);
+  switchTool("select");
+  // ★確定後は選択を外す: 「書き終わってスクロールしたいのにBOXが動く」を防ぐ。
+  //   移動したい時はもう1タップで選択してから(誤移動防止と同じ流儀)。
+  setSelection([]);
   scheduleSave();
 }
 
@@ -2635,10 +2664,9 @@ stage.addEventListener("pointerdown", function(e){
       if (tool === "text") {
         createTextAt(w);
         stageLastTap = 0;
-      } else if (tool === "select" && isDouble) {
-        createTextAt(w);          // 空白ダブルタップ=クイックテキスト作成
-        stageLastTap = 0;
       } else {
+        // (空白ダブルタップでのテキスト作成は廃止: タップ連打が
+        //  新規BOX作成と誤認され、空BOXが量産される事故が多発したため)
         stageLastTap = Date.now(); // 空白タップ確定時のみ記録
       }
     }
