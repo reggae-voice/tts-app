@@ -652,7 +652,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v10.7</small></div>
+  <div class="brand">InkNote <small>v10.9</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -1043,7 +1043,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "10.7";
+var APP_VERSION = "10.9";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2178,12 +2178,15 @@ editHandle.addEventListener("pointerdown", function(e){
   e.stopPropagation();
   var o = editingObj;
   var snapshot = serializeScene();
+  var riders = linkedHighlighters(o);        // 上の蛍光ペンも一緒に動かす
   drag(e, {
     move: function(ev, dxs, dys){
-      o.x += dxs / view.s;
-      o.y += dys / view.s;
+      var dx = dxs / view.s, dy = dys / view.s;
+      o.x += dx;
+      o.y += dy;
       o.el.style.left = o.x + "px";
       o.el.style.top = o.y + "px";
+      for (var r = 0; r < riders.length; r++) moveObject(riders[r], dx, dy);
       positionEditHandle();
     },
     up: function(ev, moved){
@@ -2387,6 +2390,28 @@ function attachObjHandlers(o) {
 }
 
 /* ---------- selBox(グループ枠)のドラッグ移動とリサイズ ---------- */
+/* テキストの上に引かれた蛍光ペンを列挙する(移動時に連れて行くため)。
+   判定: 蛍光ペンの線のBBoxが、テキストBOXに6割以上重なっていること。
+   通常のペン線は対象外(独立した書き込みかもしれないので動かさない)。 */
+function linkedHighlighters(textObj) {
+  if (!textObj || textObj.type !== "text") return [];
+  var tb = objBBox(textObj);
+  var out = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "stroke" || !o.highlighter) continue;
+    var b = objBBox(o);
+    var ix = Math.max(0, Math.min(tb.x + tb.w, b.x + b.w) - Math.max(tb.x, b.x));
+    var iy = Math.max(0, Math.min(tb.y + tb.h, b.y + b.h) - Math.max(tb.y, b.y));
+    var area = b.w * b.h;
+    var cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+    var centerIn = cx >= tb.x && cx <= tb.x + tb.w && cy >= tb.y && cy <= tb.y + tb.h;
+    // 中心がBOX内(はみ出して引いても中心は行の上にある)か、6割以上重なっていれば連動
+    if (centerIn || (area > 0 && (ix * iy) / area >= 0.6)) out.push(o);
+  }
+  return out;
+}
+
 selBox.addEventListener("pointerdown", function(e){
   if (!sel.length || pinch) return;
   if (e.target === selHandle || e.target === selWHandle ||
@@ -2396,12 +2421,17 @@ selBox.addEventListener("pointerdown", function(e){
   var snapshot = serializeScene();
   var downAt = Date.now();
   var isDouble = (downAt - tapTime) < 350 && sel.length === 1 && tapObj === sel[0];
+  // 単一テキストを動かす時: 上に引かれた蛍光ペンも一緒に連れて行く
+  var riders = (sel.length === 1 && sel[0].type === "text")
+    ? linkedHighlighters(sel[0]).filter(function(o){ return sel.indexOf(o) === -1; })
+    : [];
   drag(e, {
     move: function(ev, dxs, dys, moved){
       if (pinch) return;
       if (moved) hideCtxWhileDrag = true;
       var dx = dxs / view.s, dy = dys / view.s;
       for (var i = 0; i < sel.length; i++) moveObject(sel[i], dx, dy);
+      for (var r = 0; r < riders.length; r++) moveObject(riders[r], dx, dy);
       updateSelUI();
     },
     up: function(ev, moved){
@@ -2821,17 +2851,62 @@ capture.addEventListener("pointerdown", function(e){
       points: [{ x: w.x, y: w.y, p: e.pressure || 0.5 }]
     };
     inkDirty = true;
+    // ---- ラインアシスト(マーカーのみ): 引いた後、離さず静止すると直線になる ----
+    // 通常ペンには適用しない: 文字を書く途中で止まるのは普通で、誤発動すると書き味を壊す
+    var lineLocked = false;
+    var holdTimer = null;
+    var holdX = e.clientX, holdY = e.clientY;
+    function strokeScreenLen() {
+      var pts = activeStroke.points, len = 0;
+      for (var i = 1; i < pts.length; i++)
+        len += Math.hypot(pts[i].x - pts[i-1].x, pts[i].y - pts[i-1].y);
+      return len * view.s;
+    }
+    function armHold() {
+      clearTimeout(holdTimer);
+      holdTimer = setTimeout(function(){
+        if (!activeStroke || lineLocked || pinch) return;
+        if (strokeScreenLen() < 40) return;              // 短すぎる線は対象外
+        lineLocked = true;
+        var first = activeStroke.points[0];
+        var cw = toWorld(holdX, holdY);
+        var ap = 0;                                       // 平均筆圧を引き継ぐ
+        for (var i = 0; i < activeStroke.points.length; i++) ap += activeStroke.points[i].p || 0.5;
+        ap = ap / activeStroke.points.length;
+        activeStroke.points = [{ x: first.x, y: first.y, p: ap }, { x: cw.x, y: cw.y, p: ap }];
+        inkDirty = true;
+        statusEl.textContent = "📏 直線に補正(そのまま動かして調整、離して確定)";
+        if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
+      }, 380);
+    }
+    if (pen.highlighter) armHold();
     drag(e, {
       move: function(ev){
         if (!activeStroke || pinch) return;
+        if (lineLocked) {
+          // 直線モード: 終点だけが指に追従する
+          var lw = toWorld(ev.clientX, ev.clientY);
+          activeStroke.points[1].x = lw.x;
+          activeStroke.points[1].y = lw.y;
+          inkDirty = true;
+          return;
+        }
         var evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
         for (var i = 0; i < evs.length; i++) {
           var cw = toWorld(evs[i].clientX, evs[i].clientY);
           activeStroke.points.push({ x: cw.x, y: cw.y, p: evs[i].pressure || 0.5 });
         }
         inkDirty = true;
+        if (pen.highlighter) {
+          // 7px以上動いたら静止タイマーを仕切り直す
+          if (Math.hypot(ev.clientX - holdX, ev.clientY - holdY) > 7) {
+            holdX = ev.clientX; holdY = ev.clientY;
+            armHold();
+          }
+        }
       },
       up: function(){
+        clearTimeout(holdTimer);
         if (!activeStroke) return;
         pushUndo();
         objects.push(activeStroke);
