@@ -526,8 +526,29 @@
   #pagesPanel.show,#posPanel.show,#stylePanel.show,#expPanel.show,#syncPanel.show,#menuPanel.show{transform:translateY(0)}
   .exp-opt{cursor:pointer}
   .exp-opt:active{background:var(--ui-bg2)}
-  .pp-head{display:flex;align-items:center;justify-content:space-between;color:var(--ui-text);font-size:14px;font-weight:700;padding:6px 4px 10px}
-  .pp-head button{border:none;background:var(--ui-bg2);color:var(--ui-dim);width:30px;height:30px;border-radius:50%;font-size:13px;cursor:pointer}
+  .pp-head{display:flex;align-items:center;justify-content:space-between;color:var(--ui-text);font-size:14px;font-weight:700;padding:4px 4px 12px}
+  /* 丸ボタンは閉じる(✕)など単独アイコンのみに適用。
+     ラベル付きボタン(.pp-ctrl)まで30pxの円にすると文字が縦積みになる */
+  .pp-head button:not(.pp-ctrl){border:none;background:var(--ui-bg2);color:var(--ui-dim);width:30px;height:30px;border-radius:50%;font-size:13px;cursor:pointer;flex:0 0 auto}
+  .pp-brand{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .pp-app{
+    font-size:20px;font-weight:800;letter-spacing:.2px;
+    color:var(--ui-text);line-height:1.15;
+  }
+  .pp-sub{font-size:11.5px;font-weight:600;color:var(--ui-dim);white-space:nowrap}
+  .pp-tools{display:flex;align-items:center;gap:8px;padding-bottom:10px;flex:0 0 auto}
+  .pp-search{
+    flex:1;min-width:0;display:flex;align-items:center;gap:6px;
+    background:rgba(255,255,255,.06);border:1px solid var(--ui-line);
+    border-radius:999px;padding:0 12px;height:36px;
+  }
+  .pp-search-ic{font-size:12px;opacity:.7;flex:0 0 auto}
+  #ppSearch{
+    flex:1;min-width:0;border:none;background:none;outline:none;
+    color:var(--ui-text);font-size:13.5px;
+  }
+  #ppSearch::placeholder{color:var(--ui-dim)}
+  #ppSearch::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
   #ppList{overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1;min-height:60px}
   .pp-row{display:flex;align-items:center;gap:6px;padding:11px 10px;border-radius:12px;color:var(--ui-text);font-size:14px}
   .pp-row.current{background:var(--accent-soft)}
@@ -575,8 +596,11 @@
   .pf-tab.sel{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
   .pp-ctrl{
     border:none;background:rgba(255,255,255,.07);color:var(--ui-dim);
-    border-radius:9px;padding:5px 9px;font-size:12px;cursor:pointer;
+    border-radius:999px;padding:0 12px;height:36px;font-size:12px;cursor:pointer;
+    white-space:nowrap;             /* ← 「変更順」が縦積みになるのを防ぐ */
+    flex:0 0 auto;line-height:36px;
   }
+  .pp-ctrl.icon{width:36px;padding:0;text-align:center}
   /* ===== アクションシート ===== */
   #sheetScrim{
     position:fixed;inset:0;background:rgba(10,12,16,.45);
@@ -665,7 +689,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v11.5</small></div>
+  <div class="brand">InkNote <small>v11.8</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -869,11 +893,20 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="pagesPanel">
-  <div class="pp-head"><span>ノート一覧</span>
-    <span style="flex:1"></span>
+  <div class="pp-head">
+    <div class="pp-brand">
+      <div class="pp-app">InkNote</div>
+      <div class="pp-sub" id="ppCount">ノート</div>
+    </div>
+    <button id="ppClose" title="閉じる">✕</button>
+  </div>
+  <div class="pp-tools">
+    <div class="pp-search">
+      <span class="pp-search-ic">🔍</span>
+      <input id="ppSearch" type="search" placeholder="ノートを検索">
+    </div>
     <button class="pp-ctrl" id="ppSort" title="並び順">🕒 変更順</button>
-    <button class="pp-ctrl" id="ppView" title="表示切替">▦</button>
-    <button id="ppClose">✕</button>
+    <button class="pp-ctrl icon" id="ppView" title="表示切替">▦</button>
   </div>
   <div id="ppFolders"></div>
   <div id="ppList" class="scrollable"></div>
@@ -884,6 +917,7 @@ window.onerror = function(msg, src, line){
   <div class="pp-foot">
     <button class="pp-tool" id="expPng">🖼 PNG書出</button>
     <button class="pp-tool" id="expPdf">📄 PDF書出</button>
+    <button class="pp-tool" id="expPrint">🖨 印刷</button>
     <button class="pp-tool" id="bakOut">💾 バックアップ</button>
     <button class="pp-tool" id="bakIn">📥 復元</button>
   </div>
@@ -987,6 +1021,14 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
       <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
     </div>
+    <div class="st-row"><span class="st-label">印刷</span>
+      <button class="toggle" id="printWhiteToggle"></button>
+      <span style="color:var(--ui-dim);font-size:11px">印刷・PDFは白い紙で出す(インク節約)</span>
+    </div>
+    <div class="st-row"><span class="st-label">起動</span>
+      <button class="toggle" id="homeToggle"></button>
+      <span style="color:var(--ui-dim);font-size:11px">起動時にノート一覧を開く</span>
+    </div>
     <div class="st-row"><span class="st-label">暗記</span>
       <button class="toggle" id="msToggle"></button>
       <span style="color:var(--ui-dim);font-size:11px">マーカー部分を紙色で隠す(暗記シート)</span>
@@ -1059,10 +1101,40 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "11.5";
+var APP_VERSION = "11.8";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
+var listQuery = "";           // ノート名の検索語
+var printReady = false;       // printNow()が印刷用ページを用意済みか
+var printWhite = true;        // 印刷・PDFは白背景にする(インク節約)
+try {
+  var _pw = localStorage.getItem("inknote_print_white");
+  if (_pw !== null) printWhite = (_pw === "1");
+} catch (e) {}
+var outWhite = false;         // 出力用canvasを描画中か(色の読み替えに使う)
+
+/* 出力(印刷・PDF・PNG)用の用紙色。白背景ONなら白 */
+function paperForOutput() {
+  return printWhite ? "#ffffff" : (THEMES[themeName] || THEMES.cream).paper;
+}
+/* 白い紙に載せると消えてしまう明るいインクを、読める濃さに置き換える。
+   ダークテーマの白ペンをそのまま印刷すると何も写らないため。 */
+function inkForOutput(col) {
+  if (!outWhite || !col) return col;
+  var m = String(col).replace("#", "");
+  if (m.length === 3) m = m[0]+m[0]+m[1]+m[1]+m[2]+m[2];
+  if (m.length < 6) return col;
+  var r = parseInt(m.slice(0,2),16), gg = parseInt(m.slice(2,4),16), b = parseInt(m.slice(4,6),16);
+  if (isNaN(r) || isNaN(gg) || isNaN(b)) return col;
+  var lum = (0.299*r + 0.587*gg + 0.114*b) / 255;
+  return lum > 0.72 ? "#22252b" : col;   // 明るすぎる色は濃いグレーへ
+}
+var openListOnStart = true;   // 起動時にノート一覧を表示するか
+try {
+  var _hs = localStorage.getItem("inknote_home_list");
+  if (_hs !== null) openListOnStart = (_hs === "1");
+} catch (e) {}
 var folders = [];             // フォルダ一覧(空フォルダも保持する)
 try {
   listView = localStorage.getItem("inknote_listview") || "grid";
@@ -3445,7 +3517,7 @@ function performLassoShot(path, dest) {
 /* 画像をPNGとして保存 */
 function saveCanvasPNG(c, name) {
   var pg = findPage(currentId);
-  var fname = (name || (pg ? pg.title : "inknote")) + ".png";
+  var fname = name ? (name + ".png") : exportName(pg, "png");
   downloadURL(c.toDataURL("image/png"), fname);
   statusEl.textContent = "💾 " + fname + " を保存しました";
 }
@@ -4232,6 +4304,7 @@ function makeThumb(pid) {
     var t = document.createElement("canvas");
     t.width = W; t.height = H;
     var g = t.getContext("2d");
+    outWhite = false;                 // サムネは画面用: テーマ色のまま
     g.fillStyle = (THEMES[themeName] || THEMES.cream).paper;
     g.fillRect(0, 0, W, H);
     g.drawImage(c, 0, 0, W / s, H / s, 0, 0, W, H);
@@ -4648,6 +4721,16 @@ function renderPageList() {
   $("#ppSort").textContent = (listSort === "name") ? "🔤 名前順" : (listSort === "created") ? "📅 作成順" : "🕒 変更順";
   var arr = sortedPages();
   if (listFolder) arr = arr.filter(function(p){ return (p.folder || "") === listFolder; });
+  var q = (listQuery || "").trim().toLowerCase();
+  if (q) arr = arr.filter(function(p){ return (p.title || "").toLowerCase().indexOf(q) !== -1; });
+  // 見出しの件数表示(起動画面としての情報量)
+  var cnt = $("#ppCount");
+  if (cnt) {
+    cnt.textContent = q
+      ? "「" + listQuery.trim() + "」に一致 " + arr.length + " 件"
+      : (listFolder ? "📁 " + listFolder + " · " + arr.length + " 件"
+                    : pages.length + " 件のノート");
+  }
 
   for (var i = 0; i < arr.length; i++) {
     (function(pg){
@@ -4714,11 +4797,35 @@ function renderPageList() {
   }
   if (!arr.length) {
     var empty = document.createElement("div");
-    empty.style.cssText = "grid-column:1/-1;color:var(--ui-dim);font-size:12px;text-align:center;padding:24px 0";
-    empty.textContent = listFolder ? "このフォルダは空です" : "ページがありません";
+    empty.style.cssText = "grid-column:1/-1;color:var(--ui-dim);font-size:12.5px;text-align:center;padding:34px 8px;line-height:1.7";
+    empty.innerHTML = q
+      ? "🔍 一致するノートがありません"
+      : (listFolder ? "📂 このフォルダは空です<br><span style='font-size:11px'>ノートの ⋮ から移動できます</span>"
+                    : "📝 まだノートがありません<br><span style='font-size:11px'>下の「＋ 新しいページ」から始めましょう</span>");
     list.appendChild(empty);
   }
 }
+$("#printWhiteToggle").onclick = function(){
+  printWhite = !printWhite;
+  this.classList.toggle("on", printWhite);
+  try { localStorage.setItem("inknote_print_white", printWhite ? "1" : "0"); } catch (e) {}
+  statusEl.textContent = printWhite
+    ? "印刷・PDFは白背景で出します(画面の色はそのまま)"
+    : "印刷・PDFも画面と同じ紙色で出します";
+};
+$("#printWhiteToggle").classList.toggle("on", printWhite);
+$("#homeToggle").onclick = function(){
+  openListOnStart = !openListOnStart;
+  this.classList.toggle("on", openListOnStart);
+  try { localStorage.setItem("inknote_home_list", openListOnStart ? "1" : "0"); } catch (e) {}
+  statusEl.textContent = openListOnStart
+    ? "起動時にノート一覧を表示します" : "起動時は前回のノートを直接開きます";
+};
+$("#homeToggle").classList.toggle("on", openListOnStart);
+$("#ppSearch").addEventListener("input", function(){
+  listQuery = this.value || "";
+  renderPageList();
+});
 $("#ppView").onclick = function(){
   listView = (listView === "grid") ? "list" : "grid";
   try { localStorage.setItem("inknote_listview", listView); } catch (e) {}
@@ -5263,8 +5370,22 @@ function importPdf(file, sx, sy) {
 /* =========================================================
    書き出し: ページ内容をcanvasに描いて PNG / PDF に
 ========================================================= */
-function drawStrokeTo(g, o) { var s = ictx; ictx = g; drawStroke(o); ictx = s; }
-function drawShapeTo(g, o) { var s = ictx; ictx = g; drawShape(o); ictx = s; }
+function drawStrokeTo(g, o) {
+  var s = ictx; ictx = g;
+  var oc = o.color, nc = inkForOutput(oc);
+  if (nc !== oc) o.color = nc;
+  drawStroke(o);
+  o.color = oc;                 // 元の色に戻す(画面表示は変えない)
+  ictx = s;
+}
+function drawShapeTo(g, o) {
+  var s = ictx; ictx = g;
+  var oc = o.color, nc = inkForOutput(oc);
+  if (nc !== oc) o.color = nc;
+  drawShape(o);
+  o.color = oc;
+  ictx = s;
+}
 function roundRectPath(g, x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
   g.beginPath();
@@ -5333,7 +5454,8 @@ function renderPageToCanvas(bbox, marginOpt, list) {
   c.width = Math.round(w * scale);
   c.height = Math.round(h * scale);
   var g = c.getContext("2d");
-  g.fillStyle = (THEMES[themeName] || THEMES.cream).paper;
+  outWhite = printWhite;
+  g.fillStyle = paperForOutput();
   g.fillRect(0, 0, c.width, c.height);
   g.scale(scale, scale);
   g.translate(margin - b.x, margin - b.y);
@@ -5351,6 +5473,7 @@ function renderPageToCanvas(bbox, marginOpt, list) {
     if (arr[j].type === "stroke") drawStrokeTo(g, arr[j]);
     else if (arr[j].type === "shape") drawShapeTo(g, arr[j]);
   }
+  outWhite = false;
   return c;
 }
 function downloadURL(url, name) {
@@ -5388,11 +5511,20 @@ function exportPDFCanvas(c) {
     });
     pdf.addImage(c.toDataURL("image/jpeg", 0.9), "JPEG", 0, 0, c.width, c.height);
     var pg = findPage(currentId);
-    pdf.save((pg ? pg.title : "inknote") + ".pdf");
+    pdf.save(exportName(pg, "pdf"));
     statusEl.textContent = "PDF書き出し完了";
   }).catch(function(){
     statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
   });
+}
+/* 書き出し名に時刻を入れる。
+   同じ名前だとPDFビューアが前回のファイルを表示してしまうことがあるため。 */
+function exportName(pg, ext) {
+  var d = new Date();
+  var p = function(n){ return (n < 10 ? "0" : "") + n; };
+  var stamp = d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + "_" +
+              p(d.getHours()) + p(d.getMinutes());
+  return (pg && pg.title ? pg.title : "inknote") + "_" + stamp + "." + ext;
 }
 
 /* =========================================================
@@ -5463,7 +5595,8 @@ function renderSheetPage(i) {
   c.width = Math.round(SW * SCALE);
   c.height = Math.round(SH * SCALE);
   var g = c.getContext("2d");
-  g.fillStyle = (THEMES[themeName] || THEMES.cream).paper;
+  outWhite = printWhite;
+  g.fillStyle = paperForOutput();
   g.fillRect(0, 0, c.width, c.height);
   g.setTransform(SCALE, 0, 0, SCALE, -ox * SCALE, -oy * SCALE);
   for (var k = 0; k < objects.length; k++) {
@@ -5480,6 +5613,7 @@ function renderSheetPage(i) {
     else if (objects[j].type === "shape") drawShapeTo(g, objects[j]);
   }
   g.setTransform(1, 0, 0, 1, 0, 0);
+  outWhite = false;
   return c;
 }
 function exportSheets() {
@@ -5505,11 +5639,12 @@ function exportSheets() {
     var ph = vert ? 297 : 210;
     for (var i = 0; i < n; i++) {
       if (i > 0) pdf.addPage("a4", vert ? "p" : "l");
+      if (i === 0) refreshMeasures();      // 最新の実寸で描く
       var c2 = renderSheetPage(i);
       pdf.addImage(c2.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, pw, ph);
     }
     var pg = findPage(currentId);
-    pdf.save((pg ? pg.title : "inknote") + ".pdf");
+    pdf.save(exportName(pg, "pdf"));
     statusEl.textContent = n + "ページのA4 PDFを書き出しました";
   }).catch(function(){
     statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
@@ -5560,6 +5695,11 @@ $("#exClose").onclick = closeExp;
   }
 })();
 $("#expPng").onclick = function(){ closePages(); exportFmt = "png"; openExp(); };
+$("#expPrint").onclick = function(){
+  closeExp();
+  closePages && closePages();
+  setTimeout(printNow, 150);
+};
 $("#expPdf").onclick = function(){ closePages(); exportFmt = "pdf"; openExp(); };
 $("#bakOut").onclick = exportBackup;
 $("#bakIn").onclick = function(){ $("#backupInput").click(); };
@@ -6250,6 +6390,8 @@ function initAfterStore() {
       booting = false;
       var cur = findPage(idx.currentId) ? idx.currentId : pages[0].id;
       loadPage(cur);
+      // 起動画面としてノート一覧を出す(前回の続きはカードから1タップで開ける)
+      if (openListOnStart) setTimeout(function(){ openPages(); }, 350);
       return;
     }
     deletedIds = (idx && idx.deleted) || [];
@@ -6297,6 +6439,53 @@ window.__ink_debug = function(){
    印刷直前にA4ページを画像化して印刷専用レイヤーへ流し込む。
    UIは@media printで隠れるので、A4書き出しと同じ結果が紙に出る。
 ========================================================= */
+/* 画像の読み込み(デコード)が終わるまで待つ。
+   これをせずに印刷すると、プレビューが前回の内容のまま出ることがある。 */
+function waitPrintImages(layer) {
+  var imgs = layer.querySelectorAll("img");
+  var jobs = [];
+  for (var i = 0; i < imgs.length; i++) {
+    (function(im){
+      jobs.push(new Promise(function(res){
+        if (im.decode) { im.decode().then(res).catch(res); return; }
+        if (im.complete) { res(); return; }
+        im.onload = res; im.onerror = res;
+      }));
+    })(imgs[i]);
+  }
+  // 念のため上限つき(壊れた画像で固まらないように)
+  return Promise.race([
+    Promise.all(jobs),
+    new Promise(function(res){ setTimeout(res, 4000); })
+  ]);
+}
+/* 最新の内容で印刷する(描画→デコード待ち→print) */
+function printNow() {
+  statusEl.textContent = "印刷用のページを準備中…";
+  refreshMeasures();                     // 実寸キャッシュを取り直す
+  var ok = buildPrintLayer();
+  if (!ok) { statusEl.textContent = "印刷できる内容がありません"; return; }
+  var layer = $("#printLayer");
+  layer.style.display = "block";         // デコードさせるため一時的に配置
+  layer.style.position = "fixed";
+  layer.style.left = "-99999px";
+  waitPrintImages(layer).then(function(){
+    layer.style.display = "";
+    layer.style.position = "";
+    layer.style.left = "";
+    printReady = true;                   // beforeprintでの再生成を抑止
+    statusEl.textContent = "";
+    window.print();
+    setTimeout(function(){ printReady = false; }, 3000);
+  });
+}
+/* テキストの実寸キャッシュを取り直す(サイズ変更が印刷に反映されない対策) */
+function refreshMeasures() {
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type === "text" && o.el) measureObj(o);
+  }
+}
 function buildPrintLayer() {
   var layer = $("#printLayer");
   layer.innerHTML = "";
@@ -6311,6 +6500,7 @@ function buildPrintLayer() {
     var land = c.width > c.height;
     rule.textContent = "@media print{@page{size:A4 " + (land ? "landscape" : "portrait") + ";margin:8mm}}";
     var im = document.createElement("img");
+    im.width = c.width; im.height = c.height;
     im.src = c.toDataURL("image/jpeg", 0.92);
     layer.appendChild(im);
     return true;
@@ -6322,13 +6512,15 @@ function buildPrintLayer() {
   for (var i = 0; i < n; i++) {
     var cp = renderSheetPage(i);
     var img = document.createElement("img");
+    img.width = cp.width; img.height = cp.height;
     img.src = cp.toDataURL("image/jpeg", 0.92);
     layer.appendChild(img);
   }
   return true;
 }
 window.addEventListener("beforeprint", function(){
-  try { buildPrintLayer(); } catch (e) {}
+  if (printReady) return;             // printNow()が用意済みなら作り直さない
+  try { refreshMeasures(); buildPrintLayer(); } catch (e) {}
 });
 window.addEventListener("afterprint", function(){
   $("#printLayer").innerHTML = "";   // 印刷後はメモリを解放
@@ -6337,7 +6529,7 @@ window.addEventListener("afterprint", function(){
 if (window.matchMedia) {
   var mq = window.matchMedia("print");
   var onMQ = function(m){
-    if (m.matches) { try { buildPrintLayer(); } catch (e) {} }
+    if (m.matches) { if (printReady) return; try { refreshMeasures(); buildPrintLayer(); } catch (e) {} }
     else $("#printLayer").innerHTML = "";
   };
   if (mq.addEventListener) mq.addEventListener("change", onMQ);
