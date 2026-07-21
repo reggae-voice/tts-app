@@ -472,6 +472,18 @@
   #ctxbar.expanded #ctxExtra{display:inline-flex}
   #ctxbar.expanded #ctxMore{background:rgba(255,255,255,.16)}
   #ctxLock.locked-on{background:rgba(255,200,80,.22)}
+  #opaPanel{
+    position:fixed;left:50%;transform:translateX(-50%) translateY(120%);
+    bottom:calc(env(safe-area-inset-bottom) + 12px);
+    width:min(420px, calc(100vw - 20px));
+    background:var(--ui-bg2);border:1px solid var(--ui-line);
+    border-radius:18px;padding:12px 14px 14px;z-index:45;
+    box-shadow:0 -8px 30px rgba(10,12,16,.45);
+    transition:transform .2s ease;
+  }
+  #opaPanel.show{transform:translateX(-50%) translateY(0)}
+  #opaRange{flex:1;min-width:0;accent-color:var(--accent);height:32px}
+  #opaVal{color:var(--ui-text);font-size:13px;font-weight:700;min-width:48px;text-align:right}
   @keyframes ftPulse{
     0%,100%{box-shadow:0 0 0 0 rgba(90,150,255,0)}
     50%{box-shadow:0 0 0 6px rgba(90,150,255,.45)}
@@ -560,8 +572,10 @@
   .pp-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
   /* ===== カード表示(Keep風の2列グリッド) ===== */
   #ppList.grid{
-    display:grid;grid-template-columns:1fr 1fr;gap:10px;
-    align-content:start;padding:2px;
+    display:grid;
+    /* 幅に応じて列数が増える。PCでカードが巨大化して粗く見えるのを防ぐ */
+    grid-template-columns:repeat(auto-fill, minmax(150px, 1fr));
+    gap:10px;align-content:start;padding:2px;
   }
   .pp-card{
     border-radius:14px;overflow:hidden;cursor:pointer;
@@ -705,7 +719,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v12.0">InkNote <small>v12.0</small></div>
+  <div class="brand" title="InkNote v12.2">InkNote <small>v12.2</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -878,6 +892,7 @@ window.onerror = function(msg, src, line){
   <span id="ctxExtra">
     <button id="ctxCopy" title="画像としてコピー">📋</button>
     <button id="ctxSave" title="画像として保存">💾</button>
+    <button id="ctxOpa" title="透明度">🌓</button>
     <button id="ctxCrop" title="トリミング">✂</button>
     <button id="ctxDup" title="複製">⧉</button>
     <button id="ctxFront" title="前面へ">⬆</button>
@@ -930,6 +945,20 @@ window.onerror = function(msg, src, line){
     <button class="pp-tool" id="bakIn">📥 復元</button>
   </div>
   <div id="usageInfo" style="color:var(--ui-dim);font-size:11px;padding:8px 4px 0;text-align:center"></div>
+</div>
+
+<div id="opaPanel">
+  <div class="pp-head"><span id="opaTitle">透明度</span><button id="opaClose">✕</button></div>
+  <div class="st-row" style="gap:12px">
+    <input id="opaRange" type="range" min="10" max="100" step="5" value="100">
+    <span id="opaVal">100%</span>
+  </div>
+  <div class="st-row" style="gap:6px">
+    <button class="stybtn opa-preset" data-o="100">100%</button>
+    <button class="stybtn opa-preset" data-o="75">75%</button>
+    <button class="stybtn opa-preset" data-o="50">50%</button>
+    <button class="stybtn opa-preset" data-o="25">25%</button>
+  </div>
 </div>
 
 <div id="stylePanel">
@@ -1109,7 +1138,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "12.0";
+var APP_VERSION = "12.2";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1442,6 +1471,17 @@ function drawGridInner() {
   ictx.stroke();
 }
 function drawStroke(o) {
+  // 透明度つきの線は、描画全体にまとめてαをかける
+  if (o.opacity != null && o.opacity < 1) {
+    var sa = ictx.globalAlpha;
+    ictx.globalAlpha = sa * o.opacity;
+    drawStrokeRaw(o);
+    ictx.globalAlpha = sa;
+    return;
+  }
+  drawStrokeRaw(o);
+}
+function drawStrokeRaw(o) {
   var pts = o.points;
   var hlHide = memorizeMode && o.highlighter;   // 暗記シート: マーカーを黒塗りに
   if (o.highlighter) {
@@ -1506,6 +1546,15 @@ function drawStroke(o) {
   }
 }
 function drawShape(o) {
+  if (o.opacity != null && o.opacity < 1) {
+    var _sa2 = ictx.globalAlpha;
+    ictx.globalAlpha = _sa2 * o.opacity;
+    var _oo2 = o.opacity; o.opacity = null;
+    drawShape(o);
+    o.opacity = _oo2;
+    ictx.globalAlpha = _sa2;
+    return;
+  }
   var rot = o.rot || 0;
   if (rot) {                      // 中心まわりに回転
     var rcx = (o.x1 + o.x2) / 2, rcy = (o.y1 + o.y2) / 2;
@@ -1763,6 +1812,7 @@ function rebuildScene(json) {
     var o = objects[j];
     if (o.type === "text") makeTextEl(o);
     else if (o.type === "image") makeImageEl(o);
+    if (o.el && o.opacity != null && o.opacity < 1) o.el.style.opacity = String(o.opacity);
   }
   setSelection([]);
   inkDirty = true;
@@ -4300,22 +4350,31 @@ function scheduleThumb(pid) {
   clearTimeout(thumbTimer);
   thumbTimer = setTimeout(function(){ makeThumb(pid); }, 1200);
 }
+var THUMB_VER = 2;                          // 解像度を上げた版。古いサムネは作り直す
 function makeThumb(pid) {
   if (pid !== currentId) return;             // 既に切替済みなら作らない
   try {
     if (!objects.length) { kvDel("thumb_" + pid); return; }
+    // サムネは画面用なので、印刷用の白背景設定は一時的に外す
+    var pwSave = printWhite;
+    printWhite = false;
     var c = renderPageToCanvas(null, 24);
+    printWhite = pwSave;
+    outWhite = false;
     if (!c || !c.width) return;
-    var W = 240, H = 180;                     // 4:3の小さなカード画像
+    // 画面の精細度に合わせて実解像度を上げる(PCの大きなカードでも粗くならない)
+    var dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+    var W = Math.round(400 * dpr), H = Math.round(300 * dpr);   // 4:3
     var s = Math.max(W / c.width, H / c.height);
     var t = document.createElement("canvas");
     t.width = W; t.height = H;
     var g = t.getContext("2d");
-    outWhite = false;                 // サムネは画面用: テーマ色のまま
+    if (g.imageSmoothingQuality) g.imageSmoothingQuality = "high";
     g.fillStyle = (THEMES[themeName] || THEMES.cream).paper;
     g.fillRect(0, 0, W, H);
     g.drawImage(c, 0, 0, W / s, H / s, 0, 0, W, H);
-    kvSet("thumb_" + pid, { png: t.toDataURL("image/jpeg", 0.7), ts: Date.now() });
+    kvSet("thumb_" + pid, { png: t.toDataURL("image/jpeg", 0.86),
+                            ts: Date.now(), v: THUMB_VER, w: W });
   } catch (e) {}
 }
 function saveDocNow() { clearTimeout(saveTimer); saveDoc(); }
@@ -4375,6 +4434,8 @@ function loadPage(id) {
     statusEl.textContent = objects.length ? "保存済み ✓" : "新規ノート";
     updatePageBtn();
     renderPageList();
+    // 古い低解像度サムネを、開いたページから順に作り直す
+    setTimeout(function(){ refreshThumbIfOld(id); }, 900);
   });
 }
 function updatePageBtn() {
@@ -4843,8 +4904,16 @@ $("#ppSort").onclick = function(){
   try { localStorage.setItem("inknote_listsort", listSort); } catch (e) {}
   renderPageList();
 };
+/* 保存済みサムネが古い版(低解像度)なら作り直す */
+function refreshThumbIfOld(pid) {
+  if (pid !== currentId || !objects.length) return;
+  kvGet("thumb_" + pid).then(function(th){
+    if (!th || th.v !== THUMB_VER) makeThumb(pid);
+  }).catch(function(){});
+}
 function openPages() {
   renderPageList();
+  refreshThumbIfOld(currentId);
   updateUsage();
   $("#pagesPanel").classList.add("show");
   $("#pagesScrim").classList.add("show");
@@ -5404,6 +5473,15 @@ function roundRectPath(g, x, y, w, h, r) {
   g.closePath();
 }
 function drawTextToCanvas(g, o) {
+  if (o.opacity != null && o.opacity < 1) {
+    var sa = g.globalAlpha;
+    g.globalAlpha = sa * o.opacity;
+    var oo = o.opacity; o.opacity = null;
+    drawTextToCanvas(g, o);
+    o.opacity = oo;
+    g.globalAlpha = sa;
+    return;
+  }
   var fs = o.fontSize;
   g.font = (o.bold ? "700 " : "400 ") + fs + "px " + FONT_MAP[o.font || "sans"];
   g.textBaseline = "top";
@@ -5471,7 +5549,12 @@ function renderPageToCanvas(bbox, marginOpt, list) {
     var o = arr[i];
     if (o.type === "image" && o.el) {
       var im = o.el.querySelector("img");
-      if (im) g.drawImage(im, o.x, o.y, o.w, o.h);
+      if (im) {
+        var sa3 = g.globalAlpha;
+        if (o.opacity != null && o.opacity < 1) g.globalAlpha = sa3 * o.opacity;
+        g.drawImage(im, o.x, o.y, o.w, o.h);
+        g.globalAlpha = sa3;
+      }
     } else if (o.type === "text") {
       drawTextToCanvas(g, o);
     }
@@ -5785,6 +5868,60 @@ $("#ctxMore").onclick = function(e){
   e.stopPropagation();
   ctxbar.classList.toggle("expanded");
   updateSelUI();
+};
+/* ===== 透明度(テキスト・図形・手書き・画像すべてに適用) ===== */
+function selOpacity() {
+  if (!sel.length) return 1;
+  var v = (sel[0].opacity == null) ? 1 : sel[0].opacity;
+  return v;
+}
+function applyOpacity(v, commit) {
+  if (!sel.length) return;
+  v = Math.max(0.1, Math.min(1, v));
+  for (var i = 0; i < sel.length; i++) {
+    var o = sel[i];
+    if (o.locked) continue;
+    o.opacity = v;
+    if (o.el) o.el.style.opacity = (v >= 1 ? "" : String(v));   // DOM系(テキスト・画像)
+  }
+  inkDirty = true;                                              // canvas系(線・図形)
+  $("#opaVal").textContent = Math.round(v * 100) + "%";
+  var ps = document.querySelectorAll(".opa-preset");
+  for (var k = 0; k < ps.length; k++)
+    ps[k].classList.toggle("sel", Math.round(v * 100) === parseInt(ps[k].getAttribute("data-o"), 10));
+  if (commit) scheduleSave();
+}
+function openOpacity() {
+  if (!sel.length) return;
+  var v = selOpacity();
+  $("#opaRange").value = Math.round(v * 100);
+  $("#opaVal").textContent = Math.round(v * 100) + "%";
+  $("#opaTitle").textContent = (sel.length > 1)
+    ? "透明度(" + sel.length + "個)" : "透明度";
+  applyOpacity(v, false);
+  $("#opaPanel").classList.add("show");
+}
+function closeOpacity(){ $("#opaPanel").classList.remove("show"); }
+$("#opaClose").onclick = closeOpacity;
+$("#opaRange").addEventListener("input", function(){
+  applyOpacity(parseInt(this.value, 10) / 100, false);
+});
+$("#opaRange").addEventListener("change", function(){
+  applyOpacity(parseInt(this.value, 10) / 100, true);
+});
+(function(){
+  var ps = document.querySelectorAll(".opa-preset");
+  for (var i = 0; i < ps.length; i++) {
+    ps[i].addEventListener("click", function(){
+      var v = parseInt(this.getAttribute("data-o"), 10) / 100;
+      $("#opaRange").value = Math.round(v * 100);
+      applyOpacity(v, true);
+    });
+  }
+})();
+$("#ctxOpa").onclick = function(e){
+  e.stopPropagation();
+  openOpacity();
 };
 $("#ctxLock").onclick = function(e){
   e.stopPropagation();
