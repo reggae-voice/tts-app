@@ -161,11 +161,17 @@
   }
   #topbar{
     position:fixed;top:0;left:0;right:0;
-    padding:calc(env(safe-area-inset-top) + 8px) 14px 8px;
+    /* 右は折りたたみボタン(幅34px+右10px)と重ならないよう余白を取る */
+    padding:calc(env(safe-area-inset-top) + 8px) 52px 8px 14px;
     display:flex;align-items:center;gap:10px;
     pointer-events:none;z-index:20;
     transition:transform .18s ease, opacity .18s ease;
+    overflow-x:auto;                 /* ボタンが多い時は横スクロールで逃がす */
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
   }
+  #topbar::-webkit-scrollbar{display:none}
+  #topbar > *{flex:0 0 auto}         /* 縮んで潰れないようにする */
   body.bar-hidden #topbar{
     transform:translateY(-140%);opacity:0;pointer-events:none;
   }
@@ -460,6 +466,11 @@
   #ctxbar.expanded #ctxExtra{display:inline-flex}
   #ctxbar.expanded #ctxMore{background:rgba(255,255,255,.16)}
   #ctxLock.locked-on{background:rgba(255,200,80,.22)}
+  @keyframes ftPulse{
+    0%,100%{box-shadow:0 0 0 0 rgba(90,150,255,0)}
+    50%{box-shadow:0 0 0 6px rgba(90,150,255,.45)}
+  }
+  #fingerToggle.attention{animation:ftPulse 1.2s ease-in-out 2}
   #selBox.locked{border-style:dashed;border-color:#e0a83a}
   #ctxbar button{
     border:none;background:transparent;color:var(--ui-text);
@@ -654,7 +665,7 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v11.3</small></div>
+  <div class="brand">InkNote <small>v11.5</small></div>
   <button class="chip-btn" id="pageBtn">📄 ノート</button>
   <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
   <div id="status">準備中…</div>
@@ -1019,7 +1030,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1038,6 +1048,8 @@ var pen = { color: "#1C1E22", size: 4, highlighter: false };
 var fingerDraws = true;
 var fingerManual = false;
 var stylusSeen = false;
+var lastStylusAt = 0;          // 最後にスタイラスを使った時刻
+var fingerBlockedCount = 0;    // 指で描こうとして弾かれた回数
 var activeStroke = null;
 var lassoPath = null;
 var editingObj = null;
@@ -1047,7 +1059,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "11.3";
+var APP_VERSION = "11.5";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1099,6 +1111,13 @@ try {
   if (_st) {
     if (_st.pen) pen = _st.pen;
     if (typeof _st.fingerDraws === "boolean") { fingerDraws = _st.fingerDraws; fingerManual = !!_st.fingerManual; }
+    lastStylusAt = _st.lastStylusAt || 0;
+    // ペンを7日以上使っていない(壊れた・持っていない)なら指描画に戻す。
+    // 自分で明示的にOFFにした場合(fingerManual)は尊重する。
+    if (!fingerDraws && !fingerManual && lastStylusAt &&
+        (Date.now() - lastStylusAt) > 7 * 24 * 60 * 60 * 1000) {
+      fingerDraws = true;
+    }
     if (_st.eraser) eraser = _st.eraser;
     if (_st.shapeStyle) shapeStyle = _st.shapeStyle;
     if (_st.bg) bgStyle = _st.bg;
@@ -1112,6 +1131,7 @@ function saveSettings() {
   try {
     localStorage.setItem("inknote_settings",
       JSON.stringify({ pen: pen, fingerDraws: fingerDraws, fingerManual: fingerManual,
+                       lastStylusAt: lastStylusAt,
                        eraser: eraser, bg: bgStyle, pressure: usePressure, theme: themeName,
                        minimap: showMini, shapeStyle: shapeStyle, canvasMode: canvasMode }));
   } catch (e) {}
@@ -2765,12 +2785,15 @@ capture.addEventListener("pointerdown", function(e){
   // palm rejection: ペン描画中の指タッチは無視
   if (activeStroke && e.pointerType === "touch") return;
   // スタイラス初検出で「指で描く」を自動OFF
-  if (e.pointerType === "pen" && !stylusSeen) {
-    stylusSeen = true;
-    if (!fingerManual && fingerDraws) {
-      fingerDraws = false;
-      $("#fingerToggle").classList.remove("on");
-      saveSettings();
+  if (e.pointerType === "pen") {
+    lastStylusAt = Date.now();               // 最後にペンを使った時刻
+    if (!stylusSeen) {
+      stylusSeen = true;
+      if (!fingerManual && fingerDraws) {
+        fingerDraws = false;
+        $("#fingerToggle").classList.remove("on");
+        saveSettings();
+      }
     }
   }
   e.preventDefault();
@@ -2867,6 +2890,17 @@ capture.addEventListener("pointerdown", function(e){
 
   var isDrawDevice = e.pointerType === "pen" || e.pointerType === "mouse" ||
                      (e.pointerType === "touch" && fingerDraws);
+  // ペンが使えなくなった人が「描けない」と困らないように理由を伝える
+  if (!isDrawDevice && e.pointerType === "touch" && !fingerDraws) {
+    fingerBlockedCount++;
+    if (fingerBlockedCount >= 2) {
+      fingerBlockedCount = 0;
+      statusEl.textContent = "指では描かない設定です → ツールバーの ✋ をONにすると指で描けます";
+      var ft = $("#fingerToggle");
+      ft.classList.add("attention");
+      setTimeout(function(){ ft.classList.remove("attention"); }, 2400);
+    }
+  }
 
   if (!isDrawDevice) {
     // 指はスクロール(タップなら消しゴム等の単発動作)
