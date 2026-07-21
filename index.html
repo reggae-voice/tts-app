@@ -119,16 +119,16 @@
   }
   /* テキストの幅(段落)変更ハンドル: 右辺中央 */
   .whandle{
-    position:absolute;right:-9px;top:50%;width:18px;height:32px;
-    margin-top:-16px;border-radius:6px;background:#fff;
-    /* topはupdateSelUIがJSで上書きし、画面内に収める */
-    border:1.5px solid var(--accent);box-shadow:0 1px 4px rgba(20,24,32,.28);
+    /* 画面固定: BOXが画面外へ伸びても、つまみは必ず見える位置に残る */
+    position:fixed;left:0;top:0;width:20px;height:36px;
+    border-radius:7px;background:#fff;z-index:25;
+    border:1.5px solid var(--accent);box-shadow:0 2px 8px rgba(20,24,32,.32);
     touch-action:none;display:none;
-    color:var(--accent);font-size:10px;line-height:29px;text-align:center;
+    color:var(--accent);font-size:11px;line-height:33px;text-align:center;
     font-weight:800;cursor:ew-resize;
-    transform:scale(calc(1 / var(--ws,1)));
-    transform-origin:center;
   }
+  .whandle.offscreen{background:var(--accent);color:#fff;border-color:#fff}
+  body.editing-mode .whandle{display:none !important}
   .handle::after{
     content:"";position:absolute;left:50%;top:50%;width:10px;height:10px;
     margin:-5px 0 0 -5px;border-radius:50%;background:var(--accent);
@@ -163,15 +163,20 @@
     position:fixed;top:0;left:0;right:0;
     /* 右は折りたたみボタン(幅34px+右10px)と重ならないよう余白を取る */
     padding:calc(env(safe-area-inset-top) + 8px) 52px 8px 14px;
-    display:flex;align-items:center;gap:10px;
+    display:flex;align-items:center;gap:8px;
     pointer-events:none;z-index:20;
     transition:transform .18s ease, opacity .18s ease;
-    overflow-x:auto;                 /* ボタンが多い時は横スクロールで逃がす */
-    -webkit-overflow-scrolling:touch;
-    scrollbar-width:none;
+    overflow:visible;                /* 右のボタン群は絶対に隠さない */
   }
-  #topbar::-webkit-scrollbar{display:none}
-  #topbar > *{flex:0 0 auto}         /* 縮んで潰れないようにする */
+  #topbar > *{flex:0 0 auto}         /* 右側は縮まない・潰れない */
+  /* 左側だけを可変+横スクロールにする(⚙や🔒を押し出さない) */
+  #tbLeft{
+    flex:1 1 auto;min-width:0;
+    display:flex;align-items:center;gap:8px;
+    overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none;
+  }
+  #tbLeft::-webkit-scrollbar{display:none}
+  #tbLeft > *{flex:0 0 auto}
   body.bar-hidden #topbar{
     transform:translateY(-140%);opacity:0;pointer-events:none;
   }
@@ -200,11 +205,12 @@
   }
   #topbar > *{pointer-events:auto}
   .brand{
-    display:flex;align-items:baseline;gap:6px;
-    background:var(--ui-bg);color:var(--ui-text);
-    padding:7px 14px;border-radius:999px;
-    box-shadow:0 2px 10px rgba(20,24,32,.25);
-    font-size:14px;font-weight:700;letter-spacing:.03em;
+    display:flex;align-items:baseline;gap:5px;
+    background:var(--ui-bg);color:var(--ui-dim);
+    padding:5px 10px;border-radius:999px;
+    box-shadow:0 2px 8px rgba(20,24,32,.2);
+    font-size:11px;font-weight:700;letter-spacing:.02em;
+    opacity:.75;order:9;             /* 右端に置く */
   }
   .brand small{font-weight:400;color:var(--ui-dim);font-size:11px}
   #status{
@@ -498,8 +504,7 @@
     .tbtn{width:42px;height:46px;font-size:8.5px;border-radius:12px}
     .tbtn svg{width:19px;height:19px}
     #toolbar{padding:6px;border-radius:18px}
-    .brand{font-size:12px;padding:6px 10px}
-    .brand small{display:none}
+    .brand{display:none}           /* 狭い画面ではロゴより操作ボタンを優先 */
     .chip-btn{padding:7px 9px;font-size:11px}
     #pageBtn{max-width:86px}
     #status{font-size:10px;padding:5px 8px;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -689,15 +694,18 @@ window.onerror = function(msg, src, line){
 <div id="printLayer"></div>
 <button id="barToggle" title="上部バーの表示/非表示">▲</button>
 <div id="topbar">
-  <div class="brand">InkNote <small>v11.8</small></div>
-  <button class="chip-btn" id="pageBtn">📄 ノート</button>
-  <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
-  <div id="status">準備中…</div>
-  <div class="spacer"></div>
+  <!-- 左: 混みあう側。ここだけ横スクロールさせる -->
+  <div id="tbLeft">
+    <button class="chip-btn" id="pageBtn">📄 ノート</button>
+    <button class="chip-btn" id="syncBtn" title="クラウド同期">☁</button>
+    <div id="status">準備中…</div>
+  </div>
+  <!-- 右: 操作ボタン。常に見える(スクロールしない) -->
   <button class="chip-btn disabled" id="undoBtn" title="戻す">↩︎</button>
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
+  <div class="brand" title="InkNote v12.0">InkNote <small>v12.0</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1101,7 +1109,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "11.8";
+var APP_VERSION = "12.0";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1236,7 +1244,7 @@ selBox.appendChild(selHandle);
 var selWHandle = document.createElement("div");
 selWHandle.className = "whandle";
 selWHandle.textContent = "⇔";
-selBox.appendChild(selWHandle);
+document.body.appendChild(selWHandle);   // #worldの外に出す=画面座標で固定配置できる
 var selRHandle = document.createElement("div");
 selRHandle.className = "rhandle";
 selRHandle.textContent = "↻";
@@ -1639,6 +1647,7 @@ function updateSelUI() {
   if (!sel.length) {
     selBox.style.display = "none";
     ctxbar.style.display = "none";
+    selWHandle.style.display = "none";
     return;
   }
   var b = selBBox();
@@ -1654,33 +1663,31 @@ function updateSelUI() {
   selBox.style.top = b.y + "px";
   selBox.style.width = b.w + "px";
   selBox.style.height = b.h + "px";
-  // ⇔ハンドル: BOXが画面より大きくても見えるよう、
-  // 「BOXの画面上の可視部分」の中央に置く(world座標に逆変換してtopへ)
+  // ⇔ハンドル: 画面座標で配置し、必ず画面内に収める。
+  // BOXが画面の外まで伸びていても、つまみは常に見える位置に留まる。
   if (selWHandle.style.display !== "none") {
     var vv0 = window.visualViewport;
     var visTop0 = vv0 ? vv0.offsetTop : 0;
     var visH0 = vv0 ? vv0.height : innerHeight;
-    var syTop = b.y * view.s + view.y;                  // BOX上端(画面px)
-    var syBot = (b.y + b.h) * view.s + view.y;          // BOX下端
-    var lo = Math.max(syTop, visTop0 + 80);             // 可視範囲と交差
-    // A4横では下端の水平スライダー帯(約130px)に入らないよう下限を上げる
-    var botPad = (canvasMode === "a4h") ? 140 : 60;
-    var hi = Math.min(syBot, visTop0 + visH0 - botPad);
-    var midScreen = (lo < hi) ? (lo + hi) / 2 : (syTop + syBot) / 2;
-    var localY = (midScreen - view.y) / view.s - b.y;   // selBox内ローカルy
-    localY = Math.max(20, Math.min(b.h - 20, localY));
-    selWHandle.style.top = localY + "px";
-    // A4縦では右端の縦スライダー帯(約46px)と重ならないよう、
-    // BOX右端が画面右端に迫っている時は⇔を内側に寄せる
-    var rxScreen = (b.x + b.w) * view.s + view.x;       // BOX右端(画面px)
-    if (canvasMode === "a4v" && rxScreen > innerWidth - 46) {
-      var overlap = rxScreen - (innerWidth - 46);       // はみ出し量(画面px)
-      var rWorld = overlap / view.s - 9;                // right値(world px)
-      rWorld = Math.min(rWorld, Math.max(0, b.w - 30)); // 小さいBOXでは左に出しすぎない
-      selWHandle.style.right = rWorld + "px";
-    } else {
-      selWHandle.style.right = "";                      // 通常はCSS既定(右端の外)
-    }
+    var HW = 20, HH = 36;                               // つまみの実寸
+    // --- 横: BOXの右端に置く。画面外なら画面の端で待たせる ---
+    var rx = (b.x + b.w) * view.s + view.x;             // BOX右端(画面px)
+    var rightPad = (canvasMode === "a4v") ? 52 : 12;    // 縦スライダー帯を避ける
+    var minX = 8, maxX = innerWidth - HW - rightPad;
+    var hx = Math.max(minX, Math.min(maxX, rx - HW / 2));
+    // --- 縦: 見えている部分の中央。上下のUIには重ねない ---
+    var syTop = b.y * view.s + view.y;
+    var syBot = (b.y + b.h) * view.s + view.y;
+    var topPad = visTop0 + 96;
+    var botPad = visTop0 + visH0 - ((canvasMode === "a4h") ? 150 : 110);
+    if (botPad < topPad) botPad = topPad;
+    var lo = Math.max(syTop, topPad), hi = Math.min(syBot, botPad);
+    var cy = (lo < hi) ? (lo + hi) / 2 : (syTop + syBot) / 2;
+    var hy = Math.max(topPad, Math.min(botPad, cy)) - HH / 2;
+    selWHandle.style.left = Math.round(hx) + "px";
+    selWHandle.style.top = Math.round(hy) + "px";
+    // 右端が画面外にある時は色を変えて「ここで掴める」と分かるようにする
+    selWHandle.classList.toggle("offscreen", rx > maxX + HW / 2 || rx < minX);
   }
   // メニュー(画面座標に変換して配置)
   ctxbar.style.display = "flex";
