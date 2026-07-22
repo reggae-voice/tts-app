@@ -96,15 +96,17 @@
     touch-action:none;
   }
   .handle{
-    position:absolute;right:-11px;bottom:-11px;width:22px;height:22px;
-    border-radius:50%;background:#fff;border:1.5px solid var(--accent);
-    box-shadow:0 1px 4px rgba(20,24,32,.28);
-    touch-action:none;
-    transform:scale(calc(1 / var(--ws,1)));
-    transform-origin:center;
+    /* 画面固定: 画像/図形の右下角に置き、常に掴める場所に見せる */
+    position:fixed;left:0;top:0;width:26px;height:26px;
+    border-radius:50%;background:#fff;border:2px solid var(--accent);
+    box-shadow:0 2px 8px rgba(20,24,32,.32);z-index:25;
+    touch-action:none;display:none;
+    color:var(--accent);font-size:13px;line-height:24px;text-align:center;
+    font-weight:800;cursor:nwse-resize;
   }
+  body.editing-mode .handle{display:none !important}
   /* 指で掴みやすいよう、見た目より広い当たり判定を持たせる */
-  .handle::after,.whandle::after,.rhandle::after{
+  .whandle::after,.rhandle::after{
     content:"";position:absolute;inset:-12px;
   }
   .rhandle{
@@ -127,7 +129,7 @@
     color:var(--accent);font-size:11px;line-height:33px;text-align:center;
     font-weight:800;cursor:ew-resize;
   }
-  .whandle.offscreen{background:var(--accent);color:#fff;border-color:#fff}
+  .whandle.offscreen,.handle.offscreen{background:var(--accent);color:#fff;border-color:#fff}
   body.editing-mode .whandle{display:none !important}
   .handle::after{
     content:"";position:absolute;left:50%;top:50%;width:10px;height:10px;
@@ -719,7 +721,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v12.2">InkNote <small>v12.2</small></div>
+  <div class="brand" title="InkNote v12.7">InkNote <small>v12.7</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1138,7 +1140,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "12.2";
+var APP_VERSION = "12.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1269,7 +1271,8 @@ var selBox = document.createElement("div");
 selBox.id = "selBox";
 var selHandle = document.createElement("div");
 selHandle.className = "handle";
-selBox.appendChild(selHandle);
+selHandle.textContent = "⤡";
+document.body.appendChild(selHandle);   // #worldの外=画面座標で角に固定
 var selWHandle = document.createElement("div");
 selWHandle.className = "whandle";
 selWHandle.textContent = "⇔";
@@ -1282,9 +1285,11 @@ world.appendChild(selBox);
 
 /* ---------- ビュー変換 ---------- */
 function sheetExtent() {
-  // 用紙が伸びる方向の総延長(内容+表示範囲+1ページ分の余白)
+  // 用紙が伸びる方向の総延長(内容+1ページ分の余白)
+  // A4縦: 縦に伸びる → 1ページ長=A4H(1123)
+  // A4横: 横に伸びる → 1ページ長=A4H(1123, 横長辺)。updateSheetsの升目と一致させる
   var vert = (canvasMode === "a4v");
-  var SH = vert ? A4H : A4W;   // 伸びる方向の1ページ長
+  var SH = vert ? A4H : A4H;   // どちらも伸びる方向の1ページ長はA4Hの長辺
   var cb = contentBBox();
   var used = cb ? (vert ? (cb.y + cb.h) : (cb.x + cb.w)) : 0;
   var n = Math.max(1, Math.ceil(Math.max(used, 0) / SH) + 1);
@@ -1429,7 +1434,7 @@ function clearGridOverObjects() {
     var sh = b.h * view.s;
     if (!sw || !sh) continue;
     if (sx > innerWidth || sy > innerHeight || sx + sw < 0 || sy + sh < 0) continue;
-    ictx.clearRect(sx, sy, sw, sh);
+    ictx.clearRect(sx - 1, sy - 1, sw + 2, sh + 2);   // 1px余分に消して境界のドット残りを防ぐ
   }
 }
 function drawGridBody() {
@@ -1663,7 +1668,13 @@ function objBBox(o) {
     return { x: sx1 - pad2, y: sy1 - pad2,
              w: (sx2 - sx1) + pad2 * 2, h: (sy2 - sy1) + pad2 * 2 };
   }
-  // DOM要素の実寸はキャッシュから読む。
+  // 画像はリサイズで o.w/o.h が変わるので、そちらを最優先で使う。
+  // (_mw/_mh は貼り付け時の元サイズのまま古くなり、リサイズ後に
+  //  グリッド消去範囲がずれて画像にドットが乗る原因になっていた)
+  if (o.type === "image") {
+    return { x: o.x, y: o.y, w: o.w || o._mw || 100, h: o.h || o._mh || 100 };
+  }
+  // テキストのDOM実寸はキャッシュから読む。
   // (毎フレームoffsetWidthを読むと、入力中はレイアウトが毎回無効化され
   //  強制再レイアウトの往復が起きて、文字入力がもたつく原因になる)
   var w = (o._mw != null) ? o._mw : (o.el ? o.el.offsetWidth : 0) || (o.w || 100);
@@ -1697,6 +1708,7 @@ function updateSelUI() {
     selBox.style.display = "none";
     ctxbar.style.display = "none";
     selWHandle.style.display = "none";
+    selHandle.style.display = "none";
     return;
   }
   var b = selBBox();
@@ -1706,6 +1718,10 @@ function updateSelUI() {
     (!selLocked && sel.length === 1 && sel[0].type === "text") ? "block" : "none";
   selRHandle.style.display =
     (!selLocked && sel.length === 1 && sel[0].type === "shape") ? "block" : "none";
+  // 拡大縮小ハンドル: テキスト以外(画像・図形・手書き線)の単一選択で表示。
+  // テキストは幅を⇔で変えるので対象外。画面右下角に固定して常に掴める。
+  var showSizeHandle = (!selLocked && sel.length === 1 && sel[0].type !== "text");
+  selHandle.style.display = showSizeHandle ? "block" : "none";
   selBox.style.display = "block";
   selBox.classList.toggle("locked", sel.length === 1 && sel[0].locked);
   selBox.style.left = b.x + "px";
@@ -1737,6 +1753,25 @@ function updateSelUI() {
     selWHandle.style.top = Math.round(hy) + "px";
     // 右端が画面外にある時は色を変えて「ここで掴める」と分かるようにする
     selWHandle.classList.toggle("offscreen", rx > maxX + HW / 2 || rx < minX);
+  }
+  // 画像リサイズハンドル: BOX右下角に画面座標で置く(必ず画面内)
+  if (selHandle.style.display !== "none") {
+    var vvi = window.visualViewport;
+    var vTop = vvi ? vvi.offsetTop : 0;
+    var vH = vvi ? vvi.height : innerHeight;
+    var GH = 26;
+    var brx = (b.x + b.w) * view.s + view.x;           // BOX右下(画面px)
+    var bry = (b.y + b.h) * view.s + view.y;
+    var rpad = (canvasMode === "a4v") ? 52 : 12;
+    var gx = Math.max(8, Math.min(innerWidth - GH - rpad, brx - GH / 2));
+    var gyTop = vTop + 96;
+    var gyBot = vTop + vH - ((canvasMode === "a4h") ? 150 : 110);
+    if (gyBot < gyTop) gyBot = gyTop;
+    var gy = Math.max(gyTop, Math.min(gyBot, bry - GH / 2));
+    selHandle.style.left = Math.round(gx) + "px";
+    selHandle.style.top = Math.round(gy) + "px";
+    selHandle.classList.toggle("offscreen",
+      brx > innerWidth - GH / 2 - rpad || bry > vTop + vH - 40);
   }
   // メニュー(画面座標に変換して配置)
   ctxbar.style.display = "flex";
@@ -1900,6 +1935,7 @@ function resizeObject(o, b0, scale) {
     o.x = b0.x + (o._o.x - b0.x) * scale;
     o.y = b0.y + (o._o.y - b0.y) * scale;
     o.w = o._o.w * scale; o.h = o._o.h * scale;
+    o._mw = o.w; o._mh = o.h;      // BBoxキャッシュも同期(グリッド消去のずれ防止)
     o.el.style.left = o.x + "px"; o.el.style.top = o.y + "px";
     o.el.style.width = o.w + "px"; o.el.style.height = o.h + "px";
   } else if (o.type === "text") {
@@ -2493,38 +2529,121 @@ document.addEventListener("drop", function(e){
     addImageFiles(e.dataTransfer.files, e.clientX, e.clientY);
 });
 function addImageFiles(files, sx, sy) {
-  var offset = 0;
+  // 画像とPDFを仕分け。PDFは従来どおり。
+  var imgs = [];
   for (var i = 0; i < files.length; i++) {
-    (function(f){
-      if (f.type === "application/pdf") { importPdf(f, sx, sy); return; }
-      if (!f.type || f.type.indexOf("image/") !== 0) return;
-      var reader = new FileReader();
-      reader.onload = function(){
-        var img = new Image();
-        img.onload = function(){
-          var maxW = 420;
-          var scale = Math.min(1, maxW / img.width);
-          var cw = toWorld(sx != null ? sx : innerWidth / 2, sy != null ? sy : innerHeight / 2);
-          // 容量対策: 大きい画像は自動で縮小・JPEG化して保存サイズを1/5〜1/10に
-          var srcData = compressImage(img, f.type);
+    var f = files[i];
+    if (f.type === "application/pdf") { importPdf(f, sx, sy); continue; }
+    if (f.type && f.type.indexOf("image/") === 0) imgs.push(f);
+  }
+  if (!imgs.length) return;
+
+  // 複数画像は「縦にズラッと」並べる(PDF一括貼り付けと同じ体験)。
+  // ファイル名順で読み込み順を安定させる。
+  imgs.sort(function(a, b){ return (a.name || "").localeCompare(b.name || ""); });
+
+  var multi = imgs.length > 1;
+  var loaded = new Array(imgs.length);   // 読み込み結果を順番に格納
+  var remaining = imgs.length;
+
+  // 並べ始める基準位置(world座標)
+  var startW = toWorld(sx != null ? sx : innerWidth / 2, sy != null ? sy : innerHeight / 2);
+
+  imgs.forEach(function(f, k){
+    var reader = new FileReader();
+    reader.onload = function(){
+      var img = new Image();
+      img.onload = function(){
+        var maxW = multi ? 640 : 420;                 // 一括時は少し大きめで見やすく
+        var scale = Math.min(1, maxW / img.width);
+        loaded[k] = {
+          src: compressImage(img, f.type) || reader.result,
+          w: img.width * scale, h: img.height * scale
+        };
+        if (--remaining === 0) placeSequential();
+      };
+      img.onerror = function(){ loaded[k] = null; if (--remaining === 0) placeSequential(); };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(f);
+  });
+
+  function placeSequential() {
+    var made = [];
+    if (multi) {
+      var GAP = 8;
+      var horiz = (canvasMode === "a4h");    // A4横=横に並べる / それ以外=縦に積む
+      pushUndo();
+      if (horiz) {
+        // 横に並べる: 上端を揃え、左から順に。高さは一番高い画像に中央寄せ
+        var maxH2 = 0;
+        for (var mh = 0; mh < loaded.length; mh++) if (loaded[mh]) maxH2 = Math.max(maxH2, loaded[mh].h);
+        var topY = startW.y - maxH2 / 2;
+        var curX = startW.x;
+        for (var i = 0; i < loaded.length; i++) {
+          var L = loaded[i];
+          if (!L) continue;
           var o = {
             id: idSeq++, type: "image",
-            x: cw.x - (img.width * scale) / 2 + offset,
-            y: cw.y - (img.height * scale) / 2 + offset,
-            w: img.width * scale, h: img.height * scale,
-            src: srcData || reader.result
+            x: curX, y: topY + (maxH2 - L.h) / 2,   // 各画像を行の中央に
+            w: L.w, h: L.h, _mw: L.w, _mh: L.h, src: L.src
           };
-          offset += 24;
-          pushUndo();
-          objects.push(o);
-          makeImageEl(o);
-          switchTool("select");
-          setSelection([o]);
-        };
-        img.src = reader.result;
+          objects.push(o); makeImageEl(o); made.push(o);
+          curX += L.w + GAP;
+        }
+      } else {
+        // 縦に積む: 左端を揃え、上から順に。幅は一番広い画像に中央寄せ
+        var maxW2 = 0;
+        for (var m = 0; m < loaded.length; m++) if (loaded[m]) maxW2 = Math.max(maxW2, loaded[m].w);
+        var leftX = startW.x - maxW2 / 2;
+        var curY = startW.y;
+        for (var j = 0; j < loaded.length; j++) {
+          var L2 = loaded[j];
+          if (!L2) continue;
+          var o2 = {
+            id: idSeq++, type: "image",
+            x: leftX + (maxW2 - L2.w) / 2,
+            y: curY, w: L2.w, h: L2.h,
+            _mw: L2.w, _mh: L2.h, src: L2.src
+          };
+          objects.push(o2); makeImageEl(o2); made.push(o2);
+          curY += L2.h + GAP;
+        }
+      }
+      switchTool("select");
+      setSelection(made);                    // まとめて選択(すぐ全体を動かせる)
+    } else {
+      var L1 = loaded[0];
+      if (!L1) return;
+      pushUndo();
+      var o1 = {
+        id: idSeq++, type: "image",
+        x: startW.x - L1.w / 2, y: startW.y - L1.h / 2,
+        w: L1.w, h: L1.h, _mw: L1.w, _mh: L1.h, src: L1.src
       };
-      reader.readAsDataURL(f);
-    })(files[i]);
+      objects.push(o1); makeImageEl(o1); made.push(o1);
+      switchTool("select");
+      setSelection([o1]);
+    }
+    inkDirty = true;
+    scheduleSave();
+    if (multi && made.length) {
+      var dir = (canvasMode === "a4h") ? "横" : "縦";
+      setTimeout(function(){ statusEl.textContent = made.length + "枚を" + dir + "に並べました(まとめて選択中)"; }, 40);
+    }
+    // 並べた先頭が見えるように寄せる(画面外なら)
+    if (made.length) {
+      var b = objBBox(made[0]);
+      var scx = b.x * view.s + view.x;
+      var scy = b.y * view.s + view.y;
+      var off = (scy < 100 || scy > innerHeight - 120 || scx < 40 || scx > innerWidth - 60);
+      if (off) {
+        view.x = 60 - b.x * view.s;
+        view.y = 140 - b.y * view.s;
+        clampView(); applyView();
+      }
+    }
+    updateSelUI();
   }
 }
 
@@ -6443,6 +6562,7 @@ $("#cropDone").onclick = function(){
     tgt.y += y1 * ky;
     tgt.w = Math.max(8, rw * kx);
     tgt.h = Math.max(8, rh * ky);
+    tgt._mw = tgt.w; tgt._mh = tgt.h;   // BBoxキャッシュを同期(枠・ハンドル位置のズレ防止)
     tgt.src = outUrl;
     var imEl = tgt.el && tgt.el.querySelector("img");
     if (imEl) imEl.src = tgt.src;
@@ -6453,9 +6573,21 @@ $("#cropDone").onclick = function(){
       tgt.el.style.height = tgt.h + "px";
     }
     scheduleSave();
-    updateSelUI();
     closeCrop();
-    statusEl.textContent = "✂ トリミングしました";
+    // ★切り抜いた画像を選択したままにする → 枠と⤡ハンドルが出て、すぐ動かせる
+    setSelection([tgt]);
+    // 画像が画面外だと迷子になるので、見えていなければ画面内に寄せる
+    var bb = objBBox(tgt);
+    var scx = (bb.x + bb.w / 2) * view.s + view.x;
+    var scy = (bb.y + bb.h / 2) * view.s + view.y;
+    if (scx < 40 || scx > innerWidth - 40 || scy < 100 || scy > innerHeight - 120) {
+      view.x = innerWidth / 2 - (bb.x + bb.w / 2) * view.s;
+      view.y = innerHeight / 2 - (bb.y + bb.h / 2) * view.s;
+      clampView();
+      applyView();
+    }
+    updateSelUI();
+    statusEl.textContent = "✂ トリミングしました(枠をドラッグで移動、⤡で拡大縮小)";
     return;
   }
   addImageFiles([dataURLtoBlob(outUrl)]);
