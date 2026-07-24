@@ -779,7 +779,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v13.3">InkNote <small>v13.3</small></div>
+  <div class="brand" title="InkNote v13.4">InkNote <small>v13.4</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1234,7 +1234,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "13.3";
+var APP_VERSION = "13.4";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4592,7 +4592,10 @@ function scheduleSave() {
 }
 function saveDoc() {
   if (currentId == null) return;
-  var payload = { json: serializeScene(), view: view, bookmarks: bookmarks, ts: Date.now() };
+  // canvasModeはノートの属性(A4横で作ったノートはどの端末でもA4横)。
+  // 端末ごとのlocalStorage設定だと他端末に伝わらないため、ページ側に持たせる。
+  var payload = { json: serializeScene(), view: view, bookmarks: bookmarks,
+                  canvasMode: canvasMode, bg: bgStyle, ts: Date.now() };
   var pid = currentId;
   kvSet("page_" + pid, payload).then(function(ok){
     statusEl.textContent = ok ? "保存済み ✓" : "保存エラー";
@@ -4678,12 +4681,17 @@ function loadPage(id) {
       rebuildScene(rec.json);
       if (rec.view) view = rec.view;
       bookmarks = rec.bookmarks || [];
+      // ノートに保存された用紙設定を復元(古いノートには無いので今の設定のまま)
+      if (rec.canvasMode === "inf" || rec.canvasMode === "a4v" || rec.canvasMode === "a4h")
+        canvasMode = rec.canvasMode;
+      if (rec.bg) bgStyle = rec.bg;
     } else {
       rebuildScene("[]");
       view = { x: 0, y: 0, s: 1 };
       bookmarks = [];
     }
-    applyView();
+    applyCanvasMode(true);        // 用紙表示を作り直す(保存された表示位置は保つ)
+    syncCanvasButtons();
     var maxId = 0;
     for (var i = 0; i < objects.length; i++) maxId = Math.max(maxId, objects[i].id || 0);
     idSeq = Math.max(idSeq, maxId + 1);
@@ -5211,7 +5219,7 @@ function maybeSheets() {
   lastSheet = n;
   updateSheets();
 }
-function applyCanvasMode() {
+function applyCanvasMode(keepView) {
   var th = THEMES[themeName] || THEMES.cream;
   $("#topChip").style.display = (canvasMode === "inf") ? "none" : "";
   var showOps = (canvasMode !== "inf") ? "" : "none";
@@ -5234,11 +5242,14 @@ function applyCanvasMode() {
     document.body.style.background = GUTTER;
     updateSheets();
     // 切り替え直後は用紙がちょうど画面に収まる大きさで表示する
-    var fit = sheetFitScale();
-    if (view.s > fit) {          // 既に用紙より小さく見ている場合はそのまま
-      view.s = fit;
-      if (canvasMode === "a4v") view.y = 24;
-      else view.x = 24;
+    // (ページ読み込み時は保存された表示位置をそのまま使うので触らない)
+    if (!keepView) {
+      var fit = sheetFitScale();
+      if (view.s > fit) {          // 既に用紙より小さく見ている場合はそのまま
+        view.s = fit;
+        if (canvasMode === "a4v") view.y = 24;
+        else view.x = 24;
+      }
     }
   }
   applyView();
@@ -5296,6 +5307,15 @@ function openMenu() {
   $("#menuPanel").classList.add("show");
   $("#pagesScrim").classList.add("show");
 }
+/* ⚙メニューの用紙ボタンの選択表示を、今の設定に合わせる */
+function syncCanvasButtons() {
+  var cvs = document.querySelectorAll(".cv-opt");
+  for (var i = 0; i < cvs.length; i++)
+    cvs[i].classList.toggle("sel", cvs[i].getAttribute("data-cv") === canvasMode);
+  var bgs = document.querySelectorAll(".bg-opt");
+  for (var k = 0; k < bgs.length; k++)
+    bgs[k].classList.toggle("sel", bgs[k].getAttribute("data-bg") === bgStyle);
+}
 function closeMenu() {
   $("#menuPanel").classList.remove("show");
   if (!anySheetOpen()) $("#pagesScrim").classList.remove("show");
@@ -5323,10 +5343,12 @@ $("#mnClose").onclick = closeMenu;
       var all = document.querySelectorAll(".cv-opt");
       for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
       applyCanvasMode();
-      saveSettings();
-      statusEl.textContent = canvasMode === "inf" ? "無限キャンバス"
+      saveSettings();               // 次に作る新しいノートの初期値
+      scheduleSave();               // ★このノートの設定として保存(他の端末にも同期)
+      var msg = canvasMode === "inf" ? "無限キャンバス"
         : canvasMode === "a4v" ? "A4縦: 下にページが連なります"
         : "A4横: 右にページが連なります";
+      setTimeout(function(){ statusEl.textContent = msg; }, 40);
     });
 })();
 (function(){
@@ -5347,7 +5369,8 @@ $("#mnClose").onclick = closeMenu;
       var all = document.querySelectorAll(".bg-opt");
       for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
       inkDirty = true;
-      saveSettings();
+      saveSettings();      // 新しいノートの初期値
+      scheduleSave();      // このノートの設定として保存(同期される)
     });
 })();
 $("#prToggle").onclick = function(){
