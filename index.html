@@ -779,7 +779,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v13.2">InkNote <small>v13.2</small></div>
+  <div class="brand" title="InkNote v13.3">InkNote <small>v13.3</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1205,7 +1205,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1235,7 +1234,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "13.2";
+var APP_VERSION = "13.3";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6749,7 +6748,7 @@ function attachAuth() {
     refreshSyncPanel();
     if (u) {
       try { localStorage.setItem("inknote_sync_on", "1"); } catch (e) {}
-      syncAll();
+      syncAfterAuth(u);
     } else {
       try {
         // ログイン済みのはずなのにユーザーがいない = リダイレクト待ちの可能性
@@ -6761,9 +6760,11 @@ function attachAuth() {
   //   これが無いと、Googleのログイン画面から帰ってきてもログインが完了しない。
   window.firebase.auth().getRedirectResult().then(function(res){
     if (res && res.user) {
-      setSyncStatus("ログインしました");
+      setAuthMethod("redirect");          // この端末ではリダイレクトが通る
+      setSyncStatus("ログインしました。同期を開始します…");
       try { localStorage.setItem("inknote_sync_on", "1"); } catch (e) {}
       refreshSyncPanel();
+      syncAfterAuth(res.user);
     }
   }).catch(function(err){
     var code = (err && err.code) || "";
@@ -6782,6 +6783,23 @@ function needsRedirectAuth() {
             (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);  // iPadOS判定
   var standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
   return iOS || standalone || window.navigator.standalone === true;
+}
+/* この端末で成功したログイン方式を覚えておく。
+   ブラウザの制限は端末ごとに違うので、実際に通った方を次回の既定にする。 */
+function authMethod() {
+  try { return localStorage.getItem("inknote_auth_method") || "popup"; } catch (e) { return "popup"; }
+}
+function setAuthMethod(m) {
+  try { localStorage.setItem("inknote_auth_method", m); } catch (e) {}
+}
+/* ログイン直後はIDトークンが行き渡っていないことがある。
+   明示的に取り直してからFirestoreに触ると、権限エラーで空振りしにくい。 */
+function syncAfterAuth(u) {
+  var go = function(){ syncAll(); };
+  try {
+    if (u && u.getIdToken) { u.getIdToken(true).then(go, go); return; }
+  } catch (e) {}
+  go();
 }
 function fbConfigured() {
   return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.authDomain && FIREBASE_CONFIG.projectId);
@@ -6812,9 +6830,17 @@ function startPopupLogin() {
   return window.firebase.auth().signInWithPopup(provider).then(function(res){
     if (res && res.user) {
       try { localStorage.setItem("inknote_sync_on", "1"); } catch (e) {}
-      setSyncStatus("ログインしました");
+      setAuthMethod("popup");
+      setSyncStatus("ログインしました。同期を開始します…");
       refreshSyncPanel();
-      syncAll();
+      syncAfterAuth(res.user);
+      // 一定時間たっても同期が終わらないなら、別の方法を案内する
+      setTimeout(function(){
+        if (lastSyncText && lastSyncText.indexOf("同期済み") === -1) {
+          setSyncStatus(lastSyncText + " / 進まない場合は「別の方法でログイン」をお試しください");
+          refreshSyncPanel();
+        }
+      }, 9000);
     }
   }).catch(function(err){
     var code = (err && err.code) || "";
@@ -7052,21 +7078,27 @@ function refreshSyncPanel() {
     // ★ログイン前も状態を表示する(これが無いと途中経過やエラーが見えない)
     div('状態: <span id="syncState">' + (lastSyncText || "未ログイン") + "</span>",
         "color:#9AA1AD;font-size:12px;padding:2px 6px 12px");
-    var btn = document.createElement("button");
-    btn.className = "sync-primary";
-    btn.textContent = "Googleでログイン";
-    btn.onclick = fbLogin;
-    body.appendChild(btn);
-    // 予備手段(ポップアップが使えない環境向け)
+    // この端末で前回うまくいった方式を上に出す(端末ごとに事情が違うため)
+    var useRedirect = (authMethod() === "redirect");
+    var primary = document.createElement("button");
+    primary.className = "sync-primary";
+    primary.textContent = useRedirect
+      ? "Googleでログイン(画面が切り替わります)"
+      : "Googleでログイン";
+    primary.onclick = useRedirect ? startRedirectLogin : fbLogin;
+    body.appendChild(primary);
+
     var alt = document.createElement("button");
     alt.className = "pp-tool";
-    alt.textContent = "別の方法でログイン(画面が切り替わります)";
+    alt.textContent = useRedirect
+      ? "別の方法でログイン(小窓が開きます)"
+      : "別の方法でログイン(画面が切り替わります)";
     alt.style.cssText = "margin-top:10px;width:100%";
-    alt.onclick = startRedirectLogin;
+    alt.onclick = useRedirect ? fbLogin : startRedirectLogin;
     body.appendChild(alt);
-    div("iPad・iPhoneでうまくいかない場合:<br>" +
-        "Safariの<b>設定 → ポップアップブロック</b>を一時的に解除すると通ることがあります。" +
-        "「別の方法でログイン」はブラウザの仕様変更(Safari 16.1以降)で失敗することがあるため、まずは上のボタンをお試しください。",
+
+    div("どちらの方法でもログインできます。<b>この端末で成功した方が次回から上に出ます。</b><br>" +
+        "上の方法で同期が始まらない場合は、下の方法をお試しください。",
         "color:#7E8593;font-size:11px;line-height:1.8;padding:14px 6px 4px");
   } else {
     div("ログイン中: <b>" + (u.email || "") + "</b>", "color:var(--ui-text);font-size:13px;padding:6px");
