@@ -779,7 +779,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v13.1">InkNote <small>v13.1</small></div>
+  <div class="brand" title="InkNote v13.2">InkNote <small>v13.2</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1205,6 +1205,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1234,7 +1235,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "13.1";
+var APP_VERSION = "13.2";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6782,36 +6783,83 @@ function needsRedirectAuth() {
   var standalone = window.matchMedia && window.matchMedia("(display-mode: standalone)").matches;
   return iOS || standalone || window.navigator.standalone === true;
 }
-function fbLogin() {
-  // 設定漏れを先に知らせる(空のままだと何をしても繋がらない)
-  if (!FIREBASE_CONFIG.apiKey || !FIREBASE_CONFIG.authDomain || !FIREBASE_CONFIG.projectId) {
-    setSyncStatus("⚠ Firebaseの設定が未入力です(firebase_setup.md を参照)");
-    refreshSyncPanel();
-    return;
-  }
+function fbConfigured() {
+  return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.authDomain && FIREBASE_CONFIG.projectId);
+}
+function fbLoaded() {
+  return !!(window.firebase && window.firebase.apps && window.firebase.apps.length);
+}
+/* ログインの説明つきエラー表示 */
+function authErrorText(code) {
+  if (code === "auth/unauthorized-domain")
+    return "⚠ このドメインが未許可です(Firebase Console → Authentication → 承認済みドメイン に追加)";
+  if (code === "auth/popup-blocked")
+    return "ポップアップが塞がれました(Safariの設定でポップアップを許可するか、下の「別の方法でログイン」をお試しください)";
+  if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request")
+    return "ログイン画面が閉じられました";
+  if (code === "auth/operation-not-supported-in-this-environment")
+    return "この環境ではポップアップが使えません(下の「別の方法でログイン」をお試しください)";
+  if (code === "auth/network-request-failed")
+    return "通信に失敗しました(接続を確認してください)";
+  return "ログイン失敗" + (code ? "(" + code + ")" : "");
+}
+/* ポップアップでログイン。
+   ★必ずタップの流れの中で呼ぶこと。await等をはさむとSafariがポップアップを塞ぐ。 */
+function startPopupLogin() {
+  var provider = new window.firebase.auth.GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: "select_account" });
   setSyncStatus("ログイン中…");
+  return window.firebase.auth().signInWithPopup(provider).then(function(res){
+    if (res && res.user) {
+      try { localStorage.setItem("inknote_sync_on", "1"); } catch (e) {}
+      setSyncStatus("ログインしました");
+      refreshSyncPanel();
+      syncAll();
+    }
+  }).catch(function(err){
+    var code = (err && err.code) || "";
+    setSyncStatus(authErrorText(code));
+    refreshSyncPanel();
+  });
+}
+/* 予備手段: リダイレクト方式。
+   Safari 16.1以降・Firefox 109以降はブラウザ側のストレージ分離で
+   失敗することが多い(戻ってきてもログインされない)。最後の手段として残す。 */
+function startRedirectLogin() {
+  if (!fbConfigured()) { setSyncStatus("⚠ Firebaseの設定が未入力です"); return; }
+  setSyncStatus("Googleのログイン画面へ移動します…");
   loadFirebase().then(function(){
     attachAuth();
     var provider = new window.firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({ prompt: "select_account" });
-    if (needsRedirectAuth()) {
-      // iPad/iPhone/PWA: 最初からリダイレクト(ポップアップは必ず塞がれる)
-      setSyncStatus("Googleのログイン画面へ移動します…");
-      return window.firebase.auth().signInWithRedirect(provider);
-    }
-    return window.firebase.auth().signInWithPopup(provider).catch(function(err){
-      var code = (err && err.code) || "";
-      if (code === "auth/popup-blocked" || code === "auth/popup-closed-by-user" ||
-          code === "auth/cancelled-popup-request" || code === "auth/operation-not-supported-in-this-environment") {
-        return window.firebase.auth().signInWithRedirect(provider);
-      }
-      throw err;
-    });
+    return window.firebase.auth().signInWithRedirect(provider);
   }).catch(function(err){
-    var code = (err && err.code) || "";
-    setSyncStatus(code === "auth/unauthorized-domain"
-      ? "⚠ このドメインが未許可です(Firebase Console → Authentication → 承認済みドメイン に追加)"
-      : "ログイン失敗" + (code ? "(" + code + ")" : ""));
+    setSyncStatus(authErrorText((err && err.code) || ""));
+    refreshSyncPanel();
+  });
+}
+function fbLogin() {
+  // 設定漏れを先に知らせる(空のままだと何をしても繋がらない)
+  if (!fbConfigured()) {
+    setSyncStatus("⚠ Firebaseの設定が未入力です(firebase_setup.md を参照)");
+    refreshSyncPanel();
+    return;
+  }
+  // SDKが読み込み済みなら、この場で(タップの流れのまま)ポップアップを開く。
+  // 非同期処理をはさむとSafariに塞がれるため、ここは待たない。
+  if (fbLoaded()) {
+    attachAuth();
+    startPopupLogin();
+    return;
+  }
+  // 未読み込みなら読み込むだけ。開くのは次のタップ(そうしないと必ず塞がれる)
+  setSyncStatus("準備中…");
+  loadFirebase().then(function(){
+    attachAuth();
+    setSyncStatus("準備ができました。もう一度「Googleでログイン」を押してください");
+    refreshSyncPanel();
+  }).catch(function(err){
+    setSyncStatus(authErrorText((err && err.code) || ""));
     refreshSyncPanel();
   });
 }
@@ -6960,8 +7008,18 @@ function syncAll() {
       setSyncStatus("同期済み " + new Date().toTimeString().slice(0, 5));
       if (booting) { booting = false; if (!pages.length) createFirstPage(); }
     });
-  }).catch(function(){
-    setSyncStatus("同期エラー(通信を確認)");
+  }).catch(function(err){
+    var code = (err && err.code) || "";
+    if (code === "permission-denied")
+      setSyncStatus("同期できません: Firestoreのルールで拒否されました(firebase_setup.md のルールを確認)");
+    else if (code === "unauthenticated")
+      setSyncStatus("同期できません: ログインが切れています(もう一度ログインしてください)");
+    else if (code === "failed-precondition")
+      setSyncStatus("同期できません: Firestoreが未作成の可能性があります(Firebase Consoleで作成)");
+    else if (code === "unavailable")
+      setSyncStatus("同期できません: 通信を確認してください");
+    else
+      setSyncStatus("同期エラー" + (code ? "(" + code + ")" : "(通信を確認)"));
     if (booting) createFirstPage();     // クラウド不通でもアプリは使える
   }).then(function(){ syncing = false; });
 }
@@ -6990,12 +7048,26 @@ function refreshSyncPanel() {
   var u = cloudUser();
   if (!u) {
     div("Googleアカウントでログインすると、同じアカウントの端末間でノートが自動同期されます。",
-        "color:#9AA1AD;font-size:12.5px;line-height:1.8;padding:6px 6px 14px");
+        "color:#9AA1AD;font-size:12.5px;line-height:1.8;padding:6px 6px 10px");
+    // ★ログイン前も状態を表示する(これが無いと途中経過やエラーが見えない)
+    div('状態: <span id="syncState">' + (lastSyncText || "未ログイン") + "</span>",
+        "color:#9AA1AD;font-size:12px;padding:2px 6px 12px");
     var btn = document.createElement("button");
     btn.className = "sync-primary";
     btn.textContent = "Googleでログイン";
     btn.onclick = fbLogin;
     body.appendChild(btn);
+    // 予備手段(ポップアップが使えない環境向け)
+    var alt = document.createElement("button");
+    alt.className = "pp-tool";
+    alt.textContent = "別の方法でログイン(画面が切り替わります)";
+    alt.style.cssText = "margin-top:10px;width:100%";
+    alt.onclick = startRedirectLogin;
+    body.appendChild(alt);
+    div("iPad・iPhoneでうまくいかない場合:<br>" +
+        "Safariの<b>設定 → ポップアップブロック</b>を一時的に解除すると通ることがあります。" +
+        "「別の方法でログイン」はブラウザの仕様変更(Safari 16.1以降)で失敗することがあるため、まずは上のボタンをお試しください。",
+        "color:#7E8593;font-size:11px;line-height:1.8;padding:14px 6px 4px");
   } else {
     div("ログイン中: <b>" + (u.email || "") + "</b>", "color:var(--ui-text);font-size:13px;padding:6px");
     div('状態: <span id="syncState">' + (lastSyncText || "待機中") + "</span>",
