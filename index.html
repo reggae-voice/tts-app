@@ -370,6 +370,18 @@
     left:14px;right:14px;height:30px;
     bottom:calc(env(safe-area-inset-bottom) + 92px);
   }
+  /* ===== スライダーとチップの重なり回避 =====
+     A4横: 横スライダーが画面下を横切るので、下のチップ類をその上へ逃がす
+     A4縦: 縦スライダーが右端にあるので、右のチップ類を左へ寄せる       */
+  body.mode-a4h #pasteChip,
+  body.mode-a4h #zoomChip{bottom:calc(env(safe-area-inset-bottom) + 128px)}
+  body.mode-a4h #fitChip{bottom:calc(env(safe-area-inset-bottom) + 166px)}
+  body.mode-a4h #mapChip{bottom:calc(env(safe-area-inset-bottom) + 174px)}
+  body.mode-a4h #posChip{bottom:calc(env(safe-area-inset-bottom) + 204px)}
+  body.mode-a4h #topChip{bottom:calc(env(safe-area-inset-bottom) + 220px)}
+  body.mode-a4v #zoomChip,
+  body.mode-a4v #fitChip,
+  body.mode-a4v #posChip{right:48px}
   #vscroll.h #vsTrack{
     position:absolute;bottom:10px;left:0;right:0;height:4px;
     background:rgba(120,126,140,.18);border-radius:2px;
@@ -779,7 +791,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v13.4">InkNote <small>v13.4</small></div>
+  <div class="brand" title="InkNote v13.5">InkNote <small>v13.5</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1234,7 +1246,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "13.4";
+var APP_VERSION = "13.5";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5221,6 +5233,9 @@ function maybeSheets() {
 }
 function applyCanvasMode(keepView) {
   var th = THEMES[themeName] || THEMES.cream;
+  // スライダーの帯を避けるため、モードをbodyのクラスで伝える
+  document.body.classList.toggle("mode-a4v", canvasMode === "a4v");
+  document.body.classList.toggle("mode-a4h", canvasMode === "a4h");
   $("#topChip").style.display = (canvasMode === "inf") ? "none" : "";
   var showOps = (canvasMode !== "inf") ? "" : "none";
   $("#pgOpsRow").style.display = showOps;      // A4のときだけ出す
