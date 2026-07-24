@@ -721,7 +721,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v12.7">InkNote <small>v12.7</small></div>
+  <div class="brand" title="InkNote v12.8">InkNote <small>v12.8</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -943,6 +943,8 @@ window.onerror = function(msg, src, line){
     <button class="pp-tool" id="expPng">🖼 PNG書出</button>
     <button class="pp-tool" id="expPdf">📄 PDF書出</button>
     <button class="pp-tool" id="expPrint">🖨 印刷</button>
+    <button class="pp-tool" id="expMd">📝 テキスト書出</button>
+    <button class="pp-tool" id="expStudy">🎓 学習用コピー</button>
     <button class="pp-tool" id="bakOut">💾 バックアップ</button>
     <button class="pp-tool" id="bakIn">📥 復元</button>
   </div>
@@ -1140,7 +1142,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "12.7";
+var APP_VERSION = "12.8";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5685,6 +5687,77 @@ function renderPageToCanvas(bbox, marginOpt, list) {
   outWhite = false;
   return c;
 }
+/* ===== NotebookLM等との連携: テキスト書き出し・学習用コピー =====
+   ノート内のテキストオブジェクトを読み順(上→下、同じ行は左→右)に
+   集めてMarkdownにする。手書きは含まれない(そちらはPDF/PNGで)。 */
+function collectPageText() {
+  var texts = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "text" || !o.text || !String(o.text).trim()) continue;
+    var b = objBBox(o);
+    texts.push({ y: b.y, x: b.x, t: String(o.text).replace(/\s+$/, "") });
+  }
+  // 上→下。ほぼ同じ高さ(40px以内)なら左→右
+  texts.sort(function(a, b){
+    return (Math.abs(a.y - b.y) < 40) ? (a.x - b.x) : (a.y - b.y);
+  });
+  var out = [];
+  for (var k = 0; k < texts.length; k++) out.push(texts[k].t);
+  return out.join("\n\n");
+}
+function buildMarkdown() {
+  var pg = findPage(currentId);
+  var title = (pg && pg.title) ? pg.title : "ノート";
+  var body = collectPageText();
+  if (!body) return null;
+  var d = new Date();
+  return "# " + title + "\n\n" +
+         "*InkNote書き出し " + d.getFullYear() + "/" + (d.getMonth()+1) + "/" + d.getDate() + "*\n\n" +
+         body + "\n";
+}
+function exportMarkdown() {
+  var md = buildMarkdown();
+  if (!md) { statusEl.textContent = "書き出せるテキストがありません(手書きはPDF書出を使ってください)"; return; }
+  var pg = findPage(currentId);
+  try {
+    var blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    var url = URL.createObjectURL(blob);
+    downloadURL(url, exportName(pg, "md"));
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 4000);
+    statusEl.textContent = "テキスト(Markdown)を書き出しました → NotebookLMのソースにどうぞ";
+  } catch (e) {
+    statusEl.textContent = "書き出しに失敗しました";
+  }
+}
+/* 学習用プロンプト付きコピー: NotebookLM/Claudeに貼るだけでクイズ生成できる形 */
+var STUDY_PROMPT =
+  "以下は私の学習ノートです。この内容から試験対策用の問題を作成してください。\n" +
+  "- 五肢択一問題を5問(正答と、各選択肢が正しい/誤りの理由つき)\n" +
+  "- 重要用語の穴埋め問題を5問\n" +
+  "- 最後に、ノートの内容で誤解しやすいポイントを3つ指摘\n" +
+  "難易度は認定試験レベルでお願いします。\n\n---\n\n";
+function copyForStudy() {
+  var md = buildMarkdown();
+  if (!md) { statusEl.textContent = "コピーできるテキストがありません"; return; }
+  var payload = STUDY_PROMPT + md;
+  var done = function(){ statusEl.textContent = "学習用プロンプト付きでコピーしました → NotebookLM/Claudeに貼り付け"; };
+  var fail = function(){ statusEl.textContent = "コピーに失敗しました(もう一度お試しください)"; };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(payload).then(done, fail);
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = payload;
+      ta.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      ok ? done() : fail();
+    }
+  } catch (e) { fail(); }
+}
 function downloadURL(url, name) {
   var a = document.createElement("a");
   a.download = name;
@@ -5904,6 +5977,14 @@ $("#exClose").onclick = closeExp;
   }
 })();
 $("#expPng").onclick = function(){ closePages(); exportFmt = "png"; openExp(); };
+$("#expMd").onclick = function(){
+  closeExp();
+  setTimeout(exportMarkdown, 80);
+};
+$("#expStudy").onclick = function(){
+  closeExp();
+  setTimeout(copyForStudy, 80);
+};
 $("#expPrint").onclick = function(){
   closeExp();
   closePages && closePages();
