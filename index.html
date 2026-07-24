@@ -474,6 +474,64 @@
   #ctxbar.expanded #ctxExtra{display:inline-flex}
   #ctxbar.expanded #ctxMore{background:rgba(255,255,255,.16)}
   #ctxLock.locked-on{background:rgba(255,200,80,.22)}
+  #tocPanel{
+    position:fixed;left:50%;transform:translateX(-50%) translateY(120%);
+    bottom:calc(env(safe-area-inset-bottom) + 12px);
+    width:min(460px, calc(100vw - 20px));
+    max-height:min(70vh, 560px);display:flex;flex-direction:column;
+    background:var(--ui-bg2);border:1px solid var(--ui-line);
+    border-radius:18px;padding:12px 14px 14px;z-index:46;
+    box-shadow:0 -8px 30px rgba(10,12,16,.45);
+    transition:transform .2s ease;
+  }
+  #tocPanel.show{transform:translateX(-50%) translateY(0)}
+  #tocList{overflow-y:auto;margin-top:6px;display:flex;flex-direction:column;gap:6px}
+  .toc-row{
+    display:flex;align-items:center;gap:8px;
+    background:rgba(255,255,255,.05);border:1px solid var(--ui-line);
+    border-radius:12px;padding:9px 10px;cursor:pointer;
+  }
+  .toc-row:active{background:rgba(255,255,255,.1)}
+  .toc-ic{flex:0 0 auto;font-size:14px}
+  .toc-name{flex:1;min-width:0;color:var(--ui-text);font-size:13.5px;font-weight:600;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .toc-g{flex:0 0 auto;color:var(--ui-dim);font-size:11px}
+  .toc-btn{
+    flex:0 0 auto;width:28px;height:28px;border-radius:8px;border:none;
+    background:rgba(255,255,255,.08);color:var(--ui-text);font-size:12px;cursor:pointer;
+  }
+  .toc-btn.del{color:#ff8b83}
+  #grpPanel{
+    position:fixed;left:50%;transform:translateX(-50%) translateY(120%);
+    bottom:calc(env(safe-area-inset-bottom) + 12px);
+    width:min(460px, calc(100vw - 20px));
+    max-height:min(70vh, 560px);display:flex;flex-direction:column;
+    background:var(--ui-bg2);border:1px solid var(--ui-line);
+    border-radius:18px;padding:12px 14px 14px;z-index:46;
+    box-shadow:0 -8px 30px rgba(10,12,16,.45);
+    transition:transform .2s ease;
+  }
+  #grpPanel.show{transform:translateX(-50%) translateY(0)}
+  #grpList{overflow-y:auto;margin-top:6px;display:flex;flex-direction:column;gap:6px}
+  .grp-row{
+    display:flex;align-items:center;gap:8px;
+    background:rgba(255,255,255,.05);border:1px solid var(--ui-line);
+    border-radius:12px;padding:8px 10px;cursor:pointer;
+  }
+  .grp-row:active{background:rgba(255,255,255,.1)}
+  .grp-no{
+    flex:0 0 auto;width:24px;height:24px;border-radius:50%;
+    background:var(--accent);color:#fff;font-size:12px;font-weight:800;
+    line-height:24px;text-align:center;
+  }
+  .grp-label{flex:1;min-width:0;color:var(--ui-text);font-size:13px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .grp-cnt{flex:0 0 auto;color:var(--ui-dim);font-size:11px}
+  .grp-mv{
+    flex:0 0 auto;width:28px;height:28px;border-radius:8px;border:none;
+    background:rgba(255,255,255,.08);color:var(--ui-text);font-size:12px;cursor:pointer;
+  }
+  .grp-mv:disabled{opacity:.3}
   #opaPanel{
     position:fixed;left:50%;transform:translateX(-50%) translateY(120%);
     bottom:calc(env(safe-area-inset-bottom) + 12px);
@@ -721,7 +779,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v12.8">InkNote <small>v12.8</small></div>
+  <div class="brand" title="InkNote v13.1">InkNote <small>v13.1</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -895,6 +953,8 @@ window.onerror = function(msg, src, line){
     <button id="ctxCopy" title="画像としてコピー">📋</button>
     <button id="ctxSave" title="画像として保存">💾</button>
     <button id="ctxOpa" title="透明度">🌓</button>
+    <button id="ctxGroup" title="まとまりの整理">🗂</button>
+    <button id="ctxAnchor" title="目次に追加/外す">🔖</button>
     <button id="ctxCrop" title="トリミング">✂</button>
     <button id="ctxDup" title="複製">⧉</button>
     <button id="ctxFront" title="前面へ">⬆</button>
@@ -949,6 +1009,30 @@ window.onerror = function(msg, src, line){
     <button class="pp-tool" id="bakIn">📥 復元</button>
   </div>
   <div id="usageInfo" style="color:var(--ui-dim);font-size:11px;padding:8px 4px 0;text-align:center"></div>
+</div>
+
+<div id="tocPanel">
+  <div class="pp-head"><span>目次</span><button id="tocClose">✕</button></div>
+  <div class="st-row" style="gap:8px">
+    <button class="toggle" id="tocShowToggle"></button>
+    <span style="color:var(--ui-dim);font-size:11px">画面に🔖の印を表示</span>
+  </div>
+  <div id="tocList" class="scrollable"></div>
+</div>
+
+<div id="grpPanel">
+  <div class="pp-head"><span>まとまりの整理</span><button id="grpClose">✕</button></div>
+  <div class="st-row" style="gap:6px;flex-wrap:wrap">
+    <button class="stybtn" id="grpAuto">🔄 自動でまとめ直す</button>
+    <button class="stybtn" id="grpLink">🔗 選択を連結</button>
+    <button class="stybtn" id="grpSplit">✂ 選択を切り離す</button>
+    <button class="stybtn" id="grpReset">↺ 手動指定を消す</button>
+  </div>
+  <div class="st-row" style="gap:8px">
+    <button class="toggle" id="grpShowToggle"></button>
+    <span style="color:var(--ui-dim);font-size:11px">まとまりの枠と番号を画面に表示</span>
+  </div>
+  <div id="grpList" class="scrollable"></div>
 </div>
 
 <div id="opaPanel">
@@ -1062,6 +1146,14 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
       <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
     </div>
+    <div class="st-row"><span class="st-label">目次</span>
+      <button class="stybtn" id="tocOpenBtn">🔖 目次を開く</button>
+      <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
+    </div>
+    <div class="st-row"><span class="st-label">整理</span>
+      <button class="stybtn" id="grpOpenBtn">🗂 まとまりを整理</button>
+      <span style="color:var(--ui-dim);font-size:11px">散らかった内容を塊ごとに整理</span>
+    </div>
     <div class="st-row"><span class="st-label">印刷</span>
       <button class="toggle" id="printWhiteToggle"></button>
       <span style="color:var(--ui-dim);font-size:11px">印刷・PDFは白い紙で出す(インク節約)</span>
@@ -1142,7 +1234,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "12.8";
+var APP_VERSION = "13.1";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1377,6 +1469,51 @@ function renderInk() {
       ictx.setLineDash([4 / view.s, 4 / view.s]);
       ictx.strokeRect(b.x, b.y, b.w, b.h);
       ictx.setLineDash([]);
+    }
+  }
+  // 目次アンカーの印(🔖)
+  if (showAnchors) {
+    var al2 = anchorList();
+    for (var ai = 0; ai < al2.length; ai++) {
+      var ab = al2[ai].b;
+      var bw = 20 / view.s, bh = 16 / view.s;
+      var bx = ab.x + ab.w - bw / 2, by = ab.y - bh / 2;
+      ictx.fillStyle = "rgba(232,163,23,.95)";
+      roundRectPath(ictx, bx, by, bw, bh, 4 / view.s);
+      ictx.fill();
+      ictx.fillStyle = "#fff";
+      ictx.font = "700 " + (10 / view.s) + "px system-ui, sans-serif";
+      ictx.textAlign = "center";
+      ictx.textBaseline = "middle";
+      ictx.fillText(String(ai + 1), bx + bw / 2, by + bh / 2);
+      ictx.textAlign = "start";
+      ictx.textBaseline = "alphabetic";
+    }
+  }
+  // まとまりの枠と番号
+  if (showGroups) {
+    var gls = groupList();
+    for (var gi = 0; gi < gls.length; gi++) {
+      var gb = gls[gi].bbox;
+      var pad = 10 / view.s;
+      ictx.strokeStyle = "rgba(76,111,255,.5)";
+      ictx.lineWidth = 1.5 / view.s;
+      ictx.setLineDash([7 / view.s, 5 / view.s]);
+      ictx.strokeRect(gb.x - pad, gb.y - pad, gb.w + pad * 2, gb.h + pad * 2);
+      ictx.setLineDash([]);
+      // 番号バッジ
+      var rr = 11 / view.s;
+      ictx.fillStyle = "rgba(76,111,255,.92)";
+      ictx.beginPath();
+      ictx.arc(gb.x - pad + rr, gb.y - pad - rr, rr, 0, 7);
+      ictx.fill();
+      ictx.fillStyle = "#fff";
+      ictx.font = "700 " + (13 / view.s) + "px system-ui, sans-serif";
+      ictx.textAlign = "center";
+      ictx.textBaseline = "middle";
+      ictx.fillText(String(gls[gi].no), gb.x - pad + rr, gb.y - pad - rr);
+      ictx.textAlign = "start";
+      ictx.textBaseline = "alphabetic";
     }
   }
   // 消しゴムのカーソル円
@@ -5687,24 +5824,308 @@ function renderPageToCanvas(bbox, marginOpt, list) {
   outWhite = false;
   return c;
 }
+/* =========================================================
+   目次アンカー(しおり)
+   - o.anch : 目次に出す名前。付いているものだけが目次に並ぶ
+   「☆位置」(bookmarks)は画面位置の記憶。こちらは中身に付ける印で別物。
+========================================================= */
+var showAnchors = true;      // アンカーの印を画面に出すか
+
+/* 目次の並び順: まとまり番号 → 上から下 → 左から右(書き出しと同じ順) */
+function anchorList() {
+  var out = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (!o.anch || !String(o.anch).trim()) continue;
+    var b = objBBox(o);
+    out.push({ o: o, name: String(o.anch), g: o.grp || 0, x: b.x, y: b.y, b: b });
+  }
+  out.sort(function(a, b2){
+    if (a.g !== b2.g) return a.g - b2.g;
+    return (Math.abs(a.y - b2.y) < 40) ? (a.x - b2.x) : (a.y - b2.y);
+  });
+  return out;
+}
+/* 選択したものに目次の印を付ける / 外す */
+function toggleAnchor() {
+  if (sel.length !== 1) { statusEl.textContent = "1つだけ選んでから印を付けてください"; return; }
+  var o = sel[0];
+  if (o.anch) {
+    showSheet("目次の印: " + o.anch, [
+      { label: "✎ 名前を変える", fn: function(){ askAnchorName(o); } },
+      { label: "🔖 目次から外す", danger: true, fn: function(){
+          pushUndo(); o.anch = null; inkDirty = true; scheduleSave(); renderTocPanel();
+          setTimeout(function(){ statusEl.textContent = "目次から外しました"; }, 40);
+        } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
+  }
+  askAnchorName(o);
+}
+function askAnchorName(o) {
+  var def = o.anch || "";
+  if (!def && o.type === "text") def = String(o.text || "").split("\n")[0].slice(0, 40);
+  if (!def) def = "見出し" + (anchorList().length + 1);
+  askText("目次に出す名前", def, function(name){
+    if (name == null) return;
+    name = String(name).trim();
+    if (!name) return;
+    pushUndo();
+    o.anch = name;
+    inkDirty = true;
+    scheduleSave();
+    renderTocPanel();
+    setTimeout(function(){ statusEl.textContent = "目次に追加しました: " + name; }, 40);
+  });
+}
+/* 指定範囲を画面内に持ってくる。
+   A4モードは用紙の外へスクロールできないため、届かない時は
+   縮小して視野を広げ、それでも無理なら正直に知らせる。 */
+function bringIntoView(b) {
+  function centerAt(s) {
+    view.s = s;
+    view.x = innerWidth / 2 - (b.x + b.w / 2) * s;
+    view.y = innerHeight / 2 - (b.y + b.h / 2) * s;
+    clampView();
+    applyView();
+  }
+  function onScreen() {
+    var cx = (b.x + b.w / 2) * view.s + view.x;
+    var cy = (b.y + b.h / 2) * view.s + view.y;
+    return cx > 20 && cx < innerWidth - 20 && cy > 90 && cy < innerHeight - 110;
+  }
+  var s0 = view.s;
+  centerAt(s0);
+  if (onScreen()) return true;
+  // 段階的に縮小して届かせる
+  var tries = [s0 * 0.6, s0 * 0.35, 0.2, 0.1];
+  for (var i = 0; i < tries.length; i++) {
+    centerAt(Math.max(0.05, tries[i]));
+    if (onScreen()) return true;
+  }
+  centerAt(s0);
+  return false;
+}
+/* 目次からその場所へ飛ぶ */
+function jumpToAnchor(obj) {
+  var ok = bringIntoView(objBBox(obj));
+  setSelection([obj]);
+  updateSelUI();
+  statusEl.textContent = ok
+    ? ("「" + obj.anch + "」へ移動しました")
+    : ("「" + obj.anch + "」は用紙の外にあります(用紙設定を無限にすると見られます)");
+}
+
+/* =========================================================
+   まとまり(グループ)
+   - o.grp   : グループ番号。番号がそのまま「順序」も表す(1が先頭)
+   - o.gfix  : 手動で「これも一緒」と連結した印。同じ値どうしは必ず同じ組
+   - o.gsolo : 手動で「これは違う」と切り離した印。近くても自動では吸わない
+   保存はserializeSceneがそのまま拾う(先頭が_でないキーは残る)
+========================================================= */
+var GROUP_GAP = 80;          // この距離まで近ければ同じまとまりとみなす
+var showGroups = false;      // まとまりの枠と番号を表示するか
+var gfixSeq = 1;             // 手動連結タグの発番
+
+/* 2つの矩形の隙間(重なっていれば0) */
+function bboxGap(a, b) {
+  var dx = Math.max(0, Math.max(a.x - (b.x + b.w), b.x - (a.x + a.w)));
+  var dy = Math.max(0, Math.max(a.y - (b.y + b.h), b.y - (a.y + a.h)));
+  return Math.sqrt(dx * dx + dy * dy);
+}
+/* 自動でまとめ直す。手動の連結(gfix)と切り離し(gsolo)は必ず尊重する */
+function autoGroup(quiet) {
+  var arr = objects.filter(function(o){ return !(o.type === "text" && !String(o.text || "").trim()); });
+  var n = arr.length;
+  if (!n) { if (!quiet) statusEl.textContent = "まとめる内容がありません"; return 0; }
+  var parent = [];
+  for (var i = 0; i < n; i++) parent[i] = i;
+  function find(a){ while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
+  function union(a, b){ a = find(a); b = find(b); if (a !== b) parent[b] = a; }
+
+  var boxes = [];
+  for (var k = 0; k < n; k++) boxes[k] = objBBox(arr[k]);
+
+  // 1) 近さでまとめる。ただし「切り離し」印のものは吸わない
+  for (var p = 0; p < n; p++) {
+    if (arr[p].gsolo) continue;
+    for (var q = p + 1; q < n; q++) {
+      if (arr[q].gsolo) continue;
+      if (bboxGap(boxes[p], boxes[q]) <= GROUP_GAP) union(p, q);
+    }
+  }
+  // 2) 手動で連結したものは、離れていても必ず同じ組にする
+  var fixMap = {};
+  for (var r = 0; r < n; r++) {
+    var tag = arr[r].gfix;
+    if (tag == null) continue;
+    if (fixMap[tag] == null) fixMap[tag] = r; else union(fixMap[tag], r);
+  }
+  // 3) 代表ごとにまとめ、読み順(上→下、同じ高さは左→右)で番号を振る
+  var buckets = {};
+  for (var s = 0; s < n; s++) {
+    var root = find(s);
+    if (!buckets[root]) buckets[root] = { items: [], x: 1e9, y: 1e9 };
+    buckets[root].items.push(s);
+    buckets[root].x = Math.min(buckets[root].x, boxes[s].x);
+    buckets[root].y = Math.min(buckets[root].y, boxes[s].y);
+  }
+  var list = [];
+  for (var key in buckets) if (buckets.hasOwnProperty(key)) list.push(buckets[key]);
+  list.sort(function(a, b){
+    return (Math.abs(a.y - b.y) < 120) ? (a.x - b.x) : (a.y - b.y);
+  });
+  for (var g = 0; g < list.length; g++)
+    for (var m = 0; m < list[g].items.length; m++) arr[list[g].items[m]].grp = g + 1;
+
+  inkDirty = true;
+  if (!quiet) {
+    scheduleSave();
+    setTimeout(function(){
+      statusEl.textContent = list.length + "個のまとまりに整理しました";
+    }, 40);
+  }
+  return list.length;
+}
+/* 現在のまとまり一覧(番号順)。各要素 { no, items, bbox, label } */
+function groupList() {
+  var map = {};
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type === "text" && !String(o.text || "").trim()) continue;
+    var g = o.grp || 0;
+    if (!map[g]) map[g] = [];
+    map[g].push(o);
+  }
+  var out = [];
+  for (var key in map) {
+    if (!map.hasOwnProperty(key)) continue;
+    var items = map[key];
+    var x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9, label = "", best = -1;
+    for (var k = 0; k < items.length; k++) {
+      var b = objBBox(items[k]);
+      x1 = Math.min(x1, b.x); y1 = Math.min(y1, b.y);
+      x2 = Math.max(x2, b.x + b.w); y2 = Math.max(y2, b.y + b.h);
+      // 見出し候補: 目次の印があればそれを最優先。なければ一番大きい文字
+      if (items[k].anch) { best = 1e9; label = String(items[k].anch); }
+      else if (items[k].type === "text" && best < 1e9) {
+        var fs = items[k].fontSize || 0;
+        if (fs > best) { best = fs; label = String(items[k].text || "").split("\n")[0]; }
+      }
+    }
+    out.push({
+      no: parseInt(key, 10), items: items, label: label,
+      bbox: { x: x1, y: y1, w: x2 - x1, h: y2 - y1 }
+    });
+  }
+  out.sort(function(a, b){ return a.no - b.no; });
+  return out;
+}
+/* 選択をひとつのまとまりに連結する */
+function linkSelection() {
+  if (sel.length < 2) { statusEl.textContent = "2つ以上を選んでから連結してください"; return; }
+  pushUndo();
+  var tag = "L" + (gfixSeq++);
+  for (var i = 0; i < sel.length; i++) { sel[i].gfix = tag; sel[i].gsolo = false; }
+  autoGroup(true);
+  scheduleSave();
+  renderGroupPanel();
+  setTimeout(function(){ statusEl.textContent = sel.length + "個を1つのまとまりにしました"; }, 40);
+}
+/* 選択を今のまとまりから切り離す */
+function splitSelection() {
+  if (!sel.length) return;
+  pushUndo();
+  var tag = "S" + (gfixSeq++);
+  for (var i = 0; i < sel.length; i++) {
+    sel[i].gsolo = true;
+    // 複数選択なら、切り離した先で1つにまとまるようにする
+    sel[i].gfix = (sel.length > 1) ? tag : null;
+  }
+  autoGroup(true);
+  scheduleSave();
+  renderGroupPanel();
+  setTimeout(function(){ statusEl.textContent = "別のまとまりに切り離しました"; }, 40);
+}
+/* 手動の指定を消して、完全に自動へ戻す */
+function resetGroupManual() {
+  pushUndo();
+  for (var i = 0; i < objects.length; i++) { objects[i].gfix = null; objects[i].gsolo = false; }
+  autoGroup(true);
+  scheduleSave();
+  renderGroupPanel();
+  setTimeout(function(){ statusEl.textContent = "手動の指定を消して自動でまとめ直しました"; }, 40);
+}
+/* まとまりの順序を入れ替える(番号の振り直し) */
+function moveGroup(no, dir) {
+  var gl = groupList();
+  var idx = -1;
+  for (var i = 0; i < gl.length; i++) if (gl[i].no === no) idx = i;
+  var to = idx + dir;
+  if (idx < 0 || to < 0 || to >= gl.length) return;
+  pushUndo();
+  var a = gl[idx], b = gl[to];
+  for (var p = 0; p < a.items.length; p++) a.items[p].grp = b.no;
+  for (var q = 0; q < b.items.length; q++) b.items[q].grp = a.no;
+  inkDirty = true;
+  scheduleSave();
+  renderGroupPanel();
+}
+/* まとまりを選択して画面内に寄せる */
+function focusGroup(no) {
+  var gl = groupList();
+  for (var i = 0; i < gl.length; i++) {
+    if (gl[i].no !== no) continue;
+    setSelection(gl[i].items.slice());
+    var b = gl[i].bbox;
+    var cx = (b.x + b.w / 2) * view.s + view.x;
+    var cy = (b.y + b.h / 2) * view.s + view.y;
+    if (cx < 40 || cx > innerWidth - 40 || cy < 110 || cy > innerHeight - 130)
+      bringIntoView(b);
+    updateSelUI();
+    return;
+  }
+}
+
 /* ===== NotebookLM等との連携: テキスト書き出し・学習用コピー =====
    ノート内のテキストオブジェクトを読み順(上→下、同じ行は左→右)に
    集めてMarkdownにする。手書きは含まれない(そちらはPDF/PNGで)。 */
 function collectPageText() {
-  var texts = [];
-  for (var i = 0; i < objects.length; i++) {
-    var o = objects[i];
-    if (o.type !== "text" || !o.text || !String(o.text).trim()) continue;
-    var b = objBBox(o);
-    texts.push({ y: b.y, x: b.x, t: String(o.text).replace(/\s+$/, "") });
+  // まとまり(グループ)があれば、その順序で書き出す。
+  // 散らかったキャンバスでも、塊ごとにまとまった読める文章になる。
+  var hasGrp = false;
+  for (var i = 0; i < objects.length; i++) if (objects[i].grp) { hasGrp = true; break; }
+
+  function readOrder(list) {
+    var texts = [];
+    for (var j = 0; j < list.length; j++) {
+      var o = list[j];
+      var isText = (o.type === "text" && o.text && String(o.text).trim());
+      if (!isText && !o.anch) continue;          // 印のない手書き・画像は本文に出さない
+      var b = objBBox(o);
+      var body = isText ? String(o.text).replace(/\s+$/, "") : "";
+      // 目次の印が付いたものは見出し(##)として書き出す → NotebookLMで構造が効く
+      var t2 = o.anch ? ("## " + String(o.anch) + (body ? "\n\n" + body : "")) : body;
+      texts.push({ y: b.y, x: b.x, t: t2 });
+    }
+    texts.sort(function(a, b){
+      return (Math.abs(a.y - b.y) < 40) ? (a.x - b.x) : (a.y - b.y);
+    });
+    var out = [];
+    for (var k = 0; k < texts.length; k++) if (texts[k].t) out.push(texts[k].t);
+    return out.join("\n\n");
   }
-  // 上→下。ほぼ同じ高さ(40px以内)なら左→右
-  texts.sort(function(a, b){
-    return (Math.abs(a.y - b.y) < 40) ? (a.x - b.x) : (a.y - b.y);
-  });
-  var out = [];
-  for (var k = 0; k < texts.length; k++) out.push(texts[k].t);
-  return out.join("\n\n");
+
+  if (!hasGrp) return readOrder(objects);
+
+  var gl = groupList();
+  var blocks = [];
+  for (var g = 0; g < gl.length; g++) {
+    var body = readOrder(gl[g].items);
+    if (body) blocks.push(body);
+  }
+  return blocks.join("\n\n");
 }
 function buildMarkdown() {
   var pg = findPage(currentId);
@@ -6102,6 +6523,115 @@ function openOpacity() {
   $("#opaPanel").classList.add("show");
 }
 function closeOpacity(){ $("#opaPanel").classList.remove("show"); }
+/* 目次の描画 */
+function renderTocPanel() {
+  var host = $("#tocList");
+  if (!host) return;
+  host.innerHTML = "";
+  var al = anchorList();
+  if (!al.length) {
+    var empty = document.createElement("div");
+    empty.style.cssText = "color:var(--ui-dim);font-size:12px;text-align:center;padding:22px 8px;line-height:1.8";
+    empty.innerHTML = "🔖 まだ印がありません<br><span style='font-size:11px'>目次にしたいものを選んで ⋯ → 🔖 で追加</span>";
+    host.appendChild(empty);
+    return;
+  }
+  for (var i = 0; i < al.length; i++) {
+    (function(a){
+      var row = document.createElement("div");
+      row.className = "toc-row";
+      var ic = document.createElement("span");
+      ic.className = "toc-ic"; ic.textContent = "🔖";
+      var nm = document.createElement("div");
+      nm.className = "toc-name"; nm.textContent = a.name;
+      var gg = document.createElement("div");
+      gg.className = "toc-g"; gg.textContent = a.g ? ("まとまり" + a.g) : "";
+      var ed = document.createElement("button");
+      ed.className = "toc-btn"; ed.textContent = "✎";
+      var dl = document.createElement("button");
+      dl.className = "toc-btn del"; dl.textContent = "🗑";
+      ed.addEventListener("click", function(e){ e.stopPropagation(); askAnchorName(a.o); });
+      dl.addEventListener("click", function(e){
+        e.stopPropagation();
+        pushUndo(); a.o.anch = null; inkDirty = true; scheduleSave(); renderTocPanel();
+      });
+      row.addEventListener("click", function(){ jumpToAnchor(a.o); });
+      row.appendChild(ic); row.appendChild(nm); row.appendChild(gg);
+      row.appendChild(ed); row.appendChild(dl);
+      host.appendChild(row);
+    })(al[i]);
+  }
+}
+function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
+function closeToc() { $("#tocPanel").classList.remove("show"); }
+$("#tocClose").onclick = closeToc;
+$("#ctxAnchor").onclick = function(e){ e.stopPropagation(); toggleAnchor(); };
+$("#tocOpenBtn").onclick = function(){ closeMenu(); setTimeout(openToc, 80); };
+$("#tocShowToggle").onclick = function(){
+  showAnchors = !showAnchors;
+  this.classList.toggle("on", showAnchors);
+  inkDirty = true;
+};
+$("#tocShowToggle").classList.toggle("on", showAnchors);
+
+/* まとまり一覧の描画 */
+function renderGroupPanel() {
+  var host = $("#grpList");
+  if (!host) return;
+  host.innerHTML = "";
+  var gl = groupList();
+  if (!gl.length) {
+    var empty = document.createElement("div");
+    empty.style.cssText = "color:var(--ui-dim);font-size:12px;text-align:center;padding:18px 4px";
+    empty.textContent = "内容がありません";
+    host.appendChild(empty);
+    return;
+  }
+  for (var i = 0; i < gl.length; i++) {
+    (function(g, idx){
+      var row = document.createElement("div");
+      row.className = "grp-row";
+      var no = document.createElement("div");
+      no.className = "grp-no"; no.textContent = g.no;
+      var lb = document.createElement("div");
+      lb.className = "grp-label";
+      lb.textContent = g.label || "(手書き・図など)";
+      var ct = document.createElement("div");
+      ct.className = "grp-cnt"; ct.textContent = g.items.length + "件";
+      var up = document.createElement("button");
+      up.className = "grp-mv"; up.textContent = "↑"; up.disabled = (idx === 0);
+      var dn = document.createElement("button");
+      dn.className = "grp-mv"; dn.textContent = "↓"; dn.disabled = (idx === gl.length - 1);
+      up.addEventListener("click", function(e){ e.stopPropagation(); moveGroup(g.no, -1); });
+      dn.addEventListener("click", function(e){ e.stopPropagation(); moveGroup(g.no, 1); });
+      row.addEventListener("click", function(){ focusGroup(g.no); });
+      row.appendChild(no); row.appendChild(lb); row.appendChild(ct);
+      row.appendChild(up); row.appendChild(dn);
+      host.appendChild(row);
+    })(gl[i], i);
+  }
+}
+function openGroupPanel() {
+  // まだ一度も整理していなければ、最初に自動でまとめる
+  var any = false;
+  for (var i = 0; i < objects.length; i++) if (objects[i].grp) { any = true; break; }
+  if (!any) autoGroup(true);
+  renderGroupPanel();
+  $("#grpPanel").classList.add("show");
+}
+function closeGroupPanel(){ $("#grpPanel").classList.remove("show"); }
+$("#grpClose").onclick = closeGroupPanel;
+$("#ctxGroup").onclick = function(e){ e.stopPropagation(); openGroupPanel(); };
+$("#grpOpenBtn").onclick = function(){ closeMenu(); setTimeout(openGroupPanel, 80); };
+$("#grpAuto").onclick = function(){ pushUndo(); autoGroup(); renderGroupPanel(); };
+$("#grpLink").onclick = function(){ linkSelection(); };
+$("#grpSplit").onclick = function(){ splitSelection(); };
+$("#grpReset").onclick = function(){ resetGroupManual(); };
+$("#grpShowToggle").onclick = function(){
+  showGroups = !showGroups;
+  this.classList.toggle("on", showGroups);
+  inkDirty = true;
+};
 $("#opaClose").onclick = closeOpacity;
 $("#opaRange").addEventListener("input", function(){
   applyOpacity(parseInt(this.value, 10) / 100, false);
