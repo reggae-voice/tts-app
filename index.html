@@ -855,7 +855,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v14.1">InkNote <small>v14.1</small></div>
+  <div class="brand" title="InkNote v14.2">InkNote <small>v14.2</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1316,7 +1316,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "14.1";
+var APP_VERSION = "14.2";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3571,16 +3571,32 @@ function sizeMini() {
 }
 function computeMiniMapping(w, h) {
   var tl = toWorld(0, 0), br = toWorld(innerWidth, innerHeight);
-  var x1 = tl.x, y1 = tl.y, x2 = br.x, y2 = br.y;
-  var cb = contentBBox();
-  if (cb) {
-    x1 = Math.min(x1, cb.x); y1 = Math.min(y1, cb.y);
-    x2 = Math.max(x2, cb.x + cb.w); y2 = Math.max(y2, cb.y + cb.h);
+  var x1, y1, x2, y2;
+  // 主役は「内容」。A4なら用紙そのもの。
+  // 表示範囲まで丸ごと含めると、拡大中に内容が隅で潰れて何も読めなくなる。
+  if (canvasMode !== "inf") {
+    var vert = (canvasMode === "a4v");
+    var ext = sheetExtent();
+    x1 = 0; y1 = 0;
+    x2 = vert ? A4W : ext;
+    y2 = vert ? ext : A4W;
+  } else {
+    var cb = contentBBox();
+    if (cb) { x1 = cb.x; y1 = cb.y; x2 = cb.x + cb.w; y2 = cb.y + cb.h; }
+    else { x1 = tl.x; y1 = tl.y; x2 = br.x; y2 = br.y; }
   }
-  var padX = (x2 - x1) * 0.06 + 1, padY = (y2 - y1) * 0.06 + 1;
+  if (x2 - x1 < 1) { x1 -= 50; x2 += 50; }
+  if (y2 - y1 < 1) { y1 -= 50; y2 += 50; }
+  // 表示範囲が外に出ている時だけ、内容の35%を上限に広げる(潰れない範囲で現在地も見せる)
+  var limX = (x2 - x1) * 0.35, limY = (y2 - y1) * 0.35;
+  x1 = Math.min(x1, Math.max(tl.x, x1 - limX));
+  y1 = Math.min(y1, Math.max(tl.y, y1 - limY));
+  x2 = Math.max(x2, Math.min(br.x, x2 + limX));
+  y2 = Math.max(y2, Math.min(br.y, y2 + limY));
+  var padX = (x2 - x1) * 0.04 + 1, padY = (y2 - y1) * 0.04 + 1;
   x1 -= padX; x2 += padX; y1 -= padY; y2 += padY;
   var s = Math.min(w / (x2 - x1), h / (y2 - y1));
-  return { x1: x1, y1: y1, s: s,
+  return { x1: x1, y1: y1, x2: x2, y2: y2, s: s,
            ox: (w - (x2 - x1) * s) / 2, oy: (h - (y2 - y1) * s) / 2 };
 }
 function miniToWorld(mx, my) {
@@ -3600,8 +3616,25 @@ function renderMini() {
   function Y(wy){ return (wy - m.y1) * m.s + m.oy; }
   mctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   var th = THEMES[themeName] || THEMES.cream;
-  mctx.fillStyle = th.paper;
+  // 背景。A4は用紙の形とページの切れ目を描く
+  mctx.fillStyle = (canvasMode === "inf") ? th.paper : "rgba(0,0,0,.18)";
   mctx.fillRect(0, 0, w, h);
+  if (canvasMode !== "inf") {
+    var vertM = (canvasMode === "a4v");
+    var extM = sheetExtent();
+    var pw3 = (vertM ? A4W : extM) * m.s, ph3 = (vertM ? extM : A4W) * m.s;
+    mctx.fillStyle = th.paper;
+    mctx.fillRect(X(0), Y(0), pw3, ph3);
+    mctx.strokeStyle = "rgba(80,90,110,.35)";
+    mctx.lineWidth = 1;
+    var pageLen = A4H, nPage = Math.round(extM / pageLen);
+    for (var pI = 1; pI < nPage; pI++) {
+      mctx.beginPath();
+      if (vertM) { mctx.moveTo(X(0), Y(pI * pageLen)); mctx.lineTo(X(A4W), Y(pI * pageLen)); }
+      else { mctx.moveTo(X(pI * pageLen), Y(0)); mctx.lineTo(X(pI * pageLen), Y(A4W)); }
+      mctx.stroke();
+    }
+  }
   for (var i = 0; i < objects.length; i++) {
     var o = objects[i];
     if (o.type === "stroke") {
@@ -3668,15 +3701,20 @@ function renderMini() {
       drawMiniText(o, m);
     }
   }
-  // 現在の表示範囲(青い枠)
+  // 現在の表示範囲(青い枠)。マップの外へはみ出す分は切り詰めて端に張り付かせる
   var tl2 = toWorld(0, 0), br2 = toWorld(innerWidth, innerHeight);
-  var vx = X(tl2.x), vy = Y(tl2.y);
-  var vw = (br2.x - tl2.x) * m.s, vh = (br2.y - tl2.y) * m.s;
-  mctx.fillStyle = "rgba(76,111,255,.12)";
-  mctx.fillRect(vx, vy, vw, vh);
-  mctx.strokeStyle = "#4C6FFF";
-  mctx.lineWidth = 1.5;
-  mctx.strokeRect(vx, vy, vw, vh);
+  var vx1 = X(tl2.x), vy1 = Y(tl2.y), vx2 = X(br2.x), vy2 = Y(br2.y);
+  var mx1 = m.ox, my1 = m.oy;
+  var mx2 = m.ox + (m.x2 - m.x1) * m.s, my2 = m.oy + (m.y2 - m.y1) * m.s;
+  var cx1 = Math.max(vx1, mx1), cy1 = Math.max(vy1, my1);
+  var cx2 = Math.min(vx2, mx2), cy2 = Math.min(vy2, my2);
+  if (cx2 > cx1 && cy2 > cy1) {
+    mctx.fillStyle = "rgba(76,111,255,.10)";
+    mctx.fillRect(cx1, cy1, cx2 - cx1, cy2 - cy1);
+    mctx.strokeStyle = "#4C6FFF";
+    mctx.lineWidth = 1.5;
+    mctx.strokeRect(cx1, cy1, cx2 - cx1, cy2 - cy1);
+  }
 }
 /* マップ上のテキスト表現: 読めるなら実文字、無理ならスケルトン行 */
 function drawMiniText(o, m) {
@@ -3690,36 +3728,45 @@ function drawMiniText(o, m) {
   }
   var fpx = o.fontSize * m.s;
   mctx.fillStyle = o.color || "#222";
-  if (fpx >= 4.5 && o.text) {
+  if (fpx >= 3.5 && o.text) {
     mctx.font = (o.bold ? "700 " : "") + fpx + "px sans-serif";
     mctx.textBaseline = "top";
     var maxW = bw - 4;
+    var lineH = fpx * 1.45;
+    // 4行で打ち切ると長文ノートが上だけになり下が真っ白になる。
+    // 実際の高さに収まる行数まで描く(上限は描画コスト対策)
+    var cap = Math.max(1, Math.min(400, Math.ceil(bh / Math.max(1, lineH)) + 1));
     var lines = [];
     var srcL = String(o.text).split("\n");
-    for (var i = 0; i < srcL.length && lines.length < 4; i++) {
+    for (var i = 0; i < srcL.length && lines.length < cap; i++) {
       var line = "";
       for (var k = 0; k < srcL[i].length; k++) {
         if (mctx.measureText(line + srcL[i][k]).width > maxW && line) {
           lines.push(line);
           line = srcL[i][k];
-          if (lines.length >= 4) break;
+          if (lines.length >= cap) break;
         } else line += srcL[i][k];
       }
-      if (lines.length < 4) lines.push(line);
+      if (lines.length < cap) lines.push(line);
     }
     for (var j2 = 0; j2 < lines.length; j2++) {
+      var ly = by + 2 + j2 * lineH;
+      if (ly > by + bh) break;                 // 枠から出た分は描かない
       var tx2 = bx + 2;
       if (o.bubble) tx2 = bx + Math.max(2, (bw - mctx.measureText(lines[j2]).width) / 2);
-      mctx.fillText(lines[j2], tx2, by + 2 + j2 * fpx * 1.45);
+      mctx.fillText(lines[j2], tx2, ly);
     }
   } else {
-    // スケルトン行: テキストの塊がどこにあるか形で示す
-    mctx.globalAlpha = 0.5;
-    var lh = Math.max(3, fpx * 1.45);
-    var barH = Math.max(1, fpx * 0.7);
-    var n2 = 0;
-    for (var y2 = by + 1; y2 < by + bh - 1 && n2 < 6; y2 += lh, n2++)
-      mctx.fillRect(bx + 1, y2, Math.max(3, bw - 2), barH);
+    // スケルトン行: 小さすぎて読めない時も、文章の塊と行数が形で分かるようにする
+    mctx.globalAlpha = 0.62;
+    var lh = Math.max(2, fpx * 1.45);
+    var barH = Math.max(1, fpx * 0.72);
+    var n2 = 0, maxLines = Math.max(1, Math.floor(bh / lh));
+    for (var y2 = by; y2 < by + bh - barH * 0.5 && n2 < maxLines; y2 += lh, n2++) {
+      // 最終行は少し短くして「文章」らしく見せる
+      var lw = (n2 === maxLines - 1) ? (bw - 2) * 0.62 : (bw - 2);
+      mctx.fillRect(bx + 1, y2, Math.max(2, lw), barH);
+    }
     mctx.globalAlpha = 1;
   }
 }
