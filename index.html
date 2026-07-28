@@ -855,7 +855,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v14.2">InkNote <small>v14.2</small></div>
+  <div class="brand" title="InkNote v14.4">InkNote <small>v14.4</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1031,6 +1031,8 @@ window.onerror = function(msg, src, line){
     <button id="ctxOpa" title="透明度">🌓</button>
     <button id="ctxGroup" title="まとまりの整理">🗂</button>
     <button id="ctxAnchor" title="目次に追加/外す">🔖</button>
+    <button id="ctxStraighten" title="手書き線を直線化">📏</button>
+    <button id="ctxShapify" title="手書きを図形に補正(丸・四角・直線)">🔷</button>
     <button id="ctxCrop" title="トリミング">✂</button>
     <button id="ctxDup" title="複製">⧉</button>
     <button id="ctxFront" title="前面へ">⬆</button>
@@ -1287,6 +1289,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1316,7 +1319,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "14.2";
+var APP_VERSION = "14.4";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2010,6 +2013,8 @@ function updateSelUI() {
   $("#ctxEdit").style.display = (!allLocked && (isText || isShape)) ? "" : "none";
   $("#ctxStyle").style.display = (!allLocked && (isText || isShape || hasStroke)) ? "" : "none";
   $("#ctxCrop").style.display = (!allLocked && isImage) ? "" : "none";
+  $("#ctxStraighten").style.display = (!allLocked && hasStroke) ? "" : "none";
+  $("#ctxShapify").style.display = (!allLocked && hasStroke) ? "" : "none";
   $("#ctxDel").style.display = allLocked ? "none" : "";
   $("#ctxDup").style.display = allLocked ? "none" : "";
   $("#ctxFront").style.display = allLocked ? "none" : "";
@@ -6117,6 +6122,196 @@ function bringIntoView(b) {
   centerAt(s0);
   return false;
 }
+/* ===== 手書きを図形に補正する =====
+   線の形を測って「丸(楕円)/四角/直線」のどれに近いかを決め、図形に置き換える。
+   判定は2つのものさしを比べるだけの単純な方法にして、癖のある手書きでも外しにくくした。 */
+
+/* 折れ線の単純化(Ramer-Douglas-Peucker)。角の数を数えるために使う */
+function rdpSimplify(pts, eps) {
+  if (pts.length < 3) return pts.slice();
+  function segDist(p, a, b) {
+    var dx = b.x - a.x, dy = b.y - a.y;
+    var L2 = dx * dx + dy * dy;
+    if (L2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    var t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / L2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+  var keep = [];
+  (function rec(s, e){
+    var maxD = -1, idx = -1;
+    for (var i = s + 1; i < e; i++) {
+      var d = segDist(pts[i], pts[s], pts[e]);
+      if (d > maxD) { maxD = d; idx = i; }
+    }
+    if (maxD > eps && idx > 0) { rec(s, idx); keep.push(idx); rec(idx, e); }
+  })(0, pts.length - 1);
+  keep.sort(function(a, b){ return a - b; });
+  var out = [pts[0]];
+  for (var i = 0; i < keep.length; i++) out.push(pts[keep[i]]);
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+/* 「楕円らしさ」と「四角らしさ」を測る。どちらも0に近いほどその形に近い */
+function shapeScores(pts, bb) {
+  var cx = bb.x + bb.w / 2, cy = bb.y + bb.h / 2;
+  var rx = Math.max(0.5, bb.w / 2), ry = Math.max(0.5, bb.h / 2);
+  var half = Math.max(0.5, Math.min(bb.w, bb.h) / 2);
+  var eSum = 0, rSum = 0;
+  for (var i = 0; i < pts.length; i++) {
+    var p = pts[i];
+    // 楕円: 中心からの相対距離が1に揃っているか
+    var dx = (p.x - cx) / rx, dy = (p.y - cy) / ry;
+    eSum += Math.abs(Math.hypot(dx, dy) - 1);
+    // 四角: どこか一番近い辺に張り付いているか
+    var d = Math.min(p.x - bb.x, bb.x + bb.w - p.x, p.y - bb.y, bb.y + bb.h - p.y);
+    rSum += Math.max(0, d) / half;
+  }
+  return { ellipse: eSum / pts.length, rect: rSum / pts.length };
+}
+/* 点そのものの枠(線の太さの余白を含まない)。判定はこれを使う。
+   objBBoxは線幅ぶん外に広がるので、細い図形の判定が狂ってしまう。 */
+function pointsBBox(pts) {
+  var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (var i = 0; i < pts.length; i++) {
+    if (pts[i].x < x1) x1 = pts[i].x;
+    if (pts[i].y < y1) y1 = pts[i].y;
+    if (pts[i].x > x2) x2 = pts[i].x;
+    if (pts[i].y > y2) y2 = pts[i].y;
+  }
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+/* 手ぶれを平均でならす。判定を安定させるための下準備 */
+function smoothPoints(pts) {
+  if (pts.length < 5) return pts.slice();
+  var win = (pts.length >= 24) ? 2 : 1;              // ±win点の平均
+  var out = [];
+  for (var i = 0; i < pts.length; i++) {
+    var sx = 0, sy = 0, n = 0;
+    for (var k = -win; k <= win; k++) {
+      var j = i + k;
+      if (j < 0 || j >= pts.length) continue;
+      sx += pts[j].x; sy += pts[j].y; n++;
+    }
+    out.push({ x: sx / n, y: sy / n });
+  }
+  return out;
+}
+/* 閉じた形の面積(靴ひも公式)。四角は枠いっぱい、丸は枠の約79%になる */
+function polyAreaRatio(pts, bb) {
+  var a = 0;
+  for (var i = 0; i < pts.length; i++) {
+    var p = pts[i], q = pts[(i + 1) % pts.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  var area = Math.abs(a) / 2;
+  var bA = Math.max(1, bb.w * bb.h);
+  return area / bA;
+}
+/* 手書き線1本を見て、変換先の図形を決める。判定できなければ null */
+function recognizeStroke(o) {
+  var raw = o.points;
+  if (!raw || raw.length < 3) return null;
+  var bb0 = pointsBBox(raw);
+  var diag0 = Math.hypot(bb0.w, bb0.h);
+  if (diag0 < 10) return null;                       // 点のように小さいものは対象外
+  var first = raw[0], last = raw[raw.length - 1];
+  var gap = Math.hypot(last.x - first.x, last.y - first.y);
+  var closed = (gap < diag0 * 0.3);                  // 始点と終点が近ければ閉じた形
+  if (!closed) {
+    // 開いた線 → 直線。なみなみも「まっすぐ引きたかった線」として扱う
+    return { kind: "line", x1: first.x, y1: first.y, x2: last.x, y2: last.y };
+  }
+  // 閉じた形は、手ぶれをならしてから測る(荒い線でも安定して判定できる)
+  var pts = smoothPoints(raw);
+  var bb = pointsBBox(pts);
+  var sc = shapeScores(pts, bb);
+  var isRect = (sc.rect < sc.ellipse);
+  // 差が小さくて迷う時は、枠をどれだけ埋めているかで決める(四角=1.0 / 丸=0.79)
+  if (Math.abs(sc.rect - sc.ellipse) < 0.03)
+    isRect = (polyAreaRatio(pts, bb) > 0.86);
+  return { kind: isRect ? "rect" : "ellipse",
+           x1: bb.x, y1: bb.y, x2: bb.x + bb.w, y2: bb.y + bb.h };
+}
+/* 選択した手書き線を図形に置き換える */
+function shapifySelection() {
+  var idxs = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "stroke" || o.locked) continue;
+    if (sel.indexOf(o) === -1) continue;
+    idxs.push(i);
+  }
+  if (!idxs.length) { statusEl.textContent = "図形に補正できる手書き線がありません"; return; }
+  pushUndo();
+  var made = [], names = { line: "直線", rect: "四角", ellipse: "丸" }, counts = {};
+  for (var k = 0; k < idxs.length; k++) {
+    var st = objects[idxs[k]];
+    var r = recognizeStroke(st);
+    if (!r) continue;
+    var sh = {
+      id: st.id, type: "shape", kind: r.kind,
+      x1: r.x1, y1: r.y1, x2: r.x2, y2: r.y2,
+      color: st.color, size: st.size, fill: null
+    };
+    if (st.opacity != null) sh.opacity = st.opacity;
+    if (st.grp != null) sh.grp = st.grp;             // まとまり・目次の情報は引き継ぐ
+    if (st.anch) sh.anch = st.anch;
+    objects[idxs[k]] = sh;                            // 同じ位置に置き換え(重なり順を保つ)
+    made.push(sh);
+    counts[r.kind] = (counts[r.kind] || 0) + 1;
+  }
+  if (!made.length) { statusEl.textContent = "形を判定できませんでした"; return; }
+  inkDirty = true;
+  setSelection(made);
+  scheduleSave();
+  updateSelUI();
+  var parts = [];
+  for (var key in counts) if (counts.hasOwnProperty(key))
+    parts.push(names[key] + (counts[key] > 1 ? ("×" + counts[key]) : ""));
+  setTimeout(function(){
+    statusEl.textContent = parts.join("・") + "に補正しました(違う形なら Aa で種類を変更)";
+  }, 40);
+}
+
+/* 手書き線を直線化する。始点と終点を結ぶ直線に置き換える。
+   複数選択なら、含まれる手書き線すべてをまとめて直線化する。 */
+function straightenSelection() {
+  var targets = [];
+  for (var i = 0; i < sel.length; i++)
+    if (sel[i].type === "stroke" && !sel[i].locked && sel[i].points && sel[i].points.length >= 2)
+      targets.push(sel[i]);
+  if (!targets.length) { statusEl.textContent = "直線化できる手書き線がありません"; return; }
+  pushUndo();
+  var done = 0;
+  for (var k = 0; k < targets.length; k++) {
+    var o = targets[k];
+    var pts = o.points;
+    var first = pts[0], last = pts[pts.length - 1];
+    // 平均筆圧を引き継いで太さの印象を保つ
+    var ap = 0;
+    for (var j = 0; j < pts.length; j++) ap += (pts[j].p || 0.5);
+    ap = ap / pts.length;
+    // 始点と終点が近すぎる(点みたいな線)は、最も離れた2点を端にする
+    if (Math.hypot(last.x - first.x, last.y - first.y) < 4) {
+      var a = first, b = last, far = 0;
+      for (var m = 0; m < pts.length; m++)
+        for (var n = m + 1; n < pts.length; n++) {
+          var d = Math.hypot(pts[n].x - pts[m].x, pts[n].y - pts[m].y);
+          if (d > far) { far = d; a = pts[m]; b = pts[n]; }
+        }
+      first = a; last = b;
+    }
+    o.points = [{ x: first.x, y: first.y, p: ap }, { x: last.x, y: last.y, p: ap }];
+    o._orig = null;
+    done++;
+  }
+  inkDirty = true;
+  scheduleSave();
+  updateSelUI();
+  statusEl.textContent = (done > 1) ? (done + "本の線を直線にしました") : "直線にしました";
+}
+
 /* 目次からその場所へ飛ぶ */
 function jumpToAnchor(obj) {
   var ok = bringIntoView(objBBox(obj));
@@ -6776,6 +6971,8 @@ function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
 function closeToc() { $("#tocPanel").classList.remove("show"); }
 $("#tocClose").onclick = closeToc;
 $("#ctxAnchor").onclick = function(e){ e.stopPropagation(); toggleAnchor(); };
+$("#ctxStraighten").onclick = function(e){ e.stopPropagation(); straightenSelection(); };
+$("#ctxShapify").onclick = function(e){ e.stopPropagation(); shapifySelection(); };
 $("#tocOpenBtn").onclick = function(){ closeMenu(); setTimeout(openToc, 80); };
 $("#tocShowToggle").onclick = function(){
   showAnchors = !showAnchors;
