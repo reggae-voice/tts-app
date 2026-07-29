@@ -855,7 +855,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v14.4">InkNote <small>v14.4</small></div>
+  <div class="brand" title="InkNote v14.7">InkNote <small>v14.7</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1033,6 +1033,7 @@ window.onerror = function(msg, src, line){
     <button id="ctxAnchor" title="目次に追加/外す">🔖</button>
     <button id="ctxStraighten" title="手書き線を直線化">📏</button>
     <button id="ctxShapify" title="手書きを図形に補正(丸・四角・直線)">🔷</button>
+    <button id="ctxTidy" title="位置をそろえる">📐</button>
     <button id="ctxCrop" title="トリミング">✂</button>
     <button id="ctxDup" title="複製">⧉</button>
     <button id="ctxFront" title="前面へ">⬆</button>
@@ -1234,6 +1235,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="tocOpenBtn">🔖 目次を開く</button>
       <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
     </div>
+    <div class="st-row"><span class="st-label">整列</span>
+      <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
+      <span style="color:var(--ui-dim);font-size:11px">だんだんズレた左端・行間を直す</span>
+    </div>
     <div class="st-row"><span class="st-label">整理</span>
       <button class="stybtn" id="grpOpenBtn">🗂 まとまりを整理</button>
       <span style="color:var(--ui-dim);font-size:11px">散らかった内容を塊ごとに整理</span>
@@ -1289,7 +1294,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1319,7 +1323,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "14.4";
+var APP_VERSION = "14.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1481,25 +1485,84 @@ function sheetFitScale() {
   if (canvasMode === "a4h") return Math.max(0.2, Math.min(1.6, (innerHeight - 150) / A4W));
   return 1;
 }
+/* スクロールしてよい世界の範囲。
+   用紙だけに限ると、用紙の外に置かれた内容へ永久に届かなくなる
+   (無限ノートで書いてからA4に切り替えた時に「消えた」ように見える原因)。
+   そこで用紙と内容の両方を含む範囲を許可する。 */
+function viewBounds() {
+  var vert = (canvasMode === "a4v");
+  var x1 = 0, y1 = 0;
+  var x2 = vert ? A4W : sheetExtent();
+  var y2 = vert ? sheetExtent() : A4W;
+  var cb = contentBBox();
+  if (cb) {
+    var M = 40;
+    x1 = Math.min(x1, cb.x - M);
+    y1 = Math.min(y1, cb.y - M);
+    x2 = Math.max(x2, cb.x + cb.w + M);
+    y2 = Math.max(y2, cb.y + cb.h + M);
+  }
+  return { x1: x1, y1: y1, x2: x2, y2: y2 };
+}
 function clampView() {
   if (canvasMode === "inf") return;
+  var b = viewBounds();
+  var PAD = 24;
+  var totalW = (b.x2 - b.x1) * view.s;
+  if (totalW <= innerWidth - 16) view.x = (innerWidth - totalW) / 2 - b.x1 * view.s;
+  else view.x = Math.max(innerWidth - b.x2 * view.s - PAD,
+                         Math.min(-b.x1 * view.s + PAD, view.x));
+  var totalH = (b.y2 - b.y1) * view.s;
+  if (totalH <= innerHeight - 16) view.y = (innerHeight - totalH) / 2 - b.y1 * view.s;
+  else view.y = Math.max(innerHeight - b.y2 * view.s - PAD,
+                         Math.min(-b.y1 * view.s + PAD, view.y));
+}
+/* 用紙からはみ出している内容があるか(用紙が伸びる向きの末尾は除く) */
+function contentOutsidePage() {
+  if (canvasMode === "inf") return false;
+  var cb = contentBBox();
+  if (!cb) return false;
   var vert = (canvasMode === "a4v");
-  if (vert) {
-    var pw = A4W * view.s;
-    if (pw <= innerWidth - 16) view.x = (innerWidth - pw) / 2;   // 用紙を中央固定
-    else view.x = Math.max(innerWidth - pw - 12, Math.min(12, view.x));
-    // 縦: 先頭より上へは行かず、末尾より下へも行き過ぎない(必ず戻れる)
-    var totalH = sheetExtent() * view.s;
-    var minY = Math.min(24, innerHeight - totalH - 24);
-    view.y = Math.max(minY, Math.min(24, view.y));
-  } else {
-    var ph = A4W * view.s;                                        // 横置き用紙の高さ=794
-    if (ph <= innerHeight - 16) view.y = (innerHeight - ph) / 2;
-    else view.y = Math.max(innerHeight - ph - 12, Math.min(12, view.y));
-    var totalW = sheetExtent() * view.s;
-    var minX = Math.min(24, innerWidth - totalW - 24);
-    view.x = Math.max(minX, Math.min(24, view.x));
+  if (vert) return (cb.x < 0 || cb.x + cb.w > A4W || cb.y < 0);
+  return (cb.y < 0 || cb.y + cb.h > A4W || cb.x < 0);
+}
+/* 内容を用紙の中に収める。必要なら縮小してから左上の余白位置へ寄せる */
+function fitContentToPage() {
+  var cb = contentBBox();
+  if (!cb) return;
+  var vert = (canvasMode === "a4v");
+  var M = 40;
+  var limit = A4W - M * 2;                       // 用紙の短辺(縦なら幅、横なら高さ)
+  var cross = vert ? cb.w : cb.h;
+  var scale = (cross > limit && cross > 0) ? (limit / cross) : 1;
+  pushUndo();
+  if (scale < 1) {
+    for (var i = 0; i < objects.length; i++) {
+      var o = objects[i];
+      o._o = null; o._s = null; o._orig = null;    // 対話的リサイズ用のキャッシュを消す
+      resizeObject(o, { x: cb.x, y: cb.y }, scale);
+      o._o = null; o._s = null; o._orig = null;
+      // テキストの寸法キャッシュも縮める(次のBBox計算が古いままにならないように)
+      if (o.type === "text") {
+        if (o._mw) o._mw = o._mw * scale;
+        if (o._mh) o._mh = o._mh * scale;
+      }
+    }
+    refreshMeasures();
   }
+  var nb = contentBBox();
+  var dx = M - nb.x, dy = M - nb.y;
+  for (var k = 0; k < objects.length; k++) moveObjectRaw(objects[k], dx, dy);
+  inkDirty = true;
+  refreshMeasures();
+  applyCanvasMode(true);
+  clampView(); applyView();
+  scheduleSave();
+  setTimeout(function(){
+    statusEl.textContent = (scale < 1)
+      ? "用紙の幅に合わせて縮小し、中に収めました"
+      : "内容を用紙の中に移動しました";
+  }, 40);
 }
 function applyView() {
   if (canvasMode !== "inf") clampView();
@@ -2015,6 +2078,7 @@ function updateSelUI() {
   $("#ctxCrop").style.display = (!allLocked && isImage) ? "" : "none";
   $("#ctxStraighten").style.display = (!allLocked && hasStroke) ? "" : "none";
   $("#ctxShapify").style.display = (!allLocked && hasStroke) ? "" : "none";
+  $("#ctxTidy").style.display = (!allLocked && sel.length >= 2) ? "" : "none";
   $("#ctxDel").style.display = allLocked ? "none" : "";
   $("#ctxDup").style.display = allLocked ? "none" : "";
   $("#ctxFront").style.display = allLocked ? "none" : "";
@@ -5541,6 +5605,15 @@ $("#mnClose").onclick = closeMenu;
         : canvasMode === "a4v" ? "A4縦: 下にページが連なります"
         : "A4横: 右にページが連なります";
       setTimeout(function(){ statusEl.textContent = msg; }, 40);
+      // 用紙の外に内容がある時は、収めるかどうかを選んでもらう
+      if (contentOutsidePage()) {
+        setTimeout(function(){
+          showSheet("用紙からはみ出している内容があります", [
+            { label: "📐 用紙の中に収める(移動・縮小)", fn: fitContentToPage },
+            { label: "そのままにする(スクロールで見られます)", cancel: true }
+          ]);
+        }, 260);
+      }
     });
 })();
 (function(){
@@ -6039,6 +6112,149 @@ function renderPageToCanvas(bbox, marginOpt, list) {
   outWhite = false;
   return c;
 }
+/* =========================================================
+   位置をそろえる(だんだんズレていくのを直す)
+   横に並ぶものを「行」としてまとめ、行ごとに左端と行間をそろえる。
+   行の中の並びは崩さないので、見た目の意味は保たれる。
+========================================================= */
+function medianOf(arr) {
+  if (!arr.length) return 0;
+  var a = arr.slice().sort(function(x, y){ return x - y; });
+  var m = Math.floor(a.length / 2);
+  return (a.length % 2) ? a[m] : (a[m - 1] + a[m]) / 2;
+}
+/* 縦に重なっているものを同じ行としてまとめる(上から順) */
+function buildRows(list) {
+  var items = [];
+  for (var i = 0; i < list.length; i++) items.push({ o: list[i], b: objBBox(list[i]) });
+  items.sort(function(a, b){ return a.b.y - b.b.y; });
+  var rows = [], cur = null;
+  for (var k = 0; k < items.length; k++) {
+    var it = items[k];
+    var top = it.b.y, bot = it.b.y + it.b.h;
+    if (cur) {
+      var ov = Math.min(cur.y2, bot) - Math.max(cur.y1, top);
+      var minH = Math.max(1, Math.min(cur.y2 - cur.y1, it.b.h));
+      if (ov > minH * 0.5) {                      // 半分以上重なれば同じ行
+        cur.items.push(it);
+        cur.y1 = Math.min(cur.y1, top);
+        cur.y2 = Math.max(cur.y2, bot);
+        continue;
+      }
+    }
+    cur = { items: [it], y1: top, y2: bot };
+    rows.push(cur);
+  }
+  for (var r = 0; r < rows.length; r++) {
+    var xs = [];
+    for (var j = 0; j < rows[r].items.length; j++) xs.push(rows[r].items[j].b.x);
+    rows[r].left = Math.min.apply(null, xs);
+  }
+  return rows;
+}
+/* この内容が何ページ目にあるか。A4縦は下へ、A4横は右へページが連なる */
+function pageIndexOf(b) {
+  if (canvasMode === "a4v") return Math.max(0, Math.floor((b.y + b.h / 2) / A4H));
+  if (canvasMode === "a4h") return Math.max(0, Math.floor((b.x + b.w / 2) / A4H));
+  return 0;                                        // 無限は1枚扱い
+}
+/* そのページの左端の基準位置(A4横はページごとに右へずれる) */
+function pageOriginX(pi) {
+  return (canvasMode === "a4h") ? pi * A4H : 0;
+}
+/* mode: "left"(左をそろえる) / "gap"(間隔をそろえる) / "both"
+   ページをまたいで内容が引き寄せられないよう、ページごとに処理する。 */
+function tidyPositions(mode) {
+  var pool = (sel.length >= 2) ? sel.slice() : objects.slice();
+  var list = [];
+  for (var i = 0; i < pool.length; i++) {
+    var o = pool[i];
+    if (o.locked) continue;
+    if (o.type === "text" && !String(o.text || "").trim()) continue;
+    list.push(o);
+  }
+  if (list.length < 2) { statusEl.textContent = "そろえる対象が足りません"; return; }
+
+  // ページごとに分ける(無限キャンバスは全体で1つ)
+  var byPage = {};
+  for (var p = 0; p < list.length; p++) {
+    var pi = pageIndexOf(objBBox(list[p]));
+    if (!byPage[pi]) byPage[pi] = [];
+    byPage[pi].push(list[p]);
+  }
+  var keys = [];
+  for (var key in byPage) if (byPage.hasOwnProperty(key)) keys.push(parseInt(key, 10));
+  keys.sort(function(a, b){ return a - b; });
+
+  // 各ページの行を作り、ページ基準の左端と行間を集める
+  var pageRows = {}, rels = [], gaps = [], rowCount = 0;
+  for (var k = 0; k < keys.length; k++) {
+    var rows = buildRows(byPage[keys[k]]);
+    pageRows[keys[k]] = rows;
+    rowCount += rows.length;
+    var ox = pageOriginX(keys[k]);
+    for (var r = 0; r < rows.length; r++) {
+      rels.push(rows[r].left - ox);                      // ページ内での左端
+      if (r > 0) gaps.push(rows[r].y1 - rows[r - 1].y2);
+    }
+  }
+  if (rowCount < 2) { statusEl.textContent = "そろえる行が足りません"; return; }
+  pushUndo();
+
+  if (mode === "left" || mode === "both") {
+    // ページ内での左端の中央値に寄せる。極端に外れた行(字下げなど)は動かさない
+    var target = medianOf(rels);
+    var spread = Math.max(40, medianOf(rels.map(function(v){ return Math.abs(v - target); })) * 3);
+    for (var a = 0; a < keys.length; a++) {
+      var ox2 = pageOriginX(keys[a]);
+      var rws = pageRows[keys[a]];
+      for (var b = 0; b < rws.length; b++) {
+        var dx = (ox2 + target) - rws[b].left;
+        if (Math.abs(dx) > spread) continue;
+        if (!dx) continue;
+        for (var c = 0; c < rws[b].items.length; c++) moveObjectRaw(rws[b].items[c].o, dx, 0);
+      }
+    }
+  }
+
+  if (mode === "gap" || mode === "both") {
+    // 行間の中央値でそろえる。各ページの先頭行は動かさない(ページをまたがない)
+    var gap = Math.max(4, Math.round(medianOf(gaps)));
+    for (var d = 0; d < keys.length; d++) {
+      var rws2 = pageRows[keys[d]];
+      if (rws2.length < 2) continue;
+      var bottom = rws2[0].y2;
+      for (var h = 1; h < rws2.length; h++) {
+        var dy = (bottom + gap) - rws2[h].y1;
+        if (dy) for (var m = 0; m < rws2[h].items.length; m++) moveObjectRaw(rws2[h].items[m].o, 0, dy);
+        rws2[h].y1 += dy; rws2[h].y2 += dy;
+        bottom = rws2[h].y2;
+      }
+    }
+  }
+
+  inkDirty = true;
+  refreshMeasures();
+  if (canvasMode !== "inf") { clampView(); applyView(); }
+  scheduleSave();
+  updateSelUI();
+  var name = (mode === "left") ? "左をそろえました"
+           : (mode === "gap") ? "間隔をそろえました" : "位置をそろえました";
+  var pgTxt = (keys.length > 1) ? (keys.length + "ページ / ") : "";
+  setTimeout(function(){
+    statusEl.textContent = name + "(" + pgTxt + rowCount + "行 / 元に戻すで取り消せます)";
+  }, 40);
+}
+function openTidySheet() {
+  var scope = (sel.length >= 2) ? ("選んだもの " + sel.length + "件") : "ページ全体";
+  showSheet("位置をそろえる(" + scope + ")", [
+    { label: "✨ 左と間隔をそろえる", fn: function(){ tidyPositions("both"); } },
+    { label: "⬅ 左だけそろえる", fn: function(){ tidyPositions("left"); } },
+    { label: "↕ 間隔だけそろえる", fn: function(){ tidyPositions("gap"); } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+
 /* =========================================================
    目次アンカー(しおり)
    - o.anch : 目次に出す名前。付いているものだけが目次に並ぶ
@@ -6973,6 +7189,7 @@ $("#tocClose").onclick = closeToc;
 $("#ctxAnchor").onclick = function(e){ e.stopPropagation(); toggleAnchor(); };
 $("#ctxStraighten").onclick = function(e){ e.stopPropagation(); straightenSelection(); };
 $("#ctxShapify").onclick = function(e){ e.stopPropagation(); shapifySelection(); };
+$("#ctxTidy").onclick = function(e){ e.stopPropagation(); openTidySheet(); };
 $("#tocOpenBtn").onclick = function(){ closeMenu(); setTimeout(openToc, 80); };
 $("#tocShowToggle").onclick = function(){
   showAnchors = !showAnchors;
@@ -7030,6 +7247,7 @@ function closeGroupPanel(){ $("#grpPanel").classList.remove("show"); }
 $("#grpClose").onclick = closeGroupPanel;
 $("#ctxGroup").onclick = function(e){ e.stopPropagation(); openGroupPanel(); };
 $("#grpOpenBtn").onclick = function(){ closeMenu(); setTimeout(openGroupPanel, 80); };
+$("#tidyOpenBtn").onclick = function(){ closeMenu(); setTimeout(openTidySheet, 120); };
 $("#grpAuto").onclick = function(){ pushUndo(); autoGroup(); renderGroupPanel(); };
 $("#grpLink").onclick = function(){ linkSelection(); };
 $("#grpSplit").onclick = function(){ splitSelection(); };
