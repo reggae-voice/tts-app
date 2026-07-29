@@ -856,7 +856,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v14.8">InkNote <small>v14.8</small></div>
+  <div class="brand" title="InkNote v14.9">InkNote <small>v14.9</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1324,7 +1324,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "14.8";
+var APP_VERSION = "14.9";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4960,7 +4960,16 @@ function refreshStaleThumbs() {
   function step() {
     if (!queue.length) {
       thumbRefreshing = false;
-      if (updated && $("#pagesPanel").classList.contains("show")) renderPageList();
+      // 名前入力などのダイアログが開いている間は作り直さない(入力の邪魔になる)
+      if (updated && $("#pagesPanel").classList.contains("show")) {
+        if ($("#inputDlg").classList.contains("show") || $("#actionSheet").classList.contains("show"))
+          setTimeout(function(){ if (!$("#inputDlg").classList.contains("show")) renderPageList(); }, 1200);
+        else renderPageList();
+      }
+      return;
+    }
+    if ($("#inputDlg").classList.contains("show")) {   // 入力中は待つ
+      setTimeout(step, 600);
       return;
     }
     var pg = queue.shift();
@@ -5224,17 +5233,23 @@ function askText(label, def, cb) {
   inp.value = def || "";
   $("#sheetScrim").classList.add("show");
   dlg.classList.add("show");
+  // 直前の操作(長押しを離した指など)が背面に届いて即閉じするのを防ぐ
+  var guardUntil = Date.now() + 400;
   setTimeout(function(){ inp.focus(); inp.select(); }, 60);
   function done(val) {
     dlg.classList.remove("show");
     $("#sheetScrim").classList.remove("show");
     $("#sheetScrim").onclick = null;
     inp.onkeydown = null;
+    inp.onblur = null;
     if (cb) cb(val);
   }
   $("#idOk").onclick = function(){ done(inp.value); };
   $("#idCancel").onclick = function(){ done(null); };
-  $("#sheetScrim").onclick = function(){ done(null); };
+  $("#sheetScrim").onclick = function(){
+    if (Date.now() < guardUntil) return;      // 開いた直後は閉じない
+    done(null);
+  };
   inp.onkeydown = function(e){
     if (e.key === "Enter") { e.preventDefault(); done(inp.value); }
     if (e.key === "Escape") done(null);
@@ -5450,30 +5465,39 @@ function renderPageList() {
         over.appendChild(menu);
         media.appendChild(over);
         card.appendChild(media);
-        // 長押しで名前を変更(指を置いたまま0.5秒)
-        var holdT = null, holdMoved = false, holdX = 0, holdY = 0;
+        /* 長押しで名前を変更。
+           ★押している最中にダイアログを開くと、指を離した操作が背面のスクリムに
+             届いてすぐ閉じてしまう(キーボードが出てすぐ消える原因)。
+             そこで「長押しできた」ことだけ先に知らせ、指を離してから開く。 */
+        var holdT = null, holdFired = false, holdCancel = false, holdX = 0, holdY = 0;
+        function clearHold() { clearTimeout(holdT); holdT = null; card.classList.remove("holding"); }
         card.addEventListener("pointerdown", function(ev){
           if (ev.target.closest && ev.target.closest(".pp-card-menu")) return;
-          holdMoved = false; holdX = ev.clientX; holdY = ev.clientY;
+          holdFired = false; holdCancel = false;
+          holdX = ev.clientX; holdY = ev.clientY;
           clearTimeout(holdT);
           holdT = setTimeout(function(){
-            if (holdMoved) return;
-            holdMoved = true;              // この後のクリックでページを開かない
+            if (holdCancel) return;
+            holdFired = true;                    // 開くのは指を離した時
             card.classList.add("holding");
             if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
-            renamePage(pg.id);
+            statusEl.textContent = "指を離すと名前を変更できます";
           }, 500);
         });
         card.addEventListener("pointermove", function(ev){
           if (Math.abs(ev.clientX - holdX) > 8 || Math.abs(ev.clientY - holdY) > 8) {
-            holdMoved = true; clearTimeout(holdT);
+            holdCancel = true; holdFired = false; clearHold();
           }
         });
-        card.addEventListener("pointerup", function(){ clearTimeout(holdT); });
-        card.addEventListener("pointercancel", function(){ holdMoved = true; clearTimeout(holdT); });
+        card.addEventListener("pointerup", function(){
+          clearHold();
+          if (!holdFired) return;
+          // 指を離した直後のクリックが届かないよう、少し待ってから開く
+          setTimeout(function(){ renamePage(pg.id); }, 260);
+        });
+        card.addEventListener("pointercancel", function(){ holdCancel = true; holdFired = false; clearHold(); });
         card.addEventListener("click", function(){
-          card.classList.remove("holding");
-          if (holdMoved) { holdMoved = false; return; }   // 長押しした時は開かない
+          if (holdFired) { holdFired = false; return; }   // 長押しした時はページを開かない
           switchPage(pg.id);
         });
         list.appendChild(card);
