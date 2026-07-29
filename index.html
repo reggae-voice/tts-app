@@ -678,6 +678,7 @@
     display:flex;flex-direction:column;
   }
   .pp-card.current{outline:2px solid var(--accent)}
+  .pp-card.holding{transform:scale(.97);transition:transform .12s ease}
   .pp-thumb{
     width:100%;max-width:100%;aspect-ratio:4/3;object-fit:cover;display:block;
     background:#F4EFE2;border:none;
@@ -855,7 +856,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v14.7">InkNote <small>v14.7</small></div>
+  <div class="brand" title="InkNote v14.8">InkNote <small>v14.8</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1323,7 +1324,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "14.7";
+var APP_VERSION = "14.8";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4836,6 +4837,142 @@ function makeThumb(pid) {
                             ts: Date.now(), v: THUMB_VER, w: W });
   } catch (e) {}
 }
+/* 開いていないページ用の範囲計算。
+   テキストは画面上のDOMが無いので、行の折り返しを計算して高さを見積もる。 */
+var _measCv = null;
+function measureTextBox(o) {
+  if (!_measCv) _measCv = document.createElement("canvas");
+  var g = _measCv.getContext("2d");
+  var fs = o.fontSize || 20;
+  g.font = (o.bold ? "700 " : "400 ") + fs + "px " + (FONT_MAP[o.font || "sans"] || "sans-serif");
+  var padX = o.bubble ? 18 : (o.border ? 12 : 4);
+  var maxW = Math.max(20, (o.w || 200) - padX * 2);
+  var lines = 0;
+  var srcLines = String(o.text || "").split("\n");
+  for (var i = 0; i < srcLines.length; i++) {
+    var line = "", n = 1;
+    for (var k = 0; k < srcLines[i].length; k++) {
+      var ch = srcLines[i][k];
+      if (g.measureText(line + ch).width > maxW && line) { n++; line = ch; }
+      else line += ch;
+    }
+    lines += n;
+  }
+  return { w: o.w || 200, h: Math.max(fs * 1.5, lines * fs * 1.5 + 8) };
+}
+function thumbBBox(list) {
+  var x1 = 1e9, y1 = 1e9, x2 = -1e9, y2 = -1e9, found = false;
+  for (var i = 0; i < list.length; i++) {
+    var o = list[i], bx, by, bw, bh;
+    if (o.type === "stroke") {
+      if (!o.points || !o.points.length) continue;
+      var mnx = 1e9, mny = 1e9, mxx = -1e9, mxy = -1e9;
+      for (var k = 0; k < o.points.length; k++) {
+        var p = o.points[k];
+        if (p.x < mnx) mnx = p.x; if (p.x > mxx) mxx = p.x;
+        if (p.y < mny) mny = p.y; if (p.y > mxy) mxy = p.y;
+      }
+      var pd = o.size || 3;
+      bx = mnx - pd; by = mny - pd; bw = mxx - mnx + pd * 2; bh = mxy - mny + pd * 2;
+    } else if (o.type === "shape") {
+      var pd2 = (o.size || 2) + 4;
+      bx = Math.min(o.x1, o.x2) - pd2; by = Math.min(o.y1, o.y2) - pd2;
+      bw = Math.abs(o.x2 - o.x1) + pd2 * 2; bh = Math.abs(o.y2 - o.y1) + pd2 * 2;
+    } else if (o.type === "image") {
+      bx = o.x; by = o.y; bw = o.w || 100; bh = o.h || 100;
+    } else if (o.type === "text") {
+      if (!String(o.text || "").trim()) continue;
+      var m = measureTextBox(o);
+      bx = o.x; by = o.y; bw = m.w; bh = m.h;
+    } else continue;
+    found = true;
+    if (bx < x1) x1 = bx;
+    if (by < y1) y1 = by;
+    if (bx + bw > x2) x2 = bx + bw;
+    if (by + bh > y2) y2 = by + bh;
+  }
+  return found ? { x: x1, y: y1, w: x2 - x1, h: y2 - y1 } : null;
+}
+/* 保存済みのデータからサムネを作る(そのページを開かなくてよい)。
+   他の端末で編集して同期されたページのサムネもこれで最新にできる。 */
+function thumbFromCanvas(pid, c) {
+  if (!c || !c.width) return;
+  var dpr = Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+  var W = Math.round(400 * dpr), H = Math.round(300 * dpr);
+  var s = Math.max(W / c.width, H / c.height);
+  var t = document.createElement("canvas");
+  t.width = W; t.height = H;
+  var g = t.getContext("2d");
+  if (g.imageSmoothingQuality) g.imageSmoothingQuality = "high";
+  g.fillStyle = (THEMES[themeName] || THEMES.cream).paper;
+  g.fillRect(0, 0, W, H);
+  g.drawImage(c, 0, 0, W / s, H / s, 0, 0, W, H);
+  return kvSet("thumb_" + pid, { png: t.toDataURL("image/jpeg", 0.86),
+                                 ts: Date.now(), v: THUMB_VER, w: W });
+}
+function makeThumbFor(pid) {
+  if (pid === currentId) { makeThumb(pid); return Promise.resolve(); }
+  return kvGet("page_" + pid).then(function(rec){
+    if (!rec || !rec.json) return;
+    var arr;
+    try { arr = JSON.parse(rec.json); } catch (e) { return; }
+    if (!arr || !arr.length) { kvDel("thumb_" + pid); return; }
+    // 画像は画面外の<img>を作って、読み込みを待ってから描く
+    var waits = [];
+    for (var i = 0; i < arr.length; i++) {
+      (function(o){
+        if (o.type !== "image" || !o.src) return;
+        var d = document.createElement("div");
+        var im = document.createElement("img");
+        d.appendChild(im);
+        o.el = d;
+        waits.push(new Promise(function(res){
+          var done = false;
+          var fin = function(){ if (!done) { done = true; res(); } };
+          im.onload = fin; im.onerror = fin;
+          setTimeout(fin, 2500);                 // 念のための打ち切り
+          im.src = o.src;
+          if (im.complete) fin();
+        }));
+      })(arr[i]);
+    }
+    return Promise.all(waits).then(function(){
+      var b = thumbBBox(arr);
+      if (!b) return;
+      var pwSave = printWhite;
+      printWhite = false;
+      var c = null;
+      try { c = renderPageToCanvas(b, 24, arr); } catch (e) {}
+      printWhite = pwSave;
+      outWhite = false;
+      for (var j = 0; j < arr.length; j++) arr[j].el = null;
+      return thumbFromCanvas(pid, c);
+    });
+  }).catch(function(){});
+}
+/* 内容より古いサムネを作り直す(一覧を開いた時) */
+var thumbRefreshing = false;
+function refreshStaleThumbs() {
+  if (thumbRefreshing) return;
+  thumbRefreshing = true;
+  var queue = pages.slice();
+  var updated = 0;
+  function step() {
+    if (!queue.length) {
+      thumbRefreshing = false;
+      if (updated && $("#pagesPanel").classList.contains("show")) renderPageList();
+      return;
+    }
+    var pg = queue.shift();
+    kvGet("thumb_" + pg.id).then(function(th){
+      var stale = (!th || th.v !== THUMB_VER || (th.ts || 0) < (pg.ts || 0) - 1500);
+      if (!stale) { setTimeout(step, 0); return; }
+      makeThumbFor(pg.id).then(function(){ updated++; setTimeout(step, 30); },
+                               function(){ setTimeout(step, 30); });
+    }).catch(function(){ setTimeout(step, 0); });
+  }
+  step();
+}
 function saveDocNow() { clearTimeout(saveTimer); saveDoc(); }
 function saveIndex() {
   return kvSet("pages_index", { pages: pages, currentId: currentId,
@@ -5238,6 +5375,13 @@ function renderFolderTabs() {
 function pageMenu(pg) {
   showSheet("「" + pg.title + "」", [
     { label: "✎ 名前を変更", fn: function(){ renamePage(pg.id); } },
+    { label: "🔄 サムネイルを更新", fn: function(){
+        statusEl.textContent = "サムネイルを作り直しています…";
+        makeThumbFor(pg.id).then(function(){
+          renderPageList();
+          statusEl.textContent = "サムネイルを更新しました";
+        });
+      } },
     { label: "⧉ 複製", fn: function(){ duplicatePage(pg.id); } },
     { label: "📁 フォルダへ移動", fn: function(){ pickFolder(pg); } },
     { label: "🗑 削除", danger: true, fn: function(){ deletePage(pg.id); } },
@@ -5306,7 +5450,32 @@ function renderPageList() {
         over.appendChild(menu);
         media.appendChild(over);
         card.appendChild(media);
-        card.addEventListener("click", function(){ switchPage(pg.id); });
+        // 長押しで名前を変更(指を置いたまま0.5秒)
+        var holdT = null, holdMoved = false, holdX = 0, holdY = 0;
+        card.addEventListener("pointerdown", function(ev){
+          if (ev.target.closest && ev.target.closest(".pp-card-menu")) return;
+          holdMoved = false; holdX = ev.clientX; holdY = ev.clientY;
+          clearTimeout(holdT);
+          holdT = setTimeout(function(){
+            if (holdMoved) return;
+            holdMoved = true;              // この後のクリックでページを開かない
+            card.classList.add("holding");
+            if (navigator.vibrate) { try { navigator.vibrate(12); } catch (e) {} }
+            renamePage(pg.id);
+          }, 500);
+        });
+        card.addEventListener("pointermove", function(ev){
+          if (Math.abs(ev.clientX - holdX) > 8 || Math.abs(ev.clientY - holdY) > 8) {
+            holdMoved = true; clearTimeout(holdT);
+          }
+        });
+        card.addEventListener("pointerup", function(){ clearTimeout(holdT); });
+        card.addEventListener("pointercancel", function(){ holdMoved = true; clearTimeout(holdT); });
+        card.addEventListener("click", function(){
+          card.classList.remove("holding");
+          if (holdMoved) { holdMoved = false; return; }   // 長押しした時は開かない
+          switchPage(pg.id);
+        });
         list.appendChild(card);
       } else {
         // ===== 従来のリスト =====
@@ -5433,6 +5602,7 @@ function openPages() {
   setToolsOpen(toolsOpen);
   renderPageList();
   refreshThumbIfOld(currentId);
+  setTimeout(refreshStaleThumbs, 400);   // 内容より古いサムネを順番に作り直す
   updateUsage();
   $("#pagesPanel").classList.add("show");
   $("#pagesScrim").classList.add("show");
