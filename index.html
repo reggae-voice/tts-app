@@ -679,6 +679,14 @@
   }
   .pp-card.current{outline:2px solid var(--accent)}
   .pp-card.holding{transform:scale(.97);transition:transform .12s ease}
+  /* 端末標準の「画像をコピー/ダウンロード…」メニューを出さない
+     (サムネが<img>なので、長押しでブラウザ側が反応してしまう) */
+  #ppList, .pp-card, .pp-card *{
+    -webkit-touch-callout:none;
+    -webkit-user-select:none;user-select:none;
+    -webkit-user-drag:none;
+  }
+  img.pp-thumb{pointer-events:none}      /* 画像自体を長押しの対象にしない */
   .pp-thumb{
     width:100%;max-width:100%;aspect-ratio:4/3;object-fit:cover;display:block;
     background:#F4EFE2;border:none;
@@ -856,7 +864,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v14.9">InkNote <small>v14.9</small></div>
+  <div class="brand" title="InkNote v15.0">InkNote <small>v15.0</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1324,7 +1332,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "14.9";
+var APP_VERSION = "15.0";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5440,6 +5448,8 @@ function renderPageList() {
           if (!th || !th.png) return;
           var im = document.createElement("img");
           im.className = "pp-thumb";
+          im.draggable = false;                    // 端末標準の画像操作を抑える
+          im.setAttribute("draggable", "false");
           im.src = th.png;
           media.replaceChild(im, ph);
         }).catch(function(){});
@@ -5471,6 +5481,9 @@ function renderPageList() {
              そこで「長押しできた」ことだけ先に知らせ、指を離してから開く。 */
         var holdT = null, holdFired = false, holdCancel = false, holdX = 0, holdY = 0;
         function clearHold() { clearTimeout(holdT); holdT = null; card.classList.remove("holding"); }
+        // 端末標準の長押しメニューを止める(自前の名前変更だけを出す)
+        card.addEventListener("contextmenu", function(ev){ ev.preventDefault(); });
+        card.addEventListener("dragstart", function(ev){ ev.preventDefault(); });
         card.addEventListener("pointerdown", function(ev){
           if (ev.target.closest && ev.target.closest(".pp-card-menu")) return;
           holdFired = false; holdCancel = false;
