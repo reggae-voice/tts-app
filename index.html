@@ -314,6 +314,11 @@
     display:flex;align-items:center;justify-content:center;cursor:pointer;
   }
   .sizebtn.sel{background:var(--accent-soft);outline:2px solid var(--accent)}
+  .autobtn{
+    width:auto;min-width:52px;padding:0 10px;
+    color:var(--ui-dim);font-size:11px;font-weight:800;letter-spacing:.4px;
+  }
+  .autobtn.sel{color:#fff}
   .sizebtn i{background:#dfe2e8;border-radius:99px;display:block}
   .toggle-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ui-text)}
   .toggle{
@@ -868,7 +873,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v15.2">InkNote <small>v15.2</small></div>
+  <div class="brand" title="InkNote v15.4">InkNote <small>v15.4</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -888,6 +893,12 @@ window.onerror = function(msg, src, line){
     <button class="sizebtn" data-size="4"><i style="width:22px;height:4px"></i></button>
     <button class="sizebtn" data-size="8"><i style="width:22px;height:7px"></i></button>
     <button class="sizebtn" data-size="16"><i style="width:22px;height:11px"></i></button>
+    <button class="sizebtn autobtn" id="penAutoBtn"
+            title="筆圧・ペンの傾き・速さで太さを変える">AUTO</button>
+  </div>
+  <div class="prow" style="padding-top:0">
+    <span class="plabel"></span>
+    <span id="penAutoHint" style="color:var(--ui-dim);font-size:10.5px;line-height:1.6"></span>
   </div>
   <div class="prow toggle-row">
     <span class="plabel">マーカー</span>
@@ -919,6 +930,12 @@ window.onerror = function(msg, src, line){
     <button class="sizebtn er-size sel" data-s="18"><i style="width:12px;height:12px;border-radius:50%"></i></button>
     <button class="sizebtn er-size" data-s="32"><i style="width:18px;height:18px;border-radius:50%"></i></button>
     <button class="sizebtn er-size" data-s="56"><i style="width:24px;height:24px;border-radius:50%"></i></button>
+    <button class="sizebtn autobtn" id="erAutoBtn"
+            title="筆圧・ペンの傾きで消す幅を変える">AUTO</button>
+  </div>
+  <div class="prow" style="padding-top:0">
+    <span class="plabel"></span>
+    <span id="erAutoHint" style="color:var(--ui-dim);font-size:10.5px;line-height:1.6"></span>
   </div>
   <div class="prow">
     <span class="plabel">モード</span>
@@ -1313,6 +1330,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1342,7 +1360,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "15.2";
+var APP_VERSION = "15.4";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1398,6 +1416,7 @@ var canvasMode = "inf";        // 用紙サイズ: inf(無限) | a4v(A4縦) | a4
 var A4W = 794, A4H = 1123;     // A4 @96dpi
 var GUTTER = "#262A31";        // A4モードの机(背景)色
 var eraserCursor = null;     // 消している位置の表示円
+var eraserAuto = false;      // 消しゴムの太さを筆圧・傾きで変える
 var bgStyle = "dots";        // 背景: dots|grid|lines|plain
 var usePressure = true;      // 筆圧で太さを変えるか(オフ以外ならtrue)
 /* 線の強弱のつけ方
@@ -1442,6 +1461,7 @@ try {
     if (_st.shapeStyle) shapeStyle = _st.shapeStyle;
     if (_st.bg) bgStyle = _st.bg;
     if (typeof _st.pressure === "boolean") usePressure = _st.pressure;
+    if (typeof _st.eraserAuto === "boolean") eraserAuto = _st.eraserAuto;
     if (_st.penDyn === "off" || _st.penDyn === "pressure" || _st.penDyn === "auto") penDyn = _st.penDyn;
     else penDyn = usePressure ? "pressure" : "off";      // 旧設定からの引き継ぎ
     usePressure = (penDyn !== "off");
@@ -1455,7 +1475,8 @@ function saveSettings() {
     localStorage.setItem("inknote_settings",
       JSON.stringify({ pen: pen, fingerDraws: fingerDraws, fingerManual: fingerManual,
                        lastStylusAt: lastStylusAt,
-                       eraser: eraser, bg: bgStyle, pressure: usePressure, penDyn: penDyn, theme: themeName,
+                       eraser: eraser, eraserAuto: eraserAuto,
+                       bg: bgStyle, pressure: usePressure, penDyn: penDyn, theme: themeName,
                        minimap: showMini, shapeStyle: shapeStyle, canvasMode: canvasMode }));
   } catch (e) {}
 }
@@ -3612,7 +3633,8 @@ capture.addEventListener("pointerdown", function(e){
     });
   } else if (tool === "eraser") {
     var er = { snapshot: serializeScene(), changed: false };
-    var rw = (eraser.size / 2) / view.s;   // ズームしても画面上のサイズ感を一定に
+    resetEraserDyn();
+    var rw = (eraser.size / 2) * eraserFactor(e) / view.s;  // ズームしても画面上のサイズ感を一定に
     var last = { x: w.x, y: w.y };
     var doErase = function(x, y) {
       var hit = false;
@@ -3637,6 +3659,10 @@ capture.addEventListener("pointerdown", function(e){
         if (pinch) return;
         var evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
         for (var i = 0; i < evs.length; i++) {
+          // 合成イベントには傾きが入らないことがあるので元のイベントで補う
+          var se = evs[i];
+          if (se.tiltX == null && se.altitudeAngle == null) se = ev;
+          rw = (eraser.size / 2) * eraserFactor(se) / view.s;
           var cw = toWorld(evs[i].clientX, evs[i].clientY);
           doErase(cw.x, cw.y);
         }
@@ -4340,9 +4366,10 @@ $("#ctxStyle").onclick = function(){
     pen.color = firstStroke.color;
     pen.size = firstStroke.size;
     refreshPenSwatches();
-    var pz = document.querySelectorAll("#penPanel .sizebtn");
+    var pz = document.querySelectorAll("#penPanel .sizebtn[data-size]");
     for (var k3 = 0; k3 < pz.length; k3++)
       pz[k3].classList.toggle("sel", +pz[k3].getAttribute("data-size") === firstStroke.size);
+    syncDynUI();
     showPopover(penPanel);
     return;
   }
@@ -4620,18 +4647,61 @@ function applyPenToSelectedStrokes(kind) {
       saveSettings();
     });
   }
-  var szs = document.querySelectorAll("#penPanel .sizebtn");
+  var szs = document.querySelectorAll("#penPanel .sizebtn[data-size]");
   for (var k = 0; k < szs.length; k++) {
     if (+szs[k].getAttribute("data-size") === pen.size) szs[k].classList.add("sel");
     szs[k].addEventListener("click", function(){
       pen.size = +this.getAttribute("data-size");
-      var all = document.querySelectorAll("#penPanel .sizebtn");
+      var all = document.querySelectorAll("#penPanel .sizebtn[data-size]");
       for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
       applyPenToSelectedStrokes("size");
       saveSettings();
     });
   }
 })();
+
+/* 太さのAUTO。押すたびに オート ⇄ 筆圧 を切り替える。
+   ⚙メニューの「線の強弱」と同じ設定なので、両方の表示を合わせる。 */
+function syncDynUI() {
+  var b = $("#penAutoBtn");
+  if (b) b.classList.toggle("sel", penDyn === "auto");
+  var hint = $("#penAutoHint");
+  if (hint) hint.textContent = (penDyn === "auto")
+    ? "AUTO: 筆圧・ペンの傾き・速さで太さが変わります"
+    : (penDyn === "pressure" ? "今は筆圧のみ。AUTOで傾きと速さも効きます"
+                             : "今は一定の太さ。AUTOで強弱がつきます");
+  var dopts = document.querySelectorAll(".dyn-opt");
+  for (var i = 0; i < dopts.length; i++)
+    dopts[i].classList.toggle("sel", dopts[i].getAttribute("data-dyn") === penDyn);
+}
+function syncEraserAutoUI() {
+  var b = $("#erAutoBtn");
+  if (b) b.classList.toggle("sel", eraserAuto);
+  var h = $("#erAutoHint");
+  if (h) h.textContent = eraserAuto
+    ? "AUTO: 強く押す・寝かせるほど広く消えます"
+    : "AUTO にすると筆圧と傾きで消す幅が変わります";
+}
+$("#erAutoBtn").onclick = function(){
+  eraserAuto = !eraserAuto;
+  syncEraserAutoUI();
+  saveSettings();
+  statusEl.textContent = eraserAuto
+    ? "消しゴム AUTO: 筆圧と傾きで幅が変わります"
+    : "消しゴムの幅を一定にしました";
+};
+syncEraserAutoUI();
+$("#penAutoBtn").onclick = function(){
+  penDyn = (penDyn === "auto") ? "pressure" : "auto";
+  usePressure = (penDyn !== "off");
+  syncDynUI();
+  inkDirty = true;
+  saveSettings();
+  statusEl.textContent = (penDyn === "auto")
+    ? "AUTO: 筆圧・ペンの傾き・速さで太さが変わります"
+    : "筆圧で太さが変わります";
+};
+syncDynUI();
 var LS_HINT = {
   select: "選択: 囲んだものを掴む(移動・複製・削除)",
   shot:   "コピー: 囲んだ範囲をクリップボードへ(他アプリに貼り付け)",
@@ -4650,12 +4720,12 @@ var LS_HINT = {
     });
 })();
 (function(){
-  var ss = document.querySelectorAll(".er-size");
+  var ss = document.querySelectorAll(".er-size[data-s]");
   for (var i = 0; i < ss.length; i++) {
     ss[i].classList.toggle("sel", +ss[i].getAttribute("data-s") === eraser.size);
     ss[i].addEventListener("click", function(){
       eraser.size = +this.getAttribute("data-s");
-      var all = document.querySelectorAll(".er-size");
+      var all = document.querySelectorAll(".er-size[data-s]");
       for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
       saveSettings();
     });
@@ -5838,9 +5908,8 @@ function openMenu() {
   var cvs = document.querySelectorAll(".cv-opt");
   for (var k2 = 0; k2 < cvs.length; k2++)
     cvs[k2].classList.toggle("sel", cvs[k2].getAttribute("data-cv") === canvasMode);
-  var dopts = document.querySelectorAll(".dyn-opt");
-  for (var di = 0; di < dopts.length; di++)
-    dopts[di].classList.toggle("sel", dopts[di].getAttribute("data-dyn") === penDyn);
+  syncDynUI();
+  syncEraserAutoUI();
   $("#mmToggle").classList.toggle("on", showMini);
   $("#msToggle").classList.toggle("on", memorizeMode);
   $("#menuPanel").classList.add("show");
@@ -5927,8 +5996,7 @@ $("#mnClose").onclick = closeMenu;
     ds[i].addEventListener("click", function(){
       penDyn = this.getAttribute("data-dyn");
       usePressure = (penDyn !== "off");
-      var all = document.querySelectorAll(".dyn-opt");
-      for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
+      syncDynUI();
       inkDirty = true;
       saveSettings();
       statusEl.textContent = (penDyn === "off") ? "線の太さを一定にしました"
@@ -6689,6 +6757,21 @@ function pointsBBox(pts) {
   }
   return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
 }
+/* 消しゴムの太さ倍率。強く押す/寝かせるほど広く消える。
+   ペンと違って「速いほど細く」は入れない(消し残しになって使いにくいため)。 */
+var _erLast = 1;
+function resetEraserDyn() { _erLast = 1; }
+function eraserFactor(e) {
+  if (!eraserAuto) return 1;
+  var isPen = (e.pointerType === "pen");
+  var pr = (isPen && e.pressure > 0) ? e.pressure : 0;
+  var f = pr ? (0.55 + pr * 0.9) : 1;            // 筆圧: 0.55〜1.45倍
+  f = f * (1 + tiltAmount(e) * 0.5);             // 寝かせるほど広く
+  f = _erLast * 0.5 + f * 0.5;                   // 急な変化をならす
+  _erLast = f;
+  return Math.max(0.4, Math.min(2.2, f));
+}
+
 /* 手ぶれを平均でならす。判定を安定させるための下準備 */
 function smoothPoints(pts) {
   if (pts.length < 5) return pts.slice();
