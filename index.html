@@ -868,7 +868,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v15.1">InkNote <small>v15.1</small></div>
+  <div class="brand" title="InkNote v15.2">InkNote <small>v15.2</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1232,9 +1232,15 @@ window.onerror = function(msg, src, line){
       <button class="stybtn bg-opt" data-bg="lines">罫線</button>
       <button class="stybtn bg-opt" data-bg="plain">無地</button>
     </div>
-    <div class="st-row"><span class="st-label">筆圧</span>
-      <button class="toggle on" id="prToggle"></button>
-      <span style="color:var(--ui-dim);font-size:11px">ペンの筆圧で線の太さを変える</span>
+    <div class="st-row"><span class="st-label">線の強弱</span>
+      <button class="stybtn dyn-opt" data-dyn="off">一定</button>
+      <button class="stybtn dyn-opt sel" data-dyn="pressure">筆圧</button>
+      <button class="stybtn dyn-opt" data-dyn="auto">オート</button>
+    </div>
+    <div class="st-row" style="padding-top:0">
+      <span style="color:var(--ui-dim);font-size:11px;line-height:1.7" id="dynHint">
+        オート: 筆圧 + ペンの傾き + 速さで太さが変わります(傾きは対応ペンのみ)
+      </span>
     </div>
     <div class="st-row"><span class="st-label">マップ</span>
       <button class="toggle on" id="mmToggle"></button>
@@ -1336,7 +1342,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "15.1";
+var APP_VERSION = "15.2";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1393,7 +1399,14 @@ var A4W = 794, A4H = 1123;     // A4 @96dpi
 var GUTTER = "#262A31";        // A4モードの机(背景)色
 var eraserCursor = null;     // 消している位置の表示円
 var bgStyle = "dots";        // 背景: dots|grid|lines|plain
-var usePressure = true;      // 筆圧で太さを変えるか
+var usePressure = true;      // 筆圧で太さを変えるか(オフ以外ならtrue)
+/* 線の強弱のつけ方
+   "off"      : 一定の太さ
+   "pressure" : 筆圧のみ(従来)
+   "auto"     : 筆圧 + ペンの傾き + 速さ。筆圧が無い端末でも速さで強弱がつく */
+var penDyn = "pressure";
+var TILT_GAIN = 0.60;        // 寝かせたときにどれだけ太くするか
+var SPEED_GAIN = 0.35;       // 速く動かしたときにどれだけ細くするか
 var THEMES = {
   cream: { paper: "#F7F5EF", grid: "#E4E0D5", pen: "#1C1E22" },
   white: { paper: "#FFFFFF", grid: "#E6E6E6", pen: "#1C1E22" },
@@ -1429,6 +1442,9 @@ try {
     if (_st.shapeStyle) shapeStyle = _st.shapeStyle;
     if (_st.bg) bgStyle = _st.bg;
     if (typeof _st.pressure === "boolean") usePressure = _st.pressure;
+    if (_st.penDyn === "off" || _st.penDyn === "pressure" || _st.penDyn === "auto") penDyn = _st.penDyn;
+    else penDyn = usePressure ? "pressure" : "off";      // 旧設定からの引き継ぎ
+    usePressure = (penDyn !== "off");
     if (_st.theme && THEMES[_st.theme]) themeName = _st.theme;
     if (_st.canvasMode === "a4v" || _st.canvasMode === "a4h") canvasMode = _st.canvasMode;
     if (typeof _st.minimap === "boolean") showMini = _st.minimap;
@@ -1439,7 +1455,7 @@ function saveSettings() {
     localStorage.setItem("inknote_settings",
       JSON.stringify({ pen: pen, fingerDraws: fingerDraws, fingerManual: fingerManual,
                        lastStylusAt: lastStylusAt,
-                       eraser: eraser, bg: bgStyle, pressure: usePressure, theme: themeName,
+                       eraser: eraser, bg: bgStyle, pressure: usePressure, penDyn: penDyn, theme: themeName,
                        minimap: showMini, shapeStyle: shapeStyle, canvasMode: canvasMode }));
   } catch (e) {}
 }
@@ -1834,12 +1850,16 @@ function drawStrokeRaw(o) {
   if (pts.length === 1) {
     ictx.beginPath();
     ictx.fillStyle = o.color;
-    ictx.arc(pts[0].x, pts[0].y, (o.size * (pts[0].p || 0.5)) / 1.4 + 0.4, 0, 7);
+    var dot = (penDyn === "auto" && pts[0].w != null) ? pts[0].w : (pts[0].p || 0.5);
+    ictx.arc(pts[0].x, pts[0].y, (o.size * dot) / 1.4 + 0.4, 0, 7);
     ictx.fill();
   } else {
     for (var i = 1; i < pts.length; i++) {
       var a = pts[i - 1], b2 = pts[i];
-      var pr = usePressure ? ((a.p + b2.p) / 2 || 0.5) : 0.62;
+      var pr;
+      if (penDyn === "off") pr = 0.62;
+      else if (penDyn === "auto" && a.w != null && b2.w != null) pr = (a.w + b2.w) / 2;
+      else pr = ((a.p + b2.p) / 2) || 0.5;
       ictx.lineWidth = Math.max(0.6, o.size * (0.35 + pr * 1.05));
       ictx.beginPath();
       ictx.moveTo(a.x, a.y);
@@ -1936,6 +1956,51 @@ function measureObj(o) {
 function measureAll() {
   for (var i = 0; i < objects.length; i++)
     if (objects[i].type === "text" || objects[i].type === "image") measureObj(objects[i]);
+}
+/* ===== 線の強弱(auto用) =====
+   ペンの傾き: altitudeAngle(垂直=π/2, 寝かせる=0)が取れればそれを使う。
+   無ければ tiltX/tiltY から求める。寝かせるほど太くする(鉛筆の腹で描く感じ)。 */
+function tiltAmount(e) {
+  if (e.altitudeAngle != null && isFinite(e.altitudeAngle)) {
+    var a = Math.max(0, Math.min(Math.PI / 2, e.altitudeAngle));
+    return 1 - (a / (Math.PI / 2));                 // 0=垂直, 1=寝かせている
+  }
+  var tx = e.tiltX || 0, ty = e.tiltY || 0;
+  if (!tx && !ty) return 0;
+  return Math.min(90, Math.hypot(tx, ty)) / 90;
+}
+var _dynPrev = null;         // 直前の点(速さの計算用)
+var _dynLast = 0.55;         // 直前の太さ係数(急な変化をならす)
+function resetDyn() { _dynPrev = null; _dynLast = 0.55; }
+function dynFactor(e) {
+  if (penDyn === "off") return 0.62;
+  var isPen = (e.pointerType === "pen");
+  var pr = (isPen && e.pressure > 0 && e.pressure < 1) ? e.pressure
+         : (e.pressure > 0 ? e.pressure : 0);
+  var f;
+  if (penDyn === "pressure") {
+    f = pr || 0.5;
+  } else {
+    // auto: 筆圧が取れればそれを土台に、無ければ中間の太さから始める
+    f = pr ? pr : 0.5;
+    // ペンを寝かせるほど太く
+    f = f * (1 + tiltAmount(e) * TILT_GAIN);
+    // 速く動かすほど細く(はらいの表現。筆圧が無い端末でも強弱がつく)
+    // timeStampが0の場合に || で取りこぼさないよう、数値かどうかで判定する
+    var now = (typeof e.timeStamp === "number" && isFinite(e.timeStamp))
+              ? e.timeStamp
+              : ((window.performance && performance.now) ? performance.now() : Date.now());
+    if (_dynPrev) {
+      var dt = Math.max(1, now - _dynPrev.t);
+      var v = Math.hypot(e.clientX - _dynPrev.x, e.clientY - _dynPrev.y) / dt;  // px/ms
+      f = f * (1 - Math.min(1, v / 2.2) * SPEED_GAIN);
+    }
+    _dynPrev = { x: e.clientX, y: e.clientY, t: now };
+    // 急に変わるとガタつくので少しならす
+    f = _dynLast * 0.55 + f * 0.45;
+    _dynLast = f;
+  }
+  return Math.max(0.12, Math.min(1.5, f));
 }
 function objBBox(o) {
   if (o.type === "stroke") {
@@ -3474,7 +3539,7 @@ capture.addEventListener("pointerdown", function(e){
     activeStroke = {
       id: idSeq++, type: "stroke",
       color: pen.color, size: pen.size, highlighter: pen.highlighter,
-      points: [{ x: w.x, y: w.y, p: e.pressure || 0.5 }]
+      points: [{ x: w.x, y: w.y, p: e.pressure || 0.5, w: (resetDyn(), dynFactor(e)) }]
     };
     inkDirty = true;
     // ---- ラインアシスト(マーカーのみ): 引いた後、離さず静止すると直線になる ----
@@ -3520,7 +3585,12 @@ capture.addEventListener("pointerdown", function(e){
         var evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
         for (var i = 0; i < evs.length; i++) {
           var cw = toWorld(evs[i].clientX, evs[i].clientY);
-          activeStroke.points.push({ x: cw.x, y: cw.y, p: evs[i].pressure || 0.5 });
+          // 合成イベントには傾きが入らないことがあるので、元のイベントから補う
+          var se = evs[i];
+          if (se.tiltX == null && se.altitudeAngle == null) se = ev;
+          activeStroke.points.push({ x: cw.x, y: cw.y,
+                                     p: evs[i].pressure || 0.5,
+                                     w: dynFactor(se) });
         }
         inkDirty = true;
         if (pen.highlighter) {
@@ -5768,7 +5838,9 @@ function openMenu() {
   var cvs = document.querySelectorAll(".cv-opt");
   for (var k2 = 0; k2 < cvs.length; k2++)
     cvs[k2].classList.toggle("sel", cvs[k2].getAttribute("data-cv") === canvasMode);
-  $("#prToggle").classList.toggle("on", usePressure);
+  var dopts = document.querySelectorAll(".dyn-opt");
+  for (var di = 0; di < dopts.length; di++)
+    dopts[di].classList.toggle("sel", dopts[di].getAttribute("data-dyn") === penDyn);
   $("#mmToggle").classList.toggle("on", showMini);
   $("#msToggle").classList.toggle("on", memorizeMode);
   $("#menuPanel").classList.add("show");
@@ -5849,12 +5921,21 @@ $("#mnClose").onclick = closeMenu;
       scheduleSave();      // このノートの設定として保存(同期される)
     });
 })();
-$("#prToggle").onclick = function(){
-  usePressure = !usePressure;
-  this.classList.toggle("on", usePressure);
-  inkDirty = true;
-  saveSettings();
-};
+(function(){
+  var ds = document.querySelectorAll(".dyn-opt");
+  for (var i = 0; i < ds.length; i++)
+    ds[i].addEventListener("click", function(){
+      penDyn = this.getAttribute("data-dyn");
+      usePressure = (penDyn !== "off");
+      var all = document.querySelectorAll(".dyn-opt");
+      for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
+      inkDirty = true;
+      saveSettings();
+      statusEl.textContent = (penDyn === "off") ? "線の太さを一定にしました"
+        : (penDyn === "pressure") ? "筆圧で太さが変わります"
+        : "オート: 筆圧・ペンの傾き・速さで太さが変わります";
+    });
+})();
 $("#mmToggle").onclick = function(){
   showMini = !showMini;
   this.classList.toggle("on", showMini);
