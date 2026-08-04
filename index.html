@@ -692,7 +692,10 @@
   }
   #ppSearch::placeholder{color:var(--ui-dim)}
   #ppSearch::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
-  #ppList{overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1;min-height:60px}
+  /* ★書き出しを開いても一覧が潰れないよう、最低限の高さを確保する
+     (潰れるとカードが切れて狙ったページを押せなくなる) */
+  #ppList{overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;
+    flex:1 1 auto;min-height:180px}
   .pp-row{display:flex;align-items:center;gap:6px;padding:11px 10px;border-radius:12px;color:var(--ui-text);font-size:14px}
   .pp-row.current{background:var(--accent-soft)}
   .pp-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
@@ -860,6 +863,8 @@
     transition:max-height .2s ease;
   }
   #toolsWrap.open{max-height:220px}
+  /* 書き出しを開いた時はパネル自体を高くして、一覧の面積を保つ */
+  #pagesPanel.tools-open{max-height:calc(100% - env(safe-area-inset-top) - 6px)}
   /* 折りたたみを開いた時は、狭い画面でも2段に収まるよう折り返す */
   .pp-tools-grid{flex-wrap:wrap}
   .pp-tools-grid .pp-tool{flex:1 1 30%;min-width:96px}
@@ -904,7 +909,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v16.7">InkNote <small>v16.7</small></div>
+  <div class="brand" title="InkNote v16.8">InkNote <small>v16.8</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1397,7 +1402,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "16.7";
+var APP_VERSION = "16.8";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6052,7 +6057,9 @@ function pageMenu(pg) {
    ★指を置いてから離すまでの間にカードが差し替わると、
      狙ったのと別のページが開いてしまうため(今回の不具合の原因)。 */
 var listBusyUntil = 0;
+var layoutSettleUntil = 0;      // 高さが変わっている最中は、押しても開かない
 function markListBusy(ms) { listBusyUntil = Date.now() + (ms || 1200); }
+function layoutMoving() { return Date.now() < layoutSettleUntil; }
 function listIsBusy() {
   if (Date.now() < listBusyUntil) return true;
   if ($("#inputDlg") && $("#inputDlg").classList.contains("show")) return true;
@@ -6180,6 +6187,18 @@ function renderPageList() {
         card.addEventListener("click", function(){
           markListBusy(2000);
           if (holdFired) { holdFired = false; return; }   // 長押しした時はページを開かない
+          // 高さが変わっている最中は、指の下でカードが動くので開かない
+          if (layoutMoving()) {
+            statusEl.textContent = "画面が動いています。もう一度どうぞ";
+            return;
+          }
+          // 押し始めと離した場所が違うカードなら、誤タップとみなして開かない
+          if (tapDownCard && tapUpCard && tapDownCard !== tapUpCard) {
+            tapDownCard = tapUpCard = null;
+            statusEl.textContent = "指が動いたため開きませんでした。もう一度どうぞ";
+            return;
+          }
+          tapDownCard = tapUpCard = null;
           switchPage(pg.id);
         });
         list.appendChild(card);
@@ -6266,6 +6285,11 @@ function setToolsOpen(on) {
   toolsOpen = !!on;
   $("#toolsWrap").classList.toggle("open", toolsOpen);
   $("#toolsToggle").setAttribute("aria-expanded", toolsOpen ? "true" : "false");
+  // 開いた分だけパネルを高くして、一覧の面積を保つ
+  $("#pagesPanel").classList.toggle("tools-open", toolsOpen);
+  // 高さが変わっている間(アニメーション中)はカードが動くので、タップを受け付けない
+  markListBusy(450);
+  layoutSettleUntil = Date.now() + 400;
   try { localStorage.setItem("inknote_tools_open", toolsOpen ? "1" : "0"); } catch (e) {}
 }
 $("#toolsToggle").onclick = function(){ setToolsOpen(!toolsOpen); };
@@ -6303,13 +6327,21 @@ function setPagesTall(on) {
     try { grip.releasePointerCapture(e.pointerId); } catch (err) {}
   });
 })();
+var tapDownCard = null, tapUpCard = null;
 (function(){
-  // 一覧をスクロールしている間も作り直さない
   var lp = document.getElementById("ppList");
-  if (lp) {
-    lp.addEventListener("scroll", function(){ markListBusy(1200); });
-    lp.addEventListener("pointermove", function(){ markListBusy(1200); });
-  }
+  if (!lp) return;
+  // 一覧をスクロールしている間は作り直さない
+  lp.addEventListener("scroll", function(){ markListBusy(1200); });
+  lp.addEventListener("pointermove", function(){ markListBusy(1200); });
+  // 押し始めたカードと、指を離したカードを覚える(ズレて別のページが開くのを防ぐ)
+  lp.addEventListener("pointerdown", function(ev){
+    tapDownCard = (ev.target.closest) ? ev.target.closest(".pp-card") : null;
+    tapUpCard = null;
+  }, true);
+  lp.addEventListener("pointerup", function(ev){
+    tapUpCard = (ev.target.closest) ? ev.target.closest(".pp-card") : null;
+  }, true);
 })();
 function openPages() {
   markListBusy(1500);
