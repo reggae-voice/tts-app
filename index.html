@@ -899,7 +899,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v16.0">InkNote <small>v16.0</small></div>
+  <div class="brand" title="InkNote v16.1">InkNote <small>v16.1</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1386,7 +1386,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "16.0";
+var APP_VERSION = "16.1";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5384,17 +5384,8 @@ function refreshStaleThumbs() {
   var queue = pages.slice();
   var updated = 0;
   function step() {
-    if (!queue.length) {
-      thumbRefreshing = false;
-      // 名前入力などのダイアログが開いている間は作り直さない(入力の邪魔になる)
-      if (updated && $("#pagesPanel").classList.contains("show")) {
-        if ($("#inputDlg").classList.contains("show") || $("#actionSheet").classList.contains("show"))
-          setTimeout(function(){ if (!$("#inputDlg").classList.contains("show")) renderPageList(); }, 1200);
-        else renderPageList();
-      }
-      return;
-    }
-    if ($("#inputDlg").classList.contains("show")) {   // 入力中は待つ
+    if (!queue.length) { thumbRefreshing = false; return; }   // 一覧は作り直さない
+    if (listIsBusy()) {          // 操作中・入力中は待つ(カードが入れ替わらないように)
       setTimeout(step, 600);
       return;
     }
@@ -5402,8 +5393,12 @@ function refreshStaleThumbs() {
     kvGet("thumb_" + pg.id).then(function(th){
       var stale = (!th || th.v !== THUMB_VER || (th.ts || 0) < (pg.ts || 0) - 1500);
       if (!stale) { setTimeout(step, 0); return; }
-      makeThumbFor(pg.id).then(function(){ updated++; setTimeout(step, 30); },
-                               function(){ setTimeout(step, 30); });
+      makeThumbFor(pg.id).then(function(){
+        updated++;
+        // ★一覧全体ではなく、このカードのサムネだけを差し替える
+        updateCardThumb(pg.id);
+        setTimeout(step, 30);
+      }, function(){ setTimeout(step, 30); });
     }).catch(function(){ setTimeout(step, 0); });
   }
   step();
@@ -5902,6 +5897,35 @@ function pageMenu(pg) {
     { label: "キャンセル", cancel: true }
   ]);
 }
+/* 一覧を操作している間は作り直さない。
+   ★指を置いてから離すまでの間にカードが差し替わると、
+     狙ったのと別のページが開いてしまうため(今回の不具合の原因)。 */
+var listBusyUntil = 0;
+function markListBusy(ms) { listBusyUntil = Date.now() + (ms || 1200); }
+function listIsBusy() {
+  if (Date.now() < listBusyUntil) return true;
+  if ($("#inputDlg") && $("#inputDlg").classList.contains("show")) return true;
+  if ($("#actionSheet") && $("#actionSheet").classList.contains("show")) return true;
+  return false;
+}
+/* サムネだけをその場で差し替える(一覧は作り直さない) */
+function updateCardThumb(pid) {
+  var card = document.querySelector('#ppList .pp-card[data-pid="' + pid + '"]');
+  if (!card) return Promise.resolve();
+  return kvGet("thumb_" + pid).then(function(th){
+    if (!th || !th.png) return;
+    var media = card.querySelector(".pp-card-media");
+    if (!media) return;
+    var old = media.querySelector(".pp-thumb");
+    var im = document.createElement("img");
+    im.className = "pp-thumb";
+    im.draggable = false;
+    im.setAttribute("draggable", "false");
+    im.src = th.png;
+    if (old) media.replaceChild(im, old);
+    else media.insertBefore(im, media.firstChild);
+  }).catch(function(){});
+}
 function renderPageList() {
   renderFolderTabs();
   var list = $("#ppList");
@@ -5928,6 +5952,7 @@ function renderPageList() {
         // ===== カード =====
         var card = document.createElement("div");
         card.className = "pp-card" + (pg.id === currentId ? " current" : "");
+        card.setAttribute("data-pid", String(pg.id));
         // サムネと、その上に重ねる帯をまとめる枠
         var media = document.createElement("div");
         media.className = "pp-card-media";
@@ -5976,6 +6001,7 @@ function renderPageList() {
         card.addEventListener("contextmenu", function(ev){ ev.preventDefault(); });
         card.addEventListener("dragstart", function(ev){ ev.preventDefault(); });
         card.addEventListener("pointerdown", function(ev){
+          markListBusy(2000);          // 触っている間は一覧を作り直さない
           if (ev.target.closest && ev.target.closest(".pp-card-menu")) return;
           holdFired = false; holdCancel = false;
           holdX = ev.clientX; holdY = ev.clientY;
@@ -6001,6 +6027,7 @@ function renderPageList() {
         });
         card.addEventListener("pointercancel", function(){ holdCancel = true; holdFired = false; clearHold(); });
         card.addEventListener("click", function(){
+          markListBusy(2000);
           if (holdFired) { holdFired = false; return; }   // 長押しした時はページを開かない
           switchPage(pg.id);
         });
@@ -6125,7 +6152,16 @@ function setPagesTall(on) {
     try { grip.releasePointerCapture(e.pointerId); } catch (err) {}
   });
 })();
+(function(){
+  // 一覧をスクロールしている間も作り直さない
+  var lp = document.getElementById("ppList");
+  if (lp) {
+    lp.addEventListener("scroll", function(){ markListBusy(1200); });
+    lp.addEventListener("pointermove", function(){ markListBusy(1200); });
+  }
+})();
 function openPages() {
+  markListBusy(1500);
   $("#pagesPanel").classList.toggle("tall", pagesTall);
   setToolsOpen(toolsOpen);
   renderPageList();
@@ -8415,7 +8451,13 @@ function cloudPushIndex() {
     var grew = (merged.length !== pages.length);
     pages = merged;
     folders = folderList;
-    if (grew) { try { renderPageList(); updatePageBtn(); } catch (e) {} }
+    if (grew) {
+      try {
+        updatePageBtn();
+        if (!listIsBusy()) renderPageList();
+        else setTimeout(function(){ if (!listIsBusy()) renderPageList(); }, 1500);
+      } catch (e) {}
+    }
 
     return ref.set({ pages: merged, currentId: currentId, deleted: delAll,
                      folders: folderList, updatedAt: Date.now() })
