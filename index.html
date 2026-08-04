@@ -899,7 +899,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v15.7">InkNote <small>v15.7</small></div>
+  <div class="brand" title="InkNote v15.9">InkNote <small>v15.9</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1147,6 +1147,7 @@ window.onerror = function(msg, src, line){
       <button class="pp-tool" id="expStudy">🎓 学習用コピー</button>
       <button class="pp-tool" id="bakOut">💾 バックアップ</button>
       <button class="pp-tool" id="bakIn">📥 復元</button>
+      <button class="pp-tool" id="findLost">🔍 消えたページを探す</button>
     </div>
   </div>
   <div id="usageInfo" style="color:var(--ui-dim);font-size:11px;padding:8px 4px 0;text-align:center"></div>
@@ -1385,7 +1386,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "15.7";
+var APP_VERSION = "15.9";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3778,31 +3779,81 @@ capture.addEventListener("pointerdown", function(e){
 });
 
 /* 部分消し: 消しゴム円に入った点を取り除き、線を生き残った区間ごとに分割する */
+/* 線分 a→b のうち、円(cx,cy,r)の内側にある区間 [t0,t1] を求める。
+   交わらなければ null。t は 0..1 で、a からの位置を表す。 */
+function segInsideCircle(ax, ay, bx, by, cx, cy, r) {
+  var dx = bx - ax, dy = by - ay;
+  var fx = ax - cx, fy = ay - cy;
+  var A = dx * dx + dy * dy;
+  var C = fx * fx + fy * fy - r * r;
+  if (A < 1e-9) return (C <= 0) ? [0, 1] : null;   // ほぼ同じ位置の2点
+  var B = 2 * (fx * dx + fy * dy);
+  var disc = B * B - 4 * A * C;
+  if (disc < 0) return null;
+  var sq = Math.sqrt(disc);
+  var t0 = (-B - sq) / (2 * A), t1 = (-B + sq) / (2 * A);
+  if (t1 < 0 || t0 > 1) return null;
+  return [Math.max(0, t0), Math.min(1, t1)];
+}
+/* 2点の間を補間して新しい点を作る(筆圧・太さ係数も引き継ぐ) */
+function lerpPoint(a, b, t) {
+  var q = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+  if (a.p != null || b.p != null) {
+    var pa = (a.p != null) ? a.p : b.p, pb = (b.p != null) ? b.p : a.p;
+    q.p = pa + (pb - pa) * t;
+  }
+  if (a.w != null || b.w != null) {
+    var wa = (a.w != null) ? a.w : b.w, wb = (b.w != null) ? b.w : a.w;
+    q.w = wa + (wb - wa) * t;
+  }
+  return q;
+}
+/* 1本の線から、円に重なった部分だけを取り除く。
+   ★点が円の中かどうかではなく「線分のどこからどこまでが円の中か」で切るので、
+     点がまばらな線や2点だけの直線でも、なぞった所だけが消える。 */
+function eraseStrokeByCircle(o, cx, cy, r) {
+  var pts = o.points;
+  if (!pts || !pts.length) return null;
+  if (pts.length === 1) {
+    var d0 = Math.hypot(pts[0].x - cx, pts[0].y - cy);
+    return (d0 <= r) ? [] : null;                  // 単独の点は丸ごと消える
+  }
+  var runs = [], cur = [], changed = false;
+  var firstInside = (Math.hypot(pts[0].x - cx, pts[0].y - cy) <= r);
+  if (firstInside) changed = true; else cur.push(pts[0]);
+
+  for (var j = 0; j < pts.length - 1; j++) {
+    var a = pts[j], b = pts[j + 1];
+    var seg = segInsideCircle(a.x, a.y, b.x, b.y, cx, cy, r);
+    if (!seg) { cur.push(b); continue; }            // この区間は円の外
+    changed = true;
+    var t0 = seg[0], t1 = seg[1];
+    if (t0 > 0) {                                   // 入口で切る
+      cur.push(lerpPoint(a, b, t0));
+      runs.push(cur); cur = [];
+    } else if (cur.length) { runs.push(cur); cur = []; }
+    if (t1 < 1) {                                   // 出口から再開
+      cur = [lerpPoint(a, b, t1), b];
+    }
+  }
+  if (cur.length) runs.push(cur);
+  return changed ? runs : null;
+}
 function partialEraseAt(wx, wy, r) {
-  var r2 = r * r;
   var changedAny = false;
   for (var i = objects.length - 1; i >= 0; i--) {
     var o = objects[i];
     if (o.type !== "stroke") continue;
     var b = objBBox(o);
     if (wx < b.x - r || wy < b.y - r || wx > b.x + b.w + r || wy > b.y + b.h + r) continue;
-    var removed = false;
-    var runs = [], cur = [];
-    for (var j = 0; j < o.points.length; j++) {
-      var p = o.points[j];
-      var dx = p.x - wx, dy = p.y - wy;
-      if (dx * dx + dy * dy <= r2) {
-        removed = true;
-        if (cur.length) { runs.push(cur); cur = []; }
-      } else cur.push(p);
-    }
-    if (cur.length) runs.push(cur);
-    if (!removed) continue;
+    var runs = eraseStrokeByCircle(o, wx, wy, r);
+    if (!runs) continue;                            // 触れていない
     var newStrokes = [];
     for (var k = 0; k < runs.length; k++) {
       if (runs[k].length >= 2) {   // 孤立点はノイズになるため破棄
         newStrokes.push({ id: idSeq++, type: "stroke", color: o.color, size: o.size,
-                          highlighter: o.highlighter, points: runs[k] });
+                          highlighter: o.highlighter, opacity: o.opacity,
+                          grp: o.grp, points: runs[k] });
       }
     }
     if (sel.indexOf(o) !== -1) setSelection(sel.filter(function(x){ return x !== o; }));
@@ -3815,7 +3866,7 @@ function partialEraseAt(wx, wy, r) {
 /* 速いドラッグでも取りこぼさないよう、前回位置から補間しながら消す */
 function partialEraseSegment(x1, y1, x2, y2, r) {
   var d = Math.hypot(x2 - x1, y2 - y1);
-  var steps = Math.max(1, Math.ceil(d / (r * 0.6)));
+  var steps = Math.max(1, Math.ceil(d / Math.max(0.5, r * 0.35)));
   var any = false;
   for (var i = 0; i <= steps; i++) {
     var t = i / steps;
@@ -5034,6 +5085,121 @@ function kvDel(key) {
       tx.oncomplete = function(){ res(true); };
       tx.onerror = function(){ res(false); };
     } catch (e) { res(false); }
+  });
+}
+
+/* 保存されている全キーを取り出す(迷子ページの捜索に使う) */
+function kvKeys() {
+  if (useLocalStorage) {
+    var out = [];
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf("inknote_") === 0) out.push(k.slice(8));
+      }
+    } catch (e) {}
+    return Promise.resolve(out);
+  }
+  return new Promise(function(res){
+    if (!db) return res([]);
+    try {
+      var st = db.transaction(STORE, "readonly").objectStore(STORE);
+      if (st.getAllKeys) {
+        var rq = st.getAllKeys();
+        rq.onsuccess = function(){ res(rq.result || []); };
+        rq.onerror = function(){ res([]); };
+      } else {                       // 古い環境向け
+        var out2 = [];
+        var cur = st.openCursor();
+        cur.onsuccess = function(e){
+          var c = e.target.result;
+          if (!c) return res(out2);
+          out2.push(c.key); c["continue"]();
+        };
+        cur.onerror = function(){ res([]); };
+      }
+    } catch (e) { res([]); }
+  });
+}
+
+/* ===== 迷子ページの復元 =====
+   同期の行き違いで索引(ページ一覧)から外れても、ページ本体は端末やクラウドに
+   残っていることが多い。それを探して一覧に戻す。 */
+function findOrphanPages() {
+  var known = {};
+  pages.forEach(function(p){ known[String(p.id)] = true; });
+  var found = [];
+  return kvKeys().then(function(keys){
+    for (var i = 0; i < keys.length; i++) {
+      var k = String(keys[i]);
+      if (k.indexOf("page_") !== 0) continue;
+      var id = k.slice(5);
+      if (known[id]) continue;
+      if (isDeleted(isNaN(+id) ? id : +id)) continue;   // 自分で消したものは戻さない
+      found.push(isNaN(+id) ? id : +id);
+    }
+    return found;
+  });
+}
+function findOrphanPagesCloud() {
+  var u = cloudUser();
+  if (!u) return Promise.resolve([]);
+  var known = {};
+  pages.forEach(function(p){ known[String(p.id)] = true; });
+  return fdb().collection("users").doc(u.uid).collection("pages").get()
+    .then(function(qs){
+      var out = [];
+      qs.forEach(function(d){
+        var id = d.id;
+        if (known[id]) return;
+        if (isDeleted(isNaN(+id) ? id : +id)) return;
+        out.push(isNaN(+id) ? id : +id);
+      });
+      return out;
+    }).catch(function(){ return []; });
+}
+function recoverLostPages() {
+  statusEl.textContent = "失われたページを探しています…";
+  var restored = 0;
+  return findOrphanPages().then(function(localIds){
+    return findOrphanPagesCloud().then(function(cloudIds){
+      var all = {}, list = [];
+      localIds.concat(cloudIds).forEach(function(id){
+        if (!all[String(id)]) { all[String(id)] = true; list.push(id); }
+      });
+      var chain = Promise.resolve();
+      list.forEach(function(id){
+        chain = chain.then(function(){
+          // まずクラウドから取り直す(端末に無い場合や、古い場合に備えて)
+          return pullAndStore(id).catch(function(){}).then(function(){
+            return kvGet("page_" + id);
+          }).then(function(rec){
+            if (!rec || !rec.json) return;
+            var cnt = 0;
+            try { cnt = (JSON.parse(rec.json) || []).length; } catch (e) {}
+            if (!cnt) return;                       // 中身が空なら戻さない
+            pages.push({ id: id, title: "復元したページ " + (restored + 1),
+                         ts: rec.ts || Date.now() });
+            restored++;
+          });
+        });
+      });
+      return chain;
+    });
+  }).then(function(){
+    if (!restored) { statusEl.textContent = "復元できるページは見つかりませんでした"; return 0; }
+    pages.sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); });
+    return saveIndex().then(function(){
+      if (cloudUser()) return cloudPushIndex().catch(function(){});
+    }).then(function(){
+      renderPageList();
+      updatePageBtn();
+      statusEl.textContent = restored + "件のページを復元しました";
+      return restored;
+    });
+  }).catch(function(){
+    statusEl.textContent = "復元中にエラーが起きました";
+    return 0;
   });
 }
 
@@ -7847,6 +8013,17 @@ $("#ctxCrop").onclick = function(){
   var s1 = (sel.length === 1) ? sel[0] : null;
   if (s1 && s1.type === "image") openCropForObject(s1);
 };
+$("#findLost").onclick = function(){
+  showSheet("消えたページを探す", [
+    { label: "🔍 端末とクラウドから探して復元", fn: function(){
+        closePages && closePages();
+        recoverLostPages().then(function(n){
+          if (n) setTimeout(function(){ openPages(); }, 400);
+        });
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
+};
 $("#pasteChip").onclick = pasteFromClipboard;
 
 /* PC: Ctrl+C / Ctrl+V(テキスト編集中はブラウザ標準に任せる) */
@@ -8115,12 +8292,55 @@ function cloudDeletePage(id) {
     return batch.commit();
   }).catch(function(){});
 }
+/* ★クラウドの一覧を「上書き」ではなく「統合」して書き戻す。
+   以前は自分の一覧で丸ごと上書きしていたため、
+   その端末がまだ知らない他端末の新しいページが消えてしまっていた。
+   (例: PCで何かを保存した瞬間、スマホで作ったページがクラウドから消える) */
 function cloudPushIndex() {
   var u = cloudUser();
   if (!u) return Promise.resolve();
-  return fdb().collection("users").doc(u.uid).collection("meta").doc("index")
-    .set({ pages: pages, currentId: currentId, deleted: deletedIds,
-           folders: folders, updatedAt: Date.now() });
+  var ref = fdb().collection("users").doc(u.uid).collection("meta").doc("index");
+  return ref.get().then(function(snap){
+    var remotePages = (snap.exists && snap.data().pages) || [];
+    var remoteDeleted = (snap.exists && snap.data().deleted) || [];
+    var remoteFolders = (snap.exists && snap.data().folders) || [];
+
+    // 削除の墓標は両方の和集合(消したものが復活しないように)
+    var delAll = mergeDeleted(remoteDeleted);
+    deletedIds = delAll;
+
+    // ページは id で突き合わせ、新しい方(ts)を採用。片方にしかない物は残す。
+    var byId = {}, order = [];
+    function put(p, fromLocal) {
+      if (!p || p.id == null) return;
+      var k = String(p.id);
+      if (isDeleted(p.id)) return;                    // 明示的に消したものは戻さない
+      var prev = byId[k];
+      if (!prev) { byId[k] = p; order.push(k); return; }
+      if ((p.ts || 0) > (prev.ts || 0)) byId[k] = p;  // 新しい方を採用
+    }
+    pages.forEach(function(p){ put(p, true); });      // 自分の並び順を優先
+    remotePages.forEach(function(p){ put(p, false); });
+
+    var merged = [];
+    for (var i = 0; i < order.length; i++) merged.push(byId[order[i]]);
+
+    // フォルダも和集合
+    var fset = {}, folderList = [];
+    (folders || []).concat(remoteFolders || []).forEach(function(f){
+      if (f && !fset[f]) { fset[f] = true; folderList.push(f); }
+    });
+
+    // 自分の手元にも反映しておく(他端末の新着がすぐ一覧に出る)
+    var grew = (merged.length !== pages.length);
+    pages = merged;
+    folders = folderList;
+    if (grew) { try { renderPageList(); updatePageBtn(); } catch (e) {} }
+
+    return ref.set({ pages: merged, currentId: currentId, deleted: delAll,
+                     folders: folderList, updatedAt: Date.now() })
+      .then(function(){ return saveIndex(); });
+  });
 }
 function scheduleCloudPush(id) {
   if (!cloudUser()) return;
