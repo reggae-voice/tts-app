@@ -513,9 +513,14 @@
     box-shadow:0 4px 16px rgba(15,18,24,.35);gap:2px;
   }
   /* その他のボタンは ⋯ を押したときだけ出す(常時は3つだけで邪魔にならない) */
-  #ctxExtra{display:none;gap:2px}
-  #ctxbar.expanded #ctxExtra{display:inline-flex}
-  #ctxbar.expanded #ctxMore{background:rgba(255,255,255,.16)}
+  /* 絵文字の横並びは分かりにくいので出さない。
+     処理の入口としてだけ残し、⋯からは文字ラベルのメニューを開く */
+  #ctxExtra{display:none !important}
+  /* 常時見えるボタンは、絵文字の下に小さく用途を書く */
+  #ctxbar > button{display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:1px;min-width:46px;line-height:1.1}
+  #ctxbar .ci{font-size:15px}
+  #ctxbar .cl{font-size:9.5px;font-weight:700;opacity:.75;letter-spacing:.2px}
   #ctxLock.locked-on{background:rgba(255,200,80,.22)}
   #tocPanel{
     position:fixed;left:50%;transform:translateX(-50%) translateY(120%);
@@ -899,7 +904,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v16.1">InkNote <small>v16.1</small></div>
+  <div class="brand" title="InkNote v16.7">InkNote <small>v16.7</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -942,7 +947,8 @@ window.onerror = function(msg, src, line){
   <div class="prow">
     <span class="plabel">モード</span>
     <button class="stybtn ls-mode sel" data-m="select">選択</button>
-    <button class="stybtn ls-mode" data-m="shot">📋 コピー</button>
+    <button class="stybtn ls-mode" data-m="dup">⧉ 複製</button>
+    <button class="stybtn ls-mode" data-m="shot">📋 他アプリへ</button>
     <button class="stybtn ls-mode" data-m="save">💾 保存</button>
     <button class="stybtn ls-mode" data-m="cut">✂ カッター</button>
   </div>
@@ -1076,11 +1082,11 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="ctxbar">
-  <button id="ctxEdit" title="編集">✎</button>
-  <button id="ctxStyle" title="スタイル">Aa</button>
-  <button id="ctxLock" title="ロック/解除">🔓</button>
-  <button id="ctxDel" class="del" title="削除">🗑</button>
-  <button id="ctxMore" title="その他">⋯</button>
+  <button id="ctxEdit" title="編集"><span class="ci">✎</span><span class="cl">編集</span></button>
+  <button id="ctxStyle" title="見た目"><span class="ci">Aa</span><span class="cl">見た目</span></button>
+  <button id="ctxLock" title="ロック"><span class="ci">🔓</span><span class="cl">ロック</span></button>
+  <button id="ctxDel" class="del" title="削除"><span class="ci">🗑</span><span class="cl">削除</span></button>
+  <button id="ctxMore" title="その他"><span class="ci">⋯</span><span class="cl">その他</span></button>
   <span id="ctxExtra">
     <button id="ctxCopy" title="画像としてコピー">📋</button>
     <button id="ctxSave" title="画像として保存">💾</button>
@@ -1090,6 +1096,7 @@ window.onerror = function(msg, src, line){
     <button id="ctxStraighten" title="手書き線を直線化">📏</button>
     <button id="ctxShapify" title="手書きを図形に補正(丸・四角・直線)">🔷</button>
     <button id="ctxTidy" title="位置をそろえる">📐</button>
+    <button id="ctxMath" title="数式にする/編集する">∑</button>
     <button id="ctxCrop" title="トリミング">✂</button>
     <button id="ctxDup" title="複製">⧉</button>
     <button id="ctxFront" title="前面へ">⬆</button>
@@ -1294,6 +1301,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
       <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
     </div>
+    <div class="st-row"><span class="st-label">数式</span>
+      <button class="stybtn" id="mathAddBtn">∑ 数式を追加</button>
+      <span style="color:var(--ui-dim);font-size:11px">分数・指数をきれいに組んで貼る</span>
+    </div>
     <div class="st-row"><span class="st-label">目次</span>
       <button class="stybtn" id="tocOpenBtn">🔖 目次を開く</button>
       <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
@@ -1386,7 +1397,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "16.1";
+var APP_VERSION = "16.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2196,7 +2207,12 @@ function updateSelUI() {
     if (sel[hs].type === "stroke") { hasStroke = true; break; }
   var isImage = (s1 && s1.type === "image");
   var allLocked = sel.length > 0 && sel.every(function(o){ return o.locked; });
-  $("#ctxLock").textContent = allLocked ? "🔒" : "🔓";
+  // 絵文字とラベルを別々に更新する(textContentごと書き換えるとラベルが消える)
+  var lkIc = $("#ctxLock").querySelector(".ci");
+  var lkLb = $("#ctxLock").querySelector(".cl");
+  if (lkIc) lkIc.textContent = allLocked ? "🔒" : "🔓";
+  else $("#ctxLock").textContent = allLocked ? "🔒" : "🔓";
+  if (lkLb) lkLb.textContent = allLocked ? "解除" : "ロック";
   $("#ctxLock").classList.toggle("locked-on", allLocked);
   $("#ctxEdit").style.display = (!allLocked && (isText || isShape)) ? "" : "none";
   $("#ctxStyle").style.display = (!allLocked && (isText || isShape || hasStroke)) ? "" : "none";
@@ -2204,6 +2220,10 @@ function updateSelUI() {
   $("#ctxStraighten").style.display = (!allLocked && hasStroke) ? "" : "none";
   $("#ctxShapify").style.display = (!allLocked && hasStroke) ? "" : "none";
   $("#ctxTidy").style.display = (!allLocked && sel.length >= 2) ? "" : "none";
+  // 数式: テキストを選んでいる時(数式にする) / 数式を選んでいる時(編集する)
+  var mathOK = (!allLocked && sel.length === 1 &&
+                (sel[0].type === "text" || (sel[0].type === "image" && sel[0].latex)));
+  $("#ctxMath").style.display = mathOK ? "" : "none";
   $("#ctxDel").style.display = allLocked ? "none" : "";
   $("#ctxDup").style.display = allLocked ? "none" : "";
   $("#ctxFront").style.display = allLocked ? "none" : "";
@@ -2266,6 +2286,22 @@ function rebuildScene(json) {
   }
   setSelection([]);
   inkDirty = true;
+  // ★文字の実寸が出てからマーカーの位置を合わせ直す。
+  //   端末ごとにフォントが違い、行の折り返しや高さが変わるため、
+  //   これをしないと「引いた位置とズレる」ことになる。
+  setTimeout(function(){
+    refreshMeasures();
+    if (realignHighlighters()) scheduleSave();
+  }, 60);
+  // 端末によってはフォントの読み込みが遅れるので、もう一度合わせる
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function(){
+      setTimeout(function(){
+        refreshMeasures();
+        if (realignHighlighters()) scheduleSave();
+      }, 30);
+    }).catch(function(){});
+  }
 }
 function pushSnapshot(snap) {
   undoStack.push(snap);
@@ -2490,10 +2526,12 @@ document.addEventListener("gesturestart", function(e){ e.preventDefault(); });
 /* =========================================================
    テキストオブジェクト(DOM)
 ========================================================= */
+/* 端末ごとに使えるフォントが違うと、折り返しや行の高さが変わって
+   マーカーとの位置関係がズレる。差が小さい組み合わせを同じ順で並べる。 */
 var FONT_MAP = {
-  sans: '-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",sans-serif',
-  serif: '"Hiragino Mincho ProN","Yu Mincho","MS PMincho",serif',
-  mono: '"SF Mono",Menlo,"Courier New",monospace'
+  sans: '"Hiragino Sans","Noto Sans JP","Noto Sans CJK JP","Yu Gothic UI","Yu Gothic","Meiryo",sans-serif',
+  serif: '"Hiragino Mincho ProN","Noto Serif JP","Noto Serif CJK JP","Yu Mincho","MS PMincho",serif',
+  mono: '"SF Mono","Roboto Mono",Menlo,Consolas,"Courier New",monospace'
 };
 function applyTextStyle(o) {
   var el = o.el;
@@ -2984,6 +3022,7 @@ function commitText() {
     return;
   }
   measureObj(o);               // 確定後の実寸を記録(以後は測り直さない)
+  realignHighlighters();       // 行が増減したらマーカーも追従させる
   switchTool("select");
   // ★確定後は選択を外す: 「書き終わってスクロールしたいのにBOXが動く」を防ぐ。
   //   移動したい時はもう1タップで選択してから(誤移動防止と同じ流儀)。
@@ -3193,6 +3232,63 @@ function attachObjHandlers(o) {
 /* テキストの上に引かれた蛍光ペンを列挙する(移動時に連れて行くため)。
    判定: 蛍光ペンの線のBBoxが、テキストBOXに6割以上重なっていること。
    通常のペン線は対象外(独立した書き込みかもしれないので動かさない)。 */
+/* この蛍光ペンが乗っている文字を探す(中心が文字の枠の中にあるもの) */
+function textUnderHighlighter(o) {
+  var b = objBBox(o);
+  var cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  var best = null, bestArea = Infinity;
+  for (var i = 0; i < objects.length; i++) {
+    var t2 = objects[i];
+    if (t2.type !== "text" || !String(t2.text || "").trim()) continue;
+    var tb = objBBox(t2);
+    if (cx < tb.x || cx > tb.x + tb.w || cy < tb.y || cy > tb.y + tb.h) continue;
+    var area = tb.w * tb.h;
+    if (area < bestArea) { best = t2; bestArea = area; }
+  }
+  return best;
+}
+/* 描いた時点の「文字の枠」を覚えておく。
+   ★端末によってフォントが違い、折り返しや行の高さが変わるため、
+     文字だけが動いてマーカーが別の行に乗ってしまう。これを防ぐ目印。 */
+function tagHighlighter(o) {
+  if (!o || o.type !== "stroke" || !o.highlighter) return;
+  var t2 = textUnderHighlighter(o);
+  if (!t2) { o.hlRef = null; return; }
+  var tb = objBBox(t2);
+  o.hlRef = { id: t2.id, x: tb.x, y: tb.y, w: tb.w, h: tb.h };
+}
+/* 文字の枠が変わっていたら、マーカーを同じ相対位置へ動かし直す。
+   ページを開いた時・文字を編集した後に呼ぶ。 */
+function realignHighlighters() {
+  var moved = 0;
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "stroke" || !o.highlighter || !o.hlRef) continue;
+    var t2 = null;
+    for (var j = 0; j < objects.length; j++)
+      if (objects[j].type === "text" && objects[j].id === o.hlRef.id) { t2 = objects[j]; break; }
+    if (!t2) continue;
+    var tb = objBBox(t2);
+    var ref = o.hlRef;
+    if (!(ref.h > 0) || !(ref.w > 0)) { o.hlRef = { id: ref.id, x: tb.x, y: tb.y, w: tb.w, h: tb.h }; continue; }
+    var dx = tb.x - ref.x;
+    var sy = tb.h / ref.h;                 // 行数が変わった分だけ縦に伸縮
+    var sx = tb.w / ref.w;
+    // ほとんど同じなら何もしない(無駄な書き換えを避ける)
+    if (Math.abs(dx) < 0.5 && Math.abs(tb.y - ref.y) < 0.5 &&
+        Math.abs(sy - 1) < 0.01 && Math.abs(sx - 1) < 0.01) continue;
+    for (var k = 0; k < o.points.length; k++) {
+      var p = o.points[k];
+      p.x = tb.x + (p.x - ref.x) * sx;
+      p.y = tb.y + (p.y - ref.y) * sy;
+    }
+    o.hlRef = { id: ref.id, x: tb.x, y: tb.y, w: tb.w, h: tb.h };
+    moved++;
+  }
+  if (moved) inkDirty = true;
+  return moved;
+}
+
 function linkedHighlighters(textObj) {
   if (!textObj || textObj.type !== "text") return [];
   var tb = objBBox(textObj);
@@ -3729,6 +3825,7 @@ capture.addEventListener("pointerdown", function(e){
         if (!activeStroke) return;
         pushUndo();
         objects.push(activeStroke);
+        if (activeStroke.highlighter) tagHighlighter(activeStroke);   // 乗った文字を覚える
         activeStroke = null;
         inkDirty = true;
       }
@@ -4271,6 +4368,50 @@ minimapEl.addEventListener("pointerdown", function(e){
 
 /* ---------- 投げ縄: 囲んだ範囲を画像にする ----------
    dest = "clipboard" → クリップボードへコピー / "file" → PNGとして保存 */
+/* 囲んだものをこのノート内に複製する(少しずらして置き、そのまま掴める) */
+function performLassoDup(path) {
+  var picked = objects.filter(function(o){
+    if (o.type === "stroke") {
+      var n = 0;
+      for (var i = 0; i < o.points.length; i++)
+        if (pointInPoly(o.points[i].x, o.points[i].y, path)) n++;
+      return n >= o.points.length * 0.5;
+    }
+    var b = objBBox(o);
+    return pointInPoly(b.x + b.w / 2, b.y + b.h / 2, path);
+  });
+  if (!picked.length) { statusEl.textContent = "囲んだ中に複製できるものがありません"; return; }
+  pushUndo();
+  var DX = 24, DY = 24;
+  var made = [];
+  for (var k = 0; k < picked.length; k++) {
+    var o = picked[k];
+    var copy = JSON.parse(JSON.stringify(o, function(key, v){
+      return (key === "el" || key === "img" || key.charAt(0) === "_") ? undefined : v;
+    }));
+    copy.id = idSeq++;
+    copy.anch = null;                       // 目次の印は複製しない(同名が並ぶのを防ぐ)
+    if (copy.type === "stroke") {
+      for (var p = 0; p < copy.points.length; p++) { copy.points[p].x += DX; copy.points[p].y += DY; }
+    } else if (copy.type === "shape") {
+      copy.x1 += DX; copy.y1 += DY; copy.x2 += DX; copy.y2 += DY;
+    } else {
+      copy.x += DX; copy.y += DY;
+    }
+    objects.push(copy);
+    if (copy.type === "text") makeTextEl(copy);
+    else if (copy.type === "image") makeImageEl(copy);
+    made.push(copy);
+  }
+  inkDirty = true;
+  refreshMeasures();
+  switchTool("select");
+  setSelection(made);
+  scheduleSave();
+  setTimeout(function(){
+    statusEl.textContent = made.length + "個を複製しました(そのまま動かせます)";
+  }, 40);
+}
 function performLassoShot(path, dest) {
   var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
   for (var i = 0; i < path.length; i++) {
@@ -4297,16 +4438,24 @@ function saveCanvasPNG(c, name) {
 }
 /* 画像をクリップボードへコピー(非対応時は理由を案内し、保存を促す) */
 function copyCanvasToClipboard(c) {
+  // iPad等ではコピーが拒否されることがあるので、その場で保存に切り替えられるようにする
+  var offerSave = function(why){
+    statusEl.textContent = why;
+    showSheet("画像コピーができませんでした", [
+      { label: "💾 画像として保存する", fn: function(){ saveCanvasPNG(c, "inknote_shot"); } },
+      { label: "キャンセル", cancel: true }
+    ]);
+  };
   if (!navigator.clipboard || !window.ClipboardItem || !c.toBlob) {
-    statusEl.textContent = "この環境ではコピー不可(https必須)。💾保存をお使いください";
+    offerSave("この環境では画像コピーに対応していません");
     return;
   }
   c.toBlob(function(blob){
-    if (!blob) { statusEl.textContent = "コピーできませんでした"; return; }
+    if (!blob) { offerSave("画像を作れませんでした"); return; }
     navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]).then(function(){
-      statusEl.textContent = "📋 クリップボードにコピーしました(貼り付け可)";
+      statusEl.textContent = "📋 コピーしました(他のアプリで貼り付けできます)";
     }).catch(function(){
-      statusEl.textContent = "コピーを拒否されました。💾保存をお使いください";
+      offerSave("端末にコピーを拒否されました");
     });
   }, "image/png");
 }
@@ -4384,6 +4533,7 @@ function finishLasso() {
   inkDirty = true;
   if (!path || path.length < 3) return;
   if (lassoMode === "cut") { performLassoCut(path); return; }
+  if (lassoMode === "dup") { performLassoDup(path); return; }
   if (lassoMode === "shot") { performLassoShot(path, "clipboard"); return; }
   if (lassoMode === "save") { performLassoShot(path, "file"); return; }
   var picked = objects.filter(function(o){
@@ -4855,9 +5005,10 @@ $("#penAutoBtn").onclick = function(){
 };
 syncDynUI();
 var LS_HINT = {
-  select: "選択: 囲んだものを掴む(移動・複製・削除)",
-  shot:   "コピー: 囲んだ範囲をクリップボードへ(他アプリに貼り付け)",
-  save:   "保存: 囲んだ範囲をPNG画像としてダウンロード",
+  select: "選択: 囲んだものを掴む(移動・削除・複製)",
+  dup:    "複製: 囲んだものをこのノート内に複製(そのまま動かせます)",
+  shot:   "他アプリへ: 囲んだ範囲を画像でコピー(このノートには貼れません)",
+  save:   "保存: 囲んだ範囲をPNG画像として端末に保存",
   cut:    "カッター: 囲んだ境界で手書き線を2つに分割(内側が選択されます)"
 };
 (function(){
@@ -7481,9 +7632,14 @@ function collectPageText() {
     for (var j = 0; j < list.length; j++) {
       var o = list[j];
       var isText = (o.type === "text" && o.text && String(o.text).trim());
-      if (!isText && !o.anch) continue;          // 印のない手書き・画像は本文に出さない
+      var isMath = (o.type === "image" && o.latex);      // 組版した数式
+      if (!isText && !isMath && !o.anch) continue;       // 印のない手書き・画像は本文に出さない
       var b = objBBox(o);
-      var body = isText ? String(o.text).replace(/\s+$/, "") : "";
+      var body = "";
+      if (isText) body = String(o.text).replace(/\s+$/, "");
+      // ★数式はLaTeXのまま書き出す($$で囲む)。
+      //   こうしておけば貼り直した時に組版に戻せるし、NotebookLM等も数式として読める。
+      else if (isMath) body = "$$" + String(o.latex).trim() + "$$";
       // 目次の印が付いたものは見出し(##)として書き出す → NotebookLMで構造が効く
       var t2 = o.anch ? ("## " + String(o.anch) + (body ? "\n\n" + body : "")) : body;
       texts.push({ y: b.y, x: b.x, t: t2 });
@@ -7532,7 +7688,8 @@ function exportMarkdown() {
 }
 /* 学習用プロンプト付きコピー: NotebookLM/Claudeに貼るだけでクイズ生成できる形 */
 var STUDY_PROMPT =
-  "以下は私の学習ノートです。この内容から試験対策用の問題を作成してください。\n" +
+  "以下は私の学習ノートです(数式は $$...$$ のLaTeX表記)。" +
+  "この内容から試験対策用の問題を作成してください。\n" +
   "- 五肢択一問題を5問(正答と、各選択肢が正しい/誤りの理由つき)\n" +
   "- 重要用語の穴埋め問題を5問\n" +
   "- 最後に、ノートの内容で誤解しやすいポイントを3つ指摘\n" +
@@ -7821,6 +7978,260 @@ function copySelection() {
     }, "image/png");
   } catch (e) { copyFallbackDownload(c); }
 }
+/* =========================================================
+   数式(LaTeX)を組版して貼る
+   MathJaxのSVG出力を使う。SVGは字の形を線で持つのでフォントに依存せず、
+   一度貼れば端末が変わっても・オフラインでも同じ見た目で表示・印刷できる。
+========================================================= */
+var mathReady = null;
+function loadMathJax() {
+  if (window.MathJax && window.MathJax.tex2svgPromise) return Promise.resolve();
+  if (mathReady) return mathReady;
+  window.MathJax = {
+    loader: { load: ["input/tex", "output/svg"] },
+    tex: { inlineMath: [["\\(", "\\)"]], displayMath: [["$$", "$$"], ["\\[", "\\]"]] },
+    svg: { fontCache: "local" },        // 1枚のSVGで完結させる(貼った後は外部不要)
+    startup: { typeset: false }
+  };
+  mathReady = loadScriptUrl("https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js")
+    .then(function(){
+      if (window.MathJax && window.MathJax.startup && window.MathJax.startup.promise)
+        return window.MathJax.startup.promise;
+    });
+  return mathReady;
+}
+/* 入力からLaTeXの本体を取り出す($ や \( \) を外す) */
+function stripMathDelims(s) {
+  s = String(s || "").trim();
+  s = s.replace(/^\$\$([\s\S]*)\$\$$/, "$1");
+  s = s.replace(/^\$([\s\S]*)\$$/, "$1");
+  s = s.replace(/^\\\(([\s\S]*)\\\)$/, "$1");
+  s = s.replace(/^\\\[([\s\S]*)\\\]$/, "$1");
+  return s.trim();
+}
+/* LaTeX → SVGのデータURL。太さと色は今のテーマに合わせる */
+function renderLatexToImage(latex, px) {
+  return loadMathJax().then(function(){
+    var node = window.MathJax.tex2svg(latex, { display: true });
+    var svg = node.querySelector("svg");
+    if (!svg) throw new Error("render failed");
+    // 文字色をノートのペン色に合わせる
+    var pen = (THEMES[themeName] || THEMES.cream).pen;
+    svg.setAttribute("color", pen);
+    svg.style.color = pen;
+    // exの単位を実寸に直す(1ex ≒ フォントサイズの約0.45倍)
+    var fs = px || 26;
+    var exToPx = fs * 0.45;
+    function toPx(v) {
+      var m = /^([\d.\-]+)(ex|em|px)?$/.exec(String(v || "").trim());
+      if (!m) return 0;
+      var n = parseFloat(m[1]);
+      if (m[2] === "em") return n * fs;
+      if (m[2] === "px") return n;
+      return n * exToPx;
+    }
+    var w = toPx(svg.getAttribute("width"));
+    var h = toPx(svg.getAttribute("height"));
+    if (!w || !h) { w = 200; h = 60; }
+    svg.setAttribute("width", w);
+    svg.setAttribute("height", h);
+    var xml = new XMLSerializer().serializeToString(svg);
+    if (xml.indexOf("xmlns=") === -1)
+      xml = xml.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
+    var url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(xml);
+    return { src: url, w: w, h: h };
+  });
+}
+/* 数式を貼る(既存の数式を選んでいれば差し替え) */
+function insertFormula(latex, replaceObj) {
+  latex = stripMathDelims(latex);
+  if (!latex) return;
+  statusEl.textContent = "数式を組み立てています…";
+  renderLatexToImage(latex, 26).then(function(r){
+    pushUndo();
+    if (replaceObj) {
+      replaceObj.src = r.src;
+      replaceObj.w = r.w; replaceObj.h = r.h;
+      replaceObj._mw = r.w; replaceObj._mh = r.h;
+      replaceObj.latex = latex;
+      if (replaceObj.el) {
+        var im = replaceObj.el.querySelector("img") || replaceObj.el;
+        if (im.tagName === "IMG") im.src = r.src;
+        replaceObj.el.style.width = r.w + "px";
+        replaceObj.el.style.height = r.h + "px";
+      }
+      setSelection([replaceObj]);
+    } else {
+      var cw = toWorld(innerWidth / 2, innerHeight / 2);
+      var o = { id: idSeq++, type: "image", x: cw.x - r.w / 2, y: cw.y - r.h / 2,
+                w: r.w, h: r.h, _mw: r.w, _mh: r.h, src: r.src, latex: latex };
+      objects.push(o);
+      makeImageEl(o);
+      clampToSheet(o);
+      switchTool("select");
+      setSelection([o]);
+    }
+    inkDirty = true;
+    scheduleSave();
+    setTimeout(function(){ statusEl.textContent = "数式を貼りました(⋯→∑ で編集)"; }, 40);
+  }).catch(function(){
+    // 組版できない時(通信が無いなど)は、これまでどおり読める文字にして貼る
+    statusEl.textContent = "数式の組版ができないため、文字として貼ります";
+    setTimeout(function(){ insertTextAtCenter(latex); }, 300);
+  });
+}
+/* 組版した数式を、読める文字に戻す(元のLaTeXから整形) */
+function formulaToText(o) {
+  if (!o || !o.latex) return;
+  var txt = cleanPastedText("$" + o.latex + "$");
+  pushUndo();
+  var b = objBBox(o);
+  var t2 = { id: idSeq++, type: "text", x: b.x, y: b.y, w: Math.max(160, b.w),
+             text: txt, fontSize: 20,
+             color: (THEMES[themeName] || THEMES.cream).pen };
+  if (o.grp != null) t2.grp = o.grp;
+  if (o.anch) t2.anch = o.anch;
+  if (o.opacity != null) t2.opacity = o.opacity;
+  var i = objects.indexOf(o);
+  if (i !== -1) objects.splice(i, 1, t2);           // 同じ位置に置き換え(重なり順を保つ)
+  else objects.push(t2);
+  if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+  makeTextEl(t2);
+  measureObj(t2);
+  inkDirty = true;
+  setSelection([t2]);
+  scheduleSave();
+  setTimeout(function(){ statusEl.textContent = "文字に戻しました(⋯→∑ で数式に戻せます)"; }, 40);
+}
+/* 数式を選んでいる時の選択肢 */
+function openFormulaMenu(o) {
+  showSheet("数式", [
+    { label: "✎ 式を編集する", fn: function(){ openFormulaInput(); } },
+    { label: "🔤 文字に戻す", fn: function(){ formulaToText(o); } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+/* 数式の入力を開く。テキストや既存の数式を選んでいればその中身を初期値に */
+function openFormulaInput() {
+  var target = null, def = "";
+  if (sel.length === 1) {
+    if (sel[0].type === "image" && sel[0].latex) { target = sel[0]; def = sel[0].latex; }
+    else if (sel[0].type === "text") def = String(sel[0].text || "");
+  }
+  askText("数式(LaTeX)を入力", def, function(v){
+    if (v == null || !String(v).trim()) return;
+    // テキストを選んで数式にした場合は、元のテキストを消す
+    var src2 = (sel.length === 1 && sel[0].type === "text" && !target) ? sel[0] : null;
+    insertFormula(v, target);
+    if (src2) {
+      var i = objects.indexOf(src2);
+      if (i !== -1) {
+        objects.splice(i, 1);
+        if (src2.el && src2.el.parentNode) src2.el.parentNode.removeChild(src2.el);
+      }
+    }
+  });
+}
+/* ===== 貼り付けた文章を「文章 + 組版した数式」に分けて置く =====
+   文章はテキストのまま、組版しないと読みにくい式(分数・根号・総和など)だけを
+   図として組み、上から順に並べる。写真のような見た目を保つのが狙い。 */
+
+/* 数式の区切り($...$, $$...$$, \(...\), \[...\])で切り分ける */
+function splitMathBlocks(s) {
+  var out = [];
+  var re = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^\$\n]+?)\$/g;
+  var pos = 0, m;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index > pos) out.push({ t: "text", s: s.slice(pos, m.index) });
+    var body = (m[1] != null) ? m[1] : (m[2] != null) ? m[2] : (m[3] != null) ? m[3] : m[4];
+    var display = (m[1] != null) || (m[2] != null);   // $$ と \[ \] は独立行の式
+    out.push({ t: "math", s: String(body || "").trim(), display: display });
+    pos = m.index + m[0].length;
+  }
+  if (pos < s.length) out.push({ t: "text", s: s.slice(pos) });
+  return out;
+}
+/* 組版しないと崩れる式か(分数・根号・総和・行列など) */
+function needsTypeset(latex) {
+  return /\\(d|t)?frac|\\sqrt|\\sum|\\int|\\prod|\\lim|\\binom|\\begin\{|\\over|\\substack|\\left|\\matrix/.test(latex);
+}
+/* 貼り付けを「文章」と「組版する式」に振り分けて、縦に並べて置く */
+function insertRichPaste(raw) {
+  var blocks = splitMathBlocks(String(raw || ""));
+  // 組版が必要な式が無ければ、これまでどおり1つのテキストとして置く
+  var hasMath = blocks.some(function(b){ return b.t === "math" && needsTypeset(b.s); });
+  if (!hasMath) { insertTextAtCenter(raw); return; }
+
+  // 文章と式のかたまりに整理する(組版不要の式は文章に溶かす)
+  var parts = [], buf = "";
+  function flush() {
+    var s = buf.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (s) parts.push({ t: "text", s: s });
+    buf = "";
+  }
+  blocks.forEach(function(b){
+    if (b.t === "text") { buf += b.s; return; }
+    if (!needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }   // 後で文字整形される
+    flush();
+    parts.push({ t: "math", s: b.s });
+  });
+  flush();
+
+  statusEl.textContent = "数式を組み立てています…";
+  var W = 460;                                   // 置く幅の目安
+  var start = toWorld(innerWidth / 2, innerHeight / 2);
+  var made = [], y = start.y, left = start.x - W / 2;
+  var chain = Promise.resolve();
+
+  parts.forEach(function(p){
+    chain = chain.then(function(){
+      if (p.t === "text") {
+        var txt = cleanPastedText(p.s);
+        if (!txt.trim()) return;
+        var o = { id: idSeq++, type: "text", x: left, y: y, w: W,
+                  text: txt, fontSize: 20,
+                  color: (THEMES[themeName] || THEMES.cream).pen };
+        objects.push(o); makeTextEl(o); made.push(o);
+        measureObj(o);
+        var b = objBBox(o);
+        y += Math.max(28, b.h) + 12;
+        return;
+      }
+      return renderLatexToImage(p.s, 26).then(function(r){
+        var o2 = { id: idSeq++, type: "image",
+                   x: left + (W - r.w) / 2,       // 式は中央に置く
+                   y: y, w: r.w, h: r.h, _mw: r.w, _mh: r.h,
+                   src: r.src, latex: p.s };
+        objects.push(o2); makeImageEl(o2); made.push(o2);
+        y += r.h + 16;
+      }).catch(function(){
+        // 組版できない時は読める文字にして続ける
+        var t2 = cleanPastedText("$" + p.s + "$");
+        var o3 = { id: idSeq++, type: "text", x: left, y: y, w: W,
+                   text: t2, fontSize: 20,
+                   color: (THEMES[themeName] || THEMES.cream).pen };
+        objects.push(o3); makeTextEl(o3); made.push(o3);
+        measureObj(o3);
+        y += Math.max(28, objBBox(o3).h) + 12;
+      });
+    });
+  });
+
+  pushUndo();
+  chain.then(function(){
+    if (!made.length) { statusEl.textContent = "貼り付ける内容がありませんでした"; return; }
+    inkDirty = true;
+    refreshMeasures();
+    switchTool("select");
+    setSelection(made);
+    for (var i = 0; i < made.length; i++) clampToSheet(made[i]);
+    scheduleSave();
+    var nMath = made.filter(function(o){ return o.latex; }).length;
+    setTimeout(function(){
+      statusEl.textContent = "貼り付けました(数式 " + nMath + "個を組版 / まとめて選択中)";
+    }, 40);
+  });
+}
 function insertTextAtCenter(txt) {
   txt = cleanPastedText(txt);      // LaTeX/Markdownを整形してから配置
   var cwp = toWorld(innerWidth / 2, innerHeight / 2);
@@ -7901,7 +8312,7 @@ function commitPasteCatcher() {
   if (area) { area.innerHTML = ""; area.textContent = ""; }
   closePasteCatcher();
   if (!raw || !raw.trim()) { statusEl.textContent = "貼り付ける内容がありませんでした"; return; }
-  insertTextAtCenter(raw.trim());
+  insertRichPaste(raw.trim());
 }
 function pasteFromClipboard() {
   // 読み取りAPIが無い環境(iOS Safariの一部など)は最初から受け皿を出す
@@ -7925,7 +8336,7 @@ function pasteFromClipboard() {
           handled = true;
           chain = chain.then(function(){ return item.getType("text/plain"); })
             .then(function(b){ return b.text(); })
-            .then(function(txt){ if (txt && txt.trim()) insertTextAtCenter(txt.trim()); });
+            .then(function(txt){ if (txt && txt.trim()) insertRichPaste(txt.trim()); });
         }
       })(items[n]);
     }
@@ -7937,8 +8348,8 @@ function pasteFromClipboard() {
 }
 $("#ctxMore").onclick = function(e){
   e.stopPropagation();
-  ctxbar.classList.toggle("expanded");
-  updateSelUI();
+  updateSelUI();                 // 今の選択に応じて各ボタンの出す/出さないを決める
+  setTimeout(openMoreSheet, 0);  // その結果をもとに、文字で読めるメニューを出す
 };
 /* ===== 透明度(テキスト・図形・手書き・画像すべてに適用) ===== */
 function selOpacity() {
@@ -8019,7 +8430,77 @@ $("#ctxAnchor").onclick = function(e){ e.stopPropagation(); toggleAnchor(); };
 $("#ctxStraighten").onclick = function(e){ e.stopPropagation(); straightenSelection(); };
 $("#ctxShapify").onclick = function(e){ e.stopPropagation(); shapifySelection(); };
 $("#ctxTidy").onclick = function(e){ e.stopPropagation(); openTidySheet(); };
+/* ===== その他メニュー =====
+   絵文字だけの横並びは何のボタンか分からないので、文字ラベルの一覧にする。
+   実際の処理は今までのボタンをそのまま押す(機能は一つも減らさない)。 */
+function pressCtx(id) {
+  var b = $("#" + id);
+  if (b) b.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+function ctxVisible(id) {
+  var b = $("#" + id);
+  return b && b.style.display !== "none";
+}
+/* 手書きを整える(直線化と図形補正は目的が近いので1つにまとめる) */
+function openTuneSheet() {
+  showSheet("手書きを整える", [
+    { label: "📏 まっすぐな線にする", fn: function(){ pressCtx("ctxStraighten"); } },
+    { label: "🔷 図形にする(丸・四角・直線)", fn: function(){ pressCtx("ctxShapify"); } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+/* 画像として取り出す(コピーと保存をまとめる) */
+function openExportSelSheet() {
+  var items = [];
+  if (ctxVisible("ctxCopy")) items.push({ label: "📋 画像としてコピー", fn: function(){ pressCtx("ctxCopy"); } });
+  if (ctxVisible("ctxSave")) items.push({ label: "💾 画像として保存", fn: function(){ pressCtx("ctxSave"); } });
+  items.push({ label: "キャンセル", cancel: true });
+  showSheet("画像として取り出す", items);
+}
+function openMoreSheet() {
+  var items = [];
+  var one = (sel.length === 1) ? sel[0] : null;
+
+  // --- よく使う ---
+  if (ctxVisible("ctxDup")) items.push({ label: "⧉ 複製する", fn: function(){ pressCtx("ctxDup"); } });
+  if (ctxVisible("ctxFront")) items.push({ label: "⬆ いちばん前に出す", fn: function(){ pressCtx("ctxFront"); } });
+  if (ctxVisible("ctxOpa")) items.push({ label: "🌓 透明度を変える", fn: function(){ pressCtx("ctxOpa"); } });
+
+  // --- 内容を変える ---
+  if (ctxVisible("ctxCrop")) items.push({ label: "✂ 画像を切り抜く", fn: function(){ pressCtx("ctxCrop"); } });
+  if (ctxVisible("ctxMath")) {
+    items.push({ label: (one && one.latex) ? "∑ 数式を編集する / 文字に戻す"
+                                           : "∑ 数式にする(組版)",
+                 fn: function(){ pressCtx("ctxMath"); } });
+  }
+  // 直線化と図形補正はまとめて1項目に
+  if (ctxVisible("ctxStraighten") || ctxVisible("ctxShapify"))
+    items.push({ label: "✏️ 手書きを整える…", fn: openTuneSheet });
+
+  // --- 並べる・まとめる ---
+  if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
+  if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
+  if (ctxVisible("ctxAnchor"))
+    items.push({ label: (one && one.anch) ? ("🔖 目次「" + one.anch + "」を編集/外す")
+                                          : "🔖 目次に追加する",
+                 fn: function(){ pressCtx("ctxAnchor"); } });
+
+  // --- 取り出す ---
+  if (ctxVisible("ctxCopy") || ctxVisible("ctxSave"))
+    items.push({ label: "🖼 画像として取り出す…", fn: openExportSelSheet });
+
+  items.push({ label: "キャンセル", cancel: true });
+  showSheet(sel.length > 1 ? (sel.length + "個を選択中") : "この項目でできること", items);
+}
+
+$("#ctxMath").onclick = function(e){
+  e.stopPropagation();
+  // 数式を選んでいる時は「編集 / 文字に戻す」を選ばせる。テキストならそのまま数式化
+  if (sel.length === 1 && sel[0].type === "image" && sel[0].latex) openFormulaMenu(sel[0]);
+  else openFormulaInput();
+};
 $("#tocOpenBtn").onclick = function(){ closeMenu(); setTimeout(openToc, 80); };
+$("#mathAddBtn").onclick = function(){ closeMenu(); setTimeout(function(){ setSelection([]); openFormulaInput(); }, 120); };
 $("#tocShowToggle").onclick = function(){
   showAnchors = !showAnchors;
   this.classList.toggle("on", showAnchors);
@@ -8164,7 +8645,7 @@ document.addEventListener("paste", function(e){
   }
   if (!handled) {
     var txt = cd.getData("text/plain");
-    if (txt && txt.trim()) { insertTextAtCenter(txt.trim()); handled = true; }
+    if (txt && txt.trim()) { insertRichPaste(txt.trim()); handled = true; }
   }
   if (handled) e.preventDefault();
 });
