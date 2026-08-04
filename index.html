@@ -899,7 +899,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v15.9">InkNote <small>v15.9</small></div>
+  <div class="brand" title="InkNote v16.0">InkNote <small>v16.0</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1386,7 +1386,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "15.9";
+var APP_VERSION = "16.0";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5222,6 +5222,13 @@ function saveDoc() {
   var pg = findPage(currentId);
   if (pg) { pg.ts = Date.now(); saveIndex(); }
   scheduleThumb(pid);
+  // 節目(5分に1回)で控えを残す。事故があっても戻せるように
+  if (!window.__lastVer) window.__lastVer = {};
+  var lv = window.__lastVer[pid] || 0;
+  if (Date.now() - lv > 300000) {
+    window.__lastVer[pid] = Date.now();
+    keepVersion(pid, "自動");
+  }
 }
 /* ---- サムネイル: 保存が落ち着いたら小さなJPEGを作って残す(端末内のみ) ---- */
 var thumbTimer = null;
@@ -5806,9 +5813,82 @@ function renderFolderTabs() {
   });
   wrap.appendChild(plus);
 }
+/* サムネイルは端末内だけに残るので、同期で中身が上書きされても
+   「上書き前の見た目」が残っていることがある。それを画像として取り出す。 */
+function rescueThumb(pg) {
+  kvGet("thumb_" + pg.id).then(function(th){
+    if (!th || !th.png) { statusEl.textContent = "この端末にサムネの控えがありません"; return; }
+    var d = new Date(th.ts || 0);
+    showSheet("サムネの控え(" + (d.getMonth()+1) + "/" + d.getDate() + " " +
+              ("0"+d.getHours()).slice(-2) + ":" + ("0"+d.getMinutes()).slice(-2) + ")", [
+      { label: "🖼 画像として保存", fn: function(){
+          downloadURL(th.png, "thumb_" + (pg.title || "page") + ".jpg");
+          statusEl.textContent = "サムネを画像として保存しました";
+        } },
+      { label: "📄 このページに貼る", fn: function(){
+          addImageFiles([dataUrlToBlob(th.png)]);
+        } },
+      { label: "キャンセル", cancel: true }
+    ]);
+  });
+}
+function dataUrlToBlob(url) {
+  var parts = url.split(",");
+  var mime = (parts[0].match(/:(.*?);/) || [])[1] || "image/jpeg";
+  var bin = atob(parts[1]);
+  var arr = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  var b = new Blob([arr], { type: mime });
+  b.name = "thumb.jpg";
+  return b;
+}
+
+/* 控えの一覧を出して選ばせる */
+function openVersionSheet(pg) {
+  statusEl.textContent = "以前の版を探しています…";
+  listVersions(pg.id).then(function(list){
+    if (!list.length) {
+      showSheet("「" + pg.title + "」の以前の版", [
+        { label: "控えが見つかりませんでした", cancel: true }
+      ]);
+      return;
+    }
+    var items = [];
+    list.forEach(function(it){
+      var d = new Date(it.v.ts || it.v.savedAt || 0);
+      var when = (d.getMonth() + 1) + "/" + d.getDate() + " " +
+                 ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+      items.push({
+        label: "🕘 " + when + "(" + (it.v.count || 0) + "個)" +
+               (it.v.why ? " · " + it.v.why : ""),
+        fn: function(){ restoreVersion(pg.id, it.key); }
+      });
+    });
+    items.push({ label: "キャンセル", cancel: true });
+    showSheet("「" + pg.title + "」の以前の版", items);
+  });
+}
+function restoreVersion(id, key) {
+  kvGet(key).then(function(v){
+    if (!v || !v.json) { statusEl.textContent = "その版を読み込めませんでした"; return; }
+    // 戻す前に、今の中身も控えに残す(戻しすぎても元に戻せるように)
+    return keepVersion(id, "版を戻す前").then(function(){
+      return kvSet("page_" + id, { json: v.json, ts: Date.now() });
+    }).then(function(){
+      var pg = findPage(id);
+      if (pg) { pg.ts = Date.now(); saveIndex(); }
+      if (id === currentId) loadPage(id);
+      else renderPageList();
+      if (cloudUser()) cloudPushPage(id).then(cloudPushIndex).catch(function(){});
+      statusEl.textContent = "以前の版に戻しました";
+    });
+  }).catch(function(){ statusEl.textContent = "戻せませんでした"; });
+}
 function pageMenu(pg) {
   showSheet("「" + pg.title + "」", [
     { label: "✎ 名前を変更", fn: function(){ renamePage(pg.id); } },
+    { label: "🕘 以前の版に戻す", fn: function(){ openVersionSheet(pg); } },
+    { label: "🖼 サムネの絵を取り出す", fn: function(){ rescueThumb(pg); } },
     { label: "🔄 サムネイルを更新", fn: function(){
         statusEl.textContent = "サムネイルを作り直しています…";
         makeThumbFor(pg.id).then(function(){
@@ -8354,9 +8434,75 @@ function scheduleCloudPush(id) {
 }
 
 /* ---------- 全体同期(起動時・ログイン時・手動) ---------- */
-function pullAndStore(id) {
+/* ===== 版の履歴 =====
+   上書きの前に、今ある中身を控えに残す。
+   同期の行き違いで中身が古い版に戻されても、ここから取り戻せる。 */
+var VER_KEEP = 8;                       // 1ページあたり残す控えの数
+function keepVersion(id, why) {
+  return kvGet("page_" + id).then(function(cur){
+    if (!cur || !cur.json) return;
+    var cnt = 0;
+    try { cnt = (JSON.parse(cur.json) || []).length; } catch (e) { return; }
+    if (!cnt) return;                   // 空の版は控えない
+    var key = "ver_" + id + "_" + (cur.ts || Date.now());
+    return kvGet(key).then(function(exists){
+      if (exists) return;               // 同じ版は二重に残さない
+      return kvSet(key, { json: cur.json, ts: cur.ts || Date.now(),
+                          count: cnt, why: why || "", savedAt: Date.now() });
+    }).then(function(){ return trimVersions(id); });
+  }).catch(function(){});
+}
+function trimVersions(id) {
+  return kvKeys().then(function(keys){
+    var pre = "ver_" + id + "_";
+    var mine = [];
+    for (var i = 0; i < keys.length; i++) {
+      var k = String(keys[i]);
+      if (k.indexOf(pre) === 0) mine.push(k);
+    }
+    if (mine.length <= VER_KEEP) return;
+    mine.sort();                        // 末尾が時刻なので古い順に並ぶ
+    var chain = Promise.resolve();
+    for (var j = 0; j < mine.length - VER_KEEP; j++) {
+      (function(k2){ chain = chain.then(function(){ return kvDel(k2); }); })(mine[j]);
+    }
+    return chain;
+  }).catch(function(){});
+}
+function listVersions(id) {
+  return kvKeys().then(function(keys){
+    var pre = "ver_" + id + "_";
+    var mine = [];
+    for (var i = 0; i < keys.length; i++) {
+      var k = String(keys[i]);
+      if (k.indexOf(pre) === 0) mine.push(k);
+    }
+    mine.sort().reverse();              // 新しい順
+    var out = [];
+    var chain = Promise.resolve();
+    mine.forEach(function(k){
+      chain = chain.then(function(){
+        return kvGet(k).then(function(v){ if (v) out.push({ key: k, v: v }); });
+      });
+    });
+    return chain.then(function(){ return out; });
+  }).catch(function(){ return []; });
+}
+/* クラウドの中身を取り込む。
+   ★古い版で上書きしないよう、手元の方が新しければ取り込まない。
+     取り込む時も、直前の中身を控えに残す。 */
+function pullAndStore(id, force) {
   return cloudPullPage(id).then(function(payload){
-    return kvSet("page_" + id, payload);
+    if (!payload || !payload.json) return;
+    return kvGet("page_" + id).then(function(cur){
+      if (!force && cur && cur.json) {
+        var curTs = cur.ts || 0, newTs = payload.ts || 0;
+        if (curTs > newTs) return;      // 手元の方が新しい → 守る
+      }
+      return keepVersion(id, "同期で取り込む前").then(function(){
+        return kvSet("page_" + id, payload);
+      });
+    });
   }).catch(function(){});
 }
 function syncAll() {
