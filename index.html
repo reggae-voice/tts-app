@@ -473,6 +473,32 @@
   #miniZoom.show{display:flex}
   #mzLabel{color:#cfd3da;font-size:12px;font-weight:600;min-width:54px;text-align:right}
   #mzSlider{width:min(60vw, 300px);touch-action:auto;accent-color:var(--accent)}
+  /* ===== 貼り付けの受け皿(iPadで自動読み取りが拒否された時) ===== */
+  #pasteCatch{
+    position:fixed;inset:0;z-index:70;display:none;
+    background:rgba(10,12,16,.55);
+    align-items:flex-start;justify-content:center;
+    padding:calc(env(safe-area-inset-top) + 60px) 14px 14px;
+  }
+  #pasteCatch.show{display:flex}
+  #pasteCatch .pc-card{
+    width:min(520px, 100%);background:var(--ui-bg);
+    border:1px solid var(--ui-line);border-radius:18px;padding:14px;
+    box-shadow:0 12px 40px rgba(10,12,16,.5);
+  }
+  #pasteCatch .pc-title{color:var(--ui-text);font-size:15px;font-weight:700;padding-bottom:6px}
+  #pasteCatch .pc-hint{color:var(--ui-dim);font-size:11.5px;line-height:1.7;padding-bottom:10px}
+  /* ★ここは端末標準の長押しメニュー(ペースト)を必ず使えるようにする */
+  #pcArea{
+    min-height:150px;max-height:46vh;overflow-y:auto;
+    background:#F6F1E3;color:#1C1E22;border-radius:12px;
+    padding:12px;font-size:14px;line-height:1.7;
+    -webkit-user-select:text;user-select:text;
+    -webkit-touch-callout:default;
+    touch-action:auto;
+  }
+  #pcArea:empty::before{content:"(ここに貼り付け)";color:#a9a294}
+  #pasteCatch .pc-foot{display:flex;gap:8px;padding-top:10px}
   #pasteChip{
     position:fixed;left:14px;
     bottom:calc(env(safe-area-inset-bottom) + 84px);
@@ -873,7 +899,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v15.4">InkNote <small>v15.4</small></div>
+  <div class="brand" title="InkNote v15.7">InkNote <small>v15.7</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1330,7 +1356,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1360,7 +1385,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "15.4";
+var APP_VERSION = "15.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2520,12 +2545,22 @@ function makeTextEl(o) {
   o.el = el;
   applyTextStyle(o);
   el.textContent = o.text || "";
-  if (!o.text || !o.text.trim()) el.classList.add("empty");
+  syncEmptyClass(o);
   o.el = el;
   attachObjHandlers(o);
   world.insertBefore(el, selBox);
   return el;
 }
+/* 「テキスト(ダブルタップで入力)」の案内を出すかどうかを、
+   その時の中身に合わせて必ず切り替える。
+   以前は付けるだけで外していなかったため、文字を入れても案内が残っていた。 */
+function syncEmptyClass(o) {
+  if (!o || !o.el) return;
+  var raw = (o.el.innerText != null) ? o.el.innerText : (o.el.textContent || "");
+  var hasText = !!(String(o.text || "").trim() || String(raw).trim());
+  o.el.classList.toggle("empty", !hasText);
+}
+
 /* 図形の中をダブルタップ → 中のテキストを編集(なければ中央に新規作成) */
 function shapeTextEdit(sh) {
   var b = objBBox(sh);
@@ -2586,6 +2621,7 @@ function startTextEdit(o, pt) {
   el.addEventListener("blur", onTextBlur);
   el.addEventListener("input", onTextInput);
   el.addEventListener("paste", onTextPaste);
+  syncEmptyClass(o);
 }
 /* 貼り付け時: LaTeX/Markdownを読める文字に直してから挿入する */
 function onTextPaste(e) {
@@ -2620,6 +2656,8 @@ function onTextPaste(e) {
 }
 var lastMeasure = 0;
 function onTextInput() {
+  // 案内の出し分けは毎回行う(間引きより前。1文字入れたらすぐ消えるように)
+  if (editingObj) syncEmptyClass(editingObj);
   // 入力のたびに実寸を測ると重い。150msに1回だけ測る
   var now = Date.now();
   if (now - lastMeasure < 150) return;
@@ -2641,10 +2679,54 @@ var TEX_SYM = [
   ["neq","≠"], ["ne","≠"], ["rightarrow","→"], ["Rightarrow","⇒"], ["to","→"],
   ["leftarrow","←"], ["alpha","α"], ["beta","β"], ["gamma","γ"], ["Delta","Δ"], ["delta","δ"],
   ["theta","θ"], ["lambda","λ"], ["mu","μ"], ["pi","π"], ["rho","ρ"],
-  ["sigma","σ"], ["tau","τ"], ["phi","φ"], ["Omega","Ω"], ["omega","ω"],
+  ["sigma","σ"], ["tau","τ"], ["varphi","φ"], ["phi","φ"], ["Omega","Ω"], ["omega","ω"],
   ["sim","~"], ["propto","∝"], ["infty","∞"], ["partial","∂"],
-  ["circ","°"], ["degree","°"], ["quad","  "], ["qquad","    "]
+  ["circ","°"], ["degree","°"], ["quad","  "], ["qquad","    "],
+  ["Gamma","Γ"], ["Lambda","Λ"], ["Sigma","Σ"], ["Theta","Θ"], ["Phi","Φ"],
+  ["Psi","Ψ"], ["psi","ψ"], ["Pi","Π"], ["Xi","Ξ"], ["xi","ξ"],
+  ["varepsilon","ε"], ["epsilon","ε"], ["eta","η"], ["zeta","ζ"], ["kappa","κ"],
+  ["nu","ν"], ["chi","χ"], ["upsilon","υ"], ["iota","ι"],
+  ["cdots","⋯"], ["ldots","…"], ["dots","…"], ["equiv","≡"], ["simeq","≃"],
+  ["ll","≪"], ["gg","≫"], ["subset","⊂"], ["in","∈"], ["forall","∀"], ["exists","∃"],
+  ["sum","Σ"], ["prod","Π"], ["int","∫"], ["nabla","∇"], ["angle","∠"],
+  ["perp","⊥"], ["parallel","∥"], ["therefore","∴"], ["because","∵"],
+  ["div","÷"], ["ast","*"], ["star","★"], ["prime","′"], ["hbar","ℏ"], ["ell","ℓ"]
 ];
+/* {…} を1つ取り出す。入れ子の波括弧も正しく数える。 */
+function readBrace(s, i) {
+  while (i < s.length && /\s/.test(s[i])) i++;
+  if (s[i] !== "{") return null;
+  var depth = 0;
+  for (var j = i; j < s.length; j++) {
+    if (s[j] === "{") depth++;
+    else if (s[j] === "}") {
+      depth--;
+      if (depth === 0) return { body: s.slice(i + 1, j), end: j + 1 };
+    }
+  }
+  return null;
+}
+/* 「+ - / 空白」を含む式は、分数にする時に括弧が要る */
+function needParen(x) { return /[+\-/ ]/.test(String(x).trim()); }
+/* 「コマンド + 波括弧n個」をまとめて置き換える */
+function takeGroupCmd(s, re, n, build) {
+  var out = "", pos = 0, m;
+  re.lastIndex = 0;
+  while ((m = re.exec(s)) !== null) {
+    if (m.index < pos) { re.lastIndex = pos; continue; }
+    var i = m.index + m[0].length, args = [], ok = true;
+    for (var k = 0; k < n; k++) {
+      var g = readBrace(s, i);
+      if (!g) { ok = false; break; }
+      args.push(g.body); i = g.end;
+    }
+    if (!ok) continue;
+    out += s.slice(pos, m.index) + build.apply(null, args);
+    pos = i;
+    re.lastIndex = i;
+  }
+  return out + s.slice(pos);
+}
 function mapScript(str, map) {
   var out = "";
   for (var i = 0; i < str.length; i++) {
@@ -2665,17 +2747,35 @@ function cleanPastedText(t) {
   s = s.replace(/\\\(([\s\S]*?)\\\)/g, "$1");
   s = s.replace(/\\\[([\s\S]*?)\\\]/g, "$1");
 
+  // ★記号の置換は \text{...} を外す前に行う。
+  //   先に外すと \cdot\text{m} が \cdotm になり、英字が続くため置換できなくなる。
+  var syms0 = TEX_SYM.slice().sort(function(a, b){ return b[0].length - a[0].length; });
+  for (var s0 = 0; s0 < syms0.length; s0++) {
+    var re0 = new RegExp("\\\\" + syms0[s0][0] + "(?![A-Za-z])[ ]?", "g");
+    s = s.replace(re0, syms0[s0][1]);
+  }
+
   // \text{...} \mathrm{...} などの装飾は中身だけ残す
   s = s.replace(/\\(?:text|mathrm|mathbf|mathit|textbf|textit|operatorname|rm|bf|it)\s*\{([^{}]*)\}/g, "$1");
 
   // 分数・平方根
-  s = s.replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "$1/$2");
-  s = s.replace(/\\sqrt\s*\{([^{}]*)\}/g, "√$1");
+  // 入れ子の分数(\frac{\frac{a}{b}}{c})にも対応するため、無くなるまで繰り返す
+  for (var fr = 0; fr < 6 && /\\[dt]?frac/.test(s); fr++) {
+    s = takeGroupCmd(s, /\\[dt]?frac\s*/g, 2, function(a, b){
+      var top = needParen(a) ? "(" + a + ")" : a;
+      var bot = needParen(b) ? "(" + b + ")" : b;
+      return top + "/" + bot;
+    });
+  }
+  s = takeGroupCmd(s, /\\sqrt\s*/g, 1, function(a){
+    return "\u221a" + (needParen(a) ? "(" + a + ")" : a);
+  });
 
   // コマンド記号(\approx など)。単語境界で区切り、長い名前から置換
-  for (var i = 0; i < TEX_SYM.length; i++) {
-    var re = new RegExp("\\\\" + TEX_SYM[i][0] + "(?![A-Za-z])", "g");
-    s = s.replace(re, TEX_SYM[i][1]);
+  var syms = TEX_SYM.slice().sort(function(a, b){ return b[0].length - a[0].length; });
+  for (var i = 0; i < syms.length; i++) {
+    var re2 = new RegExp("\\\\" + syms[i][0] + "(?![A-Za-z])[ ]?", "g");
+    s = s.replace(re2, syms[i][1]);
   }
 
   // 上付き・下付き: ^{2} _{2} は常に変換。
@@ -2869,6 +2969,7 @@ function commitText() {
   el.classList.remove("editing");
   el.removeAttribute("contenteditable");
   el.textContent = o.text;
+  syncEmptyClass(o);
   // ★空のまま確定したBOXは削除する。
   //   見えない空BOXが溜まると、タップを奪って誤選択・誤移動の原因になる。
   if (o.text.trim() === "") {
@@ -7451,9 +7552,79 @@ function insertTextAtCenter(txt) {
   setSelection([o]);
   scheduleSave();
 }
+/* iPad/iPhoneのSafariは navigator.clipboard.read() を強く制限していて、
+   ボタンから読もうとすると拒否されることが多い。
+   その場合は「受け皿」を出して、端末standardの貼り付け操作(長押し→ペースト、
+   ⌘V、Apple Pencilのスクイーズ等)でデータを受け取る。 */
+function openPasteCatcher(reason) {
+  var box = $("#pasteCatch");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "pasteCatch";
+    box.innerHTML =
+      '<div class="pc-card">' +
+      '  <div class="pc-title">📋 ここに貼り付けてください</div>' +
+      '  <div class="pc-hint" id="pcHint"></div>' +
+      '  <div class="pc-area" id="pcArea" contenteditable="true"' +
+      '       role="textbox" aria-label="貼り付け先"></div>' +
+      '  <div class="pc-foot">' +
+      '    <button class="pp-tool" id="pcCancel">キャンセル</button>' +
+      '    <button class="sync-primary" id="pcOk">この内容を追加</button>' +
+      '  </div>' +
+      '</div>';
+    document.body.appendChild(box);
+    $("#pcCancel").onclick = function(){ closePasteCatcher(); };
+    $("#pcOk").onclick = function(){ commitPasteCatcher(); };
+    // 画像の貼り付けも受け取る
+    $("#pcArea").addEventListener("paste", function(ev){
+      var cd = ev.clipboardData;
+      if (!cd) return;
+      var files = [];
+      for (var i = 0; i < (cd.items ? cd.items.length : 0); i++) {
+        var it = cd.items[i];
+        if (it.kind === "file" && it.type.indexOf("image/") === 0) {
+          var f = it.getAsFile();
+          if (f) files.push(f);
+        }
+      }
+      if (files.length) {
+        ev.preventDefault();
+        closePasteCatcher();
+        addImageFiles(files);
+        return;
+      }
+      // テキストは既定動作に任せ、整形は追加時に行う
+    });
+  }
+  $("#pcHint").textContent = reason ||
+    "枠を長押しして「ペースト」を選ぶか、⌘Vで貼り付けてください";
+  var pa = $("#pcArea");
+  pa.innerHTML = "";
+  pa.textContent = "";          // 前回の内容が残らないよう二重に消す
+  box.classList.add("show");
+  setTimeout(function(){ try { $("#pcArea").focus(); } catch (e) {} }, 60);
+}
+function closePasteCatcher() {
+  var box = $("#pasteCatch");
+  if (box) box.classList.remove("show");
+}
+function commitPasteCatcher() {
+  var area = $("#pcArea");
+  // textContent を主に見る(innerText は環境によって古い値を返すことがある)
+  var raw = "";
+  if (area) {
+    raw = area.textContent || "";
+    if (!raw.trim() && area.innerText) raw = area.innerText;
+  }
+  if (area) { area.innerHTML = ""; area.textContent = ""; }
+  closePasteCatcher();
+  if (!raw || !raw.trim()) { statusEl.textContent = "貼り付ける内容がありませんでした"; return; }
+  insertTextAtCenter(raw.trim());
+}
 function pasteFromClipboard() {
+  // 読み取りAPIが無い環境(iOS Safariの一部など)は最初から受け皿を出す
   if (!(navigator.clipboard && navigator.clipboard.read)) {
-    statusEl.textContent = "ボタン貼り付け非対応の環境です(https配信で有効)";
+    openPasteCatcher("この端末では自動読み取りが使えません。枠に貼り付けてください");
     return;
   }
   navigator.clipboard.read().then(function(items){
@@ -7476,9 +7647,10 @@ function pasteFromClipboard() {
         }
       })(items[n]);
     }
-    if (!handled) statusEl.textContent = "クリップボードに画像/テキストがありません";
+    if (!handled) openPasteCatcher("画像/テキストが読み取れませんでした。枠に貼り付けてください");
   }).catch(function(){
-    statusEl.textContent = "貼り付けが許可されませんでした";
+    // iPadで拒否された場合はここに来る。端末標準の貼り付けに切り替える
+    openPasteCatcher("枠を長押しして「ペースト」を選ぶか、⌘Vで貼り付けてください");
   });
 }
 $("#ctxMore").onclick = function(e){
