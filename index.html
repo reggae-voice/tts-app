@@ -507,6 +507,26 @@
   }
 
   /* ===== 選択メニュー ===== */
+  /* なぞって選んだ時に出る装飾バー */
+  #richBar{
+    position:fixed;z-index:64;display:none;gap:4px;align-items:center;
+    background:var(--ui-bg2);border:1px solid var(--ui-line);border-radius:12px;
+    padding:6px 8px;box-shadow:0 8px 24px rgba(10,12,16,.45);
+    -webkit-user-select:none;user-select:none;
+  }
+  #richBar.show{display:flex}
+  #richBar button{
+    border:none;background:#20242B;color:var(--ui-text);
+    min-width:30px;height:30px;border-radius:8px;cursor:pointer;
+    font-size:14px;font-weight:800;padding:0 6px;
+  }
+  #richBar #rbUnder{text-decoration:underline}
+  #richBar .rb-col,#richBar .rb-mark{
+    width:24px;min-width:24px;height:24px;border-radius:50%;
+    border:1.5px solid rgba(255,255,255,.35);
+  }
+  #richBar .rb-mark{border-radius:6px}
+  #richBar .rb-sep{width:1px;height:20px;background:var(--ui-line)}
   #ctxbar{
     position:fixed;display:none;z-index:35;
     background:var(--ui-bg);border-radius:12px;padding:4px;
@@ -909,7 +929,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v18.1">InkNote <small>v18.1</small></div>
+  <div class="brand" title="InkNote v18.3">InkNote <small>v18.3</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1087,6 +1107,20 @@ window.onerror = function(msg, src, line){
   <span id="mzLabel">100%</span>
 </div>
 
+<div id="richBar">
+  <button id="rbBold" title="太字">B</button>
+  <button id="rbUnder" title="下線">U</button>
+  <span class="rb-sep"></span>
+  <button class="rb-col" data-c="#1C1E22" title="黒" style="background:#1C1E22"></button>
+  <button class="rb-col" data-c="#D6453C" title="赤" style="background:#D6453C"></button>
+  <button class="rb-col" data-c="#2C6BD6" title="青" style="background:#2C6BD6"></button>
+  <button class="rb-col" data-c="#1E9E5A" title="緑" style="background:#1E9E5A"></button>
+  <span class="rb-sep"></span>
+  <button class="rb-mark" data-m="#FFE066" title="マーカー" style="background:#FFE066"></button>
+  <button class="rb-mark" data-m="#B6E3FF" title="マーカー(青)" style="background:#B6E3FF"></button>
+  <span class="rb-sep"></span>
+  <button id="rbClear" title="装飾を消す">✕</button>
+</div>
 <div id="ctxbar">
   <button id="ctxEdit" title="編集"><span class="ci">✎</span><span class="cl">編集</span></button>
   <button id="ctxStyle" title="見た目"><span class="ci">Aa</span><span class="cl">見た目</span></button>
@@ -1408,7 +1442,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "18.1";
+var APP_VERSION = "18.3";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2592,6 +2626,45 @@ function isDarkColor(hex) {
   var r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
   return (0.299*r + 0.587*g + 0.114*b) < 140;   // 輝度で判定
 }
+/* ===== 文章の一部だけを装飾する =====
+   一部を太字にしたり色を変えたりできるよう、テキストは
+   「読める文字(o.text)」と「装飾つきの中身(o.rich)」の2つで持つ。
+   o.rich は安全のため、太字・斜体・下線・色・マーカーだけを通す。 */
+var RICH_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, BR:1, SPAN:1, DIV:1, P:1, FONT:1 };
+function sanitizeRich(html) {
+  var box = document.createElement("div");
+  box.innerHTML = String(html || "");
+  (function walk(node){
+    var kids = Array.prototype.slice.call(node.childNodes);
+    for (var i = 0; i < kids.length; i++) {
+      var n = kids[i];
+      if (n.nodeType === 3) continue;                        // 文字はそのまま
+      if (n.nodeType !== 1) { node.removeChild(n); continue; }
+      if (!RICH_TAGS[n.tagName]) {                           // 許可外は中身だけ残す
+        while (n.firstChild) node.insertBefore(n.firstChild, n);
+        node.removeChild(n);
+        continue;
+      }
+      // 属性は色まわりだけ残す
+      var keep = "";
+      var col = n.style ? (n.style.color || "") : "";
+      var bg  = n.style ? (n.style.backgroundColor || "") : "";
+      var bold = n.style ? (n.style.fontWeight || "") : "";
+      if (n.tagName === "FONT" && n.getAttribute("color")) col = n.getAttribute("color");
+      var attrs = Array.prototype.slice.call(n.attributes || []);
+      for (var a = 0; a < attrs.length; a++) n.removeAttribute(attrs[a].name);
+      if (col) keep += "color:" + col + ";";
+      if (bg) keep += "background-color:" + bg + ";";
+      if (bold) keep += "font-weight:" + bold + ";";
+      if (keep) n.setAttribute("style", keep);
+      walk(n);
+    }
+  })(box);
+  return box.innerHTML;
+}
+/* 装飾つきの中身があるか(無ければ普通の文字として扱う) */
+function hasRich(o) { return !!(o && o.rich && /<[a-z]/i.test(o.rich)); }
+
 function makeTextEl(o) {
   var el = document.createElement("div");
   el.className = "obj obj-text";
@@ -2600,7 +2673,8 @@ function makeTextEl(o) {
   el.style.width = o.w + "px";
   o.el = el;
   applyTextStyle(o);
-  el.textContent = o.text || "";
+  if (hasRich(o)) el.innerHTML = sanitizeRich(o.rich);
+  else el.textContent = o.text || "";
   syncEmptyClass(o);
   o.el = el;
   attachObjHandlers(o);
@@ -3007,6 +3081,7 @@ if (window.visualViewport) {
 }
 function commitText() {
   if (!editingObj) return;
+  hideRichBar();
   document.body.classList.remove("editing-mode");
   editHandle.classList.remove("show");
   var o = editingObj;
@@ -3017,6 +3092,9 @@ function commitText() {
   el.removeEventListener("paste", onTextPaste);
   var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
   o.text = raw.replace(/\n$/, "");
+  // 装飾が付いていれば残す(無ければ普通の文字に戻す)
+  var cleaned = sanitizeRich(el.innerHTML);
+  o.rich = /<(b|strong|i|em|u|span|font)\b/i.test(cleaned) ? cleaned : null;
   // ★キーボードを閉じるのは contenteditable を外す「前」に行う。
   //   属性を外した後だと要素がフォーカス対象でなくなり、blurが効かず
   //   iPadなどでキーボードが出たまま残ってしまう。
@@ -3024,7 +3102,8 @@ function commitText() {
   blurKeyboard();
   el.classList.remove("editing");
   el.removeAttribute("contenteditable");
-  el.textContent = o.text;
+  if (hasRich(o)) el.innerHTML = sanitizeRich(o.rich);
+  else el.textContent = o.text;
   syncEmptyClass(o);
   // ★空のまま確定したBOXは削除する。
   //   見えない空BOXが溜まると、タップを奪って誤選択・誤移動の原因になる。
@@ -3264,6 +3343,45 @@ function textUnderHighlighter(o) {
   }
   return best;
 }
+/* 文字の各行の位置を測る(改行位置が端末で違っても行に合わせられるように) */
+function textLineRects(o) {
+  if (!o || !o.el || !document.createRange) return null;
+  try {
+    var el = o.el, out = [];
+    for (var n = 0; n < el.childNodes.length; n++) {
+      var node = el.childNodes[n];
+      if (node.nodeType !== 3) continue;
+      var r = document.createRange();
+      r.selectNodeContents(node);
+      var rects = r.getClientRects ? r.getClientRects() : null;
+      if (!rects) continue;
+      for (var i = 0; i < rects.length; i++) {
+        var q = rects[i];
+        if (!q || q.height < 1) continue;
+        out.push({ top: q.top, height: q.height });
+      }
+    }
+    if (!out.length) return null;
+    var s = view.s || 1, res = [];
+    for (var k = 0; k < out.length; k++)
+      res.push({ y: (out[k].top - view.y) / s, h: out[k].height / s });
+    res.sort(function(a, b){ return a.y - b.y; });
+    return res;
+  } catch (e) { return null; }
+}
+/* マーカーの中心が何行目にあるか(0始まり) */
+function lineIndexAt(lines, cy) {
+  if (!lines || !lines.length) return null;
+  for (var i = 0; i < lines.length; i++)
+    if (cy >= lines[i].y - 2 && cy <= lines[i].y + lines[i].h + 2) return i;
+  var best = 0, bd = Infinity;
+  for (var j = 0; j < lines.length; j++) {
+    var d = Math.abs(cy - (lines[j].y + lines[j].h / 2));
+    if (d < bd) { bd = d; best = j; }
+  }
+  return best;
+}
+
 /* 描いた時点の「文字の枠」を覚えておく。
    ★端末によってフォントが違い、折り返しや行の高さが変わるため、
      文字だけが動いてマーカーが別の行に乗ってしまう。これを防ぐ目印。 */
@@ -3273,6 +3391,16 @@ function tagHighlighter(o) {
   if (!t2) { o.hlRef = null; return; }
   var tb = objBBox(t2);
   o.hlRef = { id: t2.id, x: tb.x, y: tb.y, w: tb.w, h: tb.h };
+  // ★何行目に引いたかも覚える。端末で改行位置が変わっても同じ行に乗せられる
+  var lines = textLineRects(t2);
+  if (lines && lines.length) {
+    var b = objBBox(o);
+    var cy = b.y + b.h / 2;
+    o.hlRef.li = lineIndexAt(lines, cy);
+    o.hlRef.ln = lines.length;
+    var L = lines[o.hlRef.li];
+    if (L) o.hlRef.lo = (cy - L.y) / (L.h || 1);
+  }
 }
 /* 文字の枠が変わっていたら、マーカーを同じ相対位置へ動かし直す。
    ページを開いた時・文字を編集した後に呼ぶ。 */
@@ -3289,17 +3417,46 @@ function realignHighlighters() {
     var ref = o.hlRef;
     if (!(ref.h > 0) || !(ref.w > 0)) { o.hlRef = { id: ref.id, x: tb.x, y: tb.y, w: tb.w, h: tb.h }; continue; }
     var dx = tb.x - ref.x;
-    var sy = tb.h / ref.h;                 // 行数が変わった分だけ縦に伸縮
     var sx = tb.w / ref.w;
-    // ほとんど同じなら何もしない(無駄な書き換えを避ける)
-    if (Math.abs(dx) < 0.5 && Math.abs(tb.y - ref.y) < 0.5 &&
-        Math.abs(sy - 1) < 0.01 && Math.abs(sx - 1) < 0.01) continue;
+
+    /* ★まず「何行目に引いたか」で合わせる。
+       端末によって改行位置が変わるので、枠全体を伸縮するだけでは
+       行と行の間に乗ってしまう。行そのものに合わせるとズレない。 */
+    var lines = textLineRects(t2);
+    var targetY = null, targetH = null;
+    if (lines && lines.length && ref.li != null) {
+      var li = ref.li;
+      if (ref.ln && ref.ln !== lines.length)
+        li = Math.round(ref.li * (lines.length - 1) / Math.max(1, ref.ln - 1));
+      li = Math.max(0, Math.min(lines.length - 1, li));
+      targetY = lines[li].y;
+      targetH = lines[li].h;
+    }
+
+    var b0 = objBBox(o);
+    var oldCy = b0.y + b0.h / 2;
+    var newCy;
+    if (targetY != null) {
+      var lo = (ref.lo == null) ? 0.5 : ref.lo;
+      newCy = targetY + targetH * lo;
+    } else {
+      newCy = tb.y + (oldCy - ref.y) * (tb.h / ref.h);
+    }
+    var dy = newCy - oldCy;
+
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(sx - 1) < 0.01) continue;
     for (var k = 0; k < o.points.length; k++) {
       var p = o.points[k];
-      p.x = tb.x + (p.x - ref.x) * sx;
-      p.y = tb.y + (p.y - ref.y) * sy;
+      p.x = tb.x + (p.x - ref.x) * sx;      // 横は枠の幅に合わせる
+      p.y = p.y + dy;                        // 縦は行に合わせて平行移動
     }
-    o.hlRef = { id: ref.id, x: tb.x, y: tb.y, w: tb.w, h: tb.h };
+    var nl = textLineRects(t2);
+    o.hlRef = { id: ref.id, x: tb.x, y: tb.y, w: tb.w, h: tb.h,
+                li: ref.li, ln: (nl ? nl.length : ref.ln), lo: ref.lo };
+    if (nl && nl.length && ref.li != null && ref.ln && ref.ln !== nl.length) {
+      o.hlRef.li = Math.max(0, Math.min(nl.length - 1,
+        Math.round(ref.li * (nl.length - 1) / Math.max(1, ref.ln - 1))));
+    }
     moved++;
   }
   if (moved) inkDirty = true;
@@ -8206,6 +8363,94 @@ function copySelection() {
     }, "image/png");
   } catch (e) { copyFallbackDownload(c); }
 }
+/* ===== なぞって選んだ部分を装飾する =====
+   編集中のテキストで文字を選ぶと、その近くに装飾バーを出す。 */
+var richBar = null;
+function rbEl() { if (!richBar) richBar = $("#richBar"); return richBar; }
+
+function selectionInsideEditing() {
+  if (!editingObj || !editingObj.el) return null;
+  var s = window.getSelection && window.getSelection();
+  if (!s || s.isCollapsed || !s.rangeCount) return null;
+  var r = s.getRangeAt(0);
+  var node = r.commonAncestorContainer;
+  if (node.nodeType === 3) node = node.parentNode;
+  if (!editingObj.el.contains(node)) return null;
+  return r;
+}
+function hideRichBar() { var b = rbEl(); if (b) b.classList.remove("show"); }
+function showRichBarFor(range) {
+  var b = rbEl();
+  if (!b) return;
+  b.classList.add("show");
+  var rect = null;
+  try { rect = range.getBoundingClientRect(); } catch (e) {}
+  var bw = b.offsetWidth || 260, bh = b.offsetHeight || 42;
+  var x, y;
+  if (rect && (rect.width || rect.height)) {
+    x = rect.left + rect.width / 2 - bw / 2;
+    y = rect.top - bh - 10;                       // 選んだ文字の上に出す
+    if (y < 8) y = rect.bottom + 10;              // 上が狭ければ下へ
+  } else {
+    x = innerWidth / 2 - bw / 2; y = innerHeight * 0.3;
+  }
+  x = Math.max(8, Math.min(innerWidth - bw - 8, x));
+  y = Math.max(8, Math.min(innerHeight - bh - 8, y));
+  b.style.left = x + "px";
+  b.style.top = y + "px";
+}
+function updateRichBar() {
+  var r = selectionInsideEditing();
+  if (!r) { hideRichBar(); return; }
+  showRichBarFor(r);
+}
+document.addEventListener("selectionchange", function(){
+  // 選び終わるのを少し待つ(指でなぞっている最中はちらつくため)
+  clearTimeout(window.__rbTimer);
+  window.__rbTimer = setTimeout(updateRichBar, 180);
+});
+
+/* 選んだ範囲に書式をかける */
+function applyRich(fn) {
+  var r = selectionInsideEditing();
+  if (!r) return;
+  try { document.execCommand("styleWithCSS", false, true); } catch (e) {}
+  fn();
+  if (editingObj) {
+    measureObj(editingObj);
+    syncEmptyClass(editingObj);
+    scheduleSave();
+  }
+  setTimeout(updateRichBar, 30);
+}
+function bindRichBar() {
+  var b = rbEl();
+  if (!b) return;
+  // バーを押した時に文字の選択が外れないようにする
+  b.addEventListener("pointerdown", function(ev){ ev.preventDefault(); });
+  $("#rbBold").onclick = function(){ applyRich(function(){ document.execCommand("bold"); }); };
+  $("#rbUnder").onclick = function(){ applyRich(function(){ document.execCommand("underline"); }); };
+  var cols = b.querySelectorAll(".rb-col");
+  for (var i = 0; i < cols.length; i++)
+    cols[i].addEventListener("click", function(){
+      var c = this.getAttribute("data-c");
+      applyRich(function(){ document.execCommand("foreColor", false, c); });
+    });
+  var mks = b.querySelectorAll(".rb-mark");
+  for (var j = 0; j < mks.length; j++)
+    mks[j].addEventListener("click", function(){
+      var m = this.getAttribute("data-m");
+      applyRich(function(){
+        if (!document.execCommand("hiliteColor", false, m))
+          document.execCommand("backColor", false, m);
+      });
+    });
+  $("#rbClear").onclick = function(){
+    applyRich(function(){ document.execCommand("removeFormat"); });
+  };
+}
+bindRichBar();
+
 /* =========================================================
    数式(LaTeX)を組版して貼る
    MathJaxのSVG出力を使う。SVGは字の形を線で持つのでフォントに依存せず、
@@ -8985,10 +9230,20 @@ function attachAuth() {
   window.firebase.auth().getRedirectResult().then(function(res){
     if (res && res.user) {
       setAuthMethod("redirect");          // この端末ではリダイレクトが通る
+      clearRedirectPending();
       setSyncStatus("ログインしました。同期を開始します…");
       try { localStorage.setItem("inknote_sync_on", "1"); } catch (e) {}
       refreshSyncPanel();
       syncAfterAuth(res.user);
+    } else if (redirectPending()) {
+      // 戻ってきたのに結果が空。ブラウザに情報を消された可能性がある
+      setTimeout(function(){
+        if (!cloudUser()) {
+          clearRedirectPending();
+          setSyncStatus("ログインの戻りを受け取れませんでした。もう一度お試しください");
+          refreshSyncPanel();
+        }
+      }, 4000);
     }
   }).catch(function(err){
     var code = (err && err.code) || "";
@@ -9072,6 +9327,18 @@ function syncAfterAuth(u) {
   } catch (e) {}
   go();
 }
+/* ログイン画面から戻ってきた直後かどうか(10分以内なら戻り待ちとみなす) */
+function redirectPending() {
+  try {
+    var v = localStorage.getItem("inknote_redirect_pending");
+    if (!v) return false;
+    if (Date.now() - (+v) > 600000) { localStorage.removeItem("inknote_redirect_pending"); return false; }
+    return true;
+  } catch (e) { return false; }
+}
+function clearRedirectPending() {
+  try { localStorage.removeItem("inknote_redirect_pending"); } catch (e) {}
+}
 function fbConfigured() {
   return !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.authDomain && FIREBASE_CONFIG.projectId);
 }
@@ -9143,6 +9410,15 @@ function startPopupLogin() {
    失敗することが多い(戻ってきてもログインされない)。最後の手段として残す。 */
 function startRedirectLogin() {
   if (!fbConfigured()) { setSyncStatus("⚠ Firebaseの設定が未入力です"); return; }
+  /* ★出かける前に印を残す。
+     これが無いと、戻ってきた時に「同期は使っていない」と判断されて
+     Firebaseが読み込まれず、ログインの戻りを回収できない
+     (iPadでいつまでもログインできない原因)。 */
+  try {
+    localStorage.setItem("inknote_sync_on", "1");
+    localStorage.setItem("inknote_redirect_pending", String(Date.now()));
+    localStorage.setItem("inknote_auth_method", "redirect");
+  } catch (e) {}
   setSyncStatus("Googleのログイン画面へ移動します…");
   loadFirebase().then(function(){
     attachAuth();
@@ -10032,8 +10308,8 @@ function initAfterStore() {
       /* ★端末に保存があっても、必ずクラウドを読みに行く。
          以前はここで終わっていたため、他の端末で編集した内容が
          起動しても反映されなかった(この端末の古い内容のまま)。 */
-      if (syncEnabled()) {
-        setSyncStatus("クラウドを確認中…");
+      if (syncEnabled() || (fbConfigured() && redirectPending())) {
+        setSyncStatus(redirectPending() ? "ログインの続きを確認中…" : "クラウドを確認中…");
         loadFirebase().then(function(){
           attachAuth();
           /* ★ログインの復元は非同期。attachAuth()の直後は cloudUser() がまだ空で、
@@ -10045,7 +10321,7 @@ function initAfterStore() {
       return;
     }
     deletedIds = (idx && idx.deleted) || [];
-    if (syncEnabled()) {
+    if (syncEnabled() || (fbConfigured() && redirectPending())) {
       // ローカルが空でも、クラウドにノートがあるなら「新規ページ」を作らずに復元する
       // (これをしないと端末ごと・起動ごとに空ページが増えてしまう)
       statusEl.textContent = "クラウドから復元中…";
