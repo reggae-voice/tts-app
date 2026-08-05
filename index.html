@@ -909,7 +909,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v17.8">InkNote <small>v17.8</small></div>
+  <div class="brand" title="InkNote v18.1">InkNote <small>v18.1</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1408,7 +1408,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "17.8";
+var APP_VERSION = "18.1";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6485,7 +6485,13 @@ function pullOnOpenList() {
   // ★編集直後に一覧を開いた時、まだ保存できていない分があると
   //   「手元の方が古い」と誤判定されかねない。先に確定させる。
   if (dirtySinceSave) saveDocNow();
-  if (!cloudUser()) return;
+  if (realtimeActive()) return;        // 購読中は常に最新なので何もしない
+  // ログインの復元がまだなら、確定するのを待ってから同期する
+  //   (待たないと「ログイン済みなのに古いまま」になる)
+  if (!cloudUser()) {
+    if (syncEnabled() && fbLoaded()) waitForLoginThenSync(8000);
+    return;
+  }
   if (syncing) return;
   if (Date.now() - lastPullAt < 3000) return;   // 開き直しの連打だけは抑える
   lastPullAt = Date.now();
@@ -8945,7 +8951,19 @@ function loadFirebase() {
 function cloudUser() {
   try { return window.firebase && window.firebase.auth().currentUser; } catch (e) { return null; }
 }
-function fdb() { return window.firebase.firestore(); }
+var persistenceTried = false;
+function fdb() {
+  var db = window.firebase.firestore();
+  /* オフライン対応を有効にする。圏外で書いた分は通信が戻ると
+     Firestoreが自動で送ってくれる(自前の再送処理が要らなくなる)。 */
+  if (!persistenceTried) {
+    persistenceTried = true;
+    try {
+      db.enablePersistence({ synchronizeTabs: true }).catch(function(){});
+    } catch (e) {}
+  }
+  return db;
+}
 
 function attachAuth() {
   if (authAttached) return;
@@ -8992,14 +9010,61 @@ function needsRedirectAuth() {
 }
 /* この端末で成功したログイン方式を覚えておく。
    ブラウザの制限は端末ごとに違うので、実際に通った方を次回の既定にする。 */
+/* iPhone/iPad(iPadOSはMacintoshを名乗るのでタッチの有無で見分ける)か、
+   ホーム画面から起動したPWAかどうか。どちらもポップアップが塞がれやすい。 */
+function isIOSLike() {
+  var ua = navigator.userAgent || "";
+  if (/iPad|iPhone|iPod/.test(ua)) return true;
+  return (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);   // iPadOS
+}
+function isStandalonePWA() {
+  try {
+    if (window.navigator.standalone) return true;
+    return !!(window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+  } catch (e) { return false; }
+}
 function authMethod() {
-  try { return localStorage.getItem("inknote_auth_method") || "popup"; } catch (e) { return "popup"; }
+  try {
+    var m = localStorage.getItem("inknote_auth_method");
+    if (m) return m;
+  } catch (e) {}
+  /* ★端末に合った方式を既定にする。
+     iPad/iPhoneやホーム画面から起動したPWAでは、ポップアップが
+     ブラウザに塞がれてログインできないことが多い。 */
+  return (isIOSLike() || isStandalonePWA()) ? "redirect" : "popup";
 }
 function setAuthMethod(m) {
   try { localStorage.setItem("inknote_auth_method", m); } catch (e) {}
 }
 /* ログイン直後はIDトークンが行き渡っていないことがある。
    明示的に取り直してからFirestoreに触ると、権限エラーで空振りしにくい。 */
+/* ログインの復元(onAuthStateChanged)を待ってから同期する。
+   iPad/Safariでは復元に数秒かかることがあり、待たずに判定すると同期が走らない。 */
+var loginWaitTimer = null;
+function waitForLoginThenSync(maxMs) {
+  clearInterval(loginWaitTimer);
+  var until = Date.now() + (maxMs || 12000);
+  var kick = function(){
+    if (cloudUser()) {
+      clearInterval(loginWaitTimer);
+      lastPullAt = Date.now();
+      setSyncStatus("同期中…");
+      syncAll();
+      return true;
+    }
+    if (Date.now() > until) {
+      clearInterval(loginWaitTimer);
+      try {
+        if (localStorage.getItem("inknote_sync_on") === "1")
+          setSyncStatus("ログインを確認できません。☁からログインし直してください");
+      } catch (e) {}
+      return true;
+    }
+    return false;
+  };
+  if (kick()) return;
+  loginWaitTimer = setInterval(kick, 400);
+}
 function syncAfterAuth(u) {
   var go = function(){ syncAll(); };
   try {
@@ -9050,6 +9115,25 @@ function startPopupLogin() {
     }
   }).catch(function(err){
     var code = (err && err.code) || "";
+    /* ★ポップアップが使えない端末では、その場でリダイレクト方式に切り替える。
+       (これが無いと「別の方法でログイン」を自分で探す必要があった) */
+    var popupNG = (code === "auth/popup-blocked" ||
+                   code === "auth/operation-not-supported-in-this-environment" ||
+                   code === "auth/web-storage-unsupported" ||
+                   code === "auth/cancelled-popup-request" ||
+                   code === "auth/internal-error");
+    if (popupNG) {
+      setAuthMethod("redirect");                 // 次回からはリダイレクトを既定に
+      setSyncStatus("この端末では別の方法でログインします…");
+      refreshSyncPanel();
+      setTimeout(startRedirectLogin, 300);
+      return;
+    }
+    if (code === "auth/popup-closed-by-user") {
+      setSyncStatus("ログインを中止しました");
+      refreshSyncPanel();
+      return;
+    }
     setSyncStatus(authErrorText(code));
     refreshSyncPanel();
   });
@@ -9097,6 +9181,7 @@ function fbLogin() {
 }
 function fbLogout() {
   if (!window.firebase) return;
+  stopRealtime();
   window.firebase.auth().signOut();
   try { localStorage.setItem("inknote_sync_on", "0"); } catch (e) {}
   lastSyncText = "";
@@ -9235,6 +9320,7 @@ function flushCloudPush() {
 var lastPullAt = 0;
 var keptLocalOnSync = false;   // 同期中に編集していて、手元を優先したか
 function pullIfStale(minMs) {
+  if (realtimeActive()) return;      // 購読中は届くので取りに行かない
   if (!cloudUser() || syncing) return;
   if (Date.now() - lastPullAt < (minMs || 20000)) return;
   lastPullAt = Date.now();
@@ -9251,8 +9337,10 @@ function pullIfStale(minMs) {
       setTimeout(flushCloudPush, 120);
       setTimeout(flushCloudPush, 600);
     } else {
-      lastPullAt = 0;                  // 戻ってきたら必ず取り直す
-      setTimeout(function(){ pullIfStale(0); }, 300);
+      // 購読が切れていれば張り直す(復帰後に届かなくなるのを防ぐ)
+      if (cloudUser() && !realtimeActive()) setTimeout(startRealtime, 300);
+      lastPullAt = 0;
+      setTimeout(function(){ pullIfStale(0); }, 400);
     }
   });
   window.addEventListener("pagehide", function(){
@@ -9261,8 +9349,9 @@ function pullIfStale(minMs) {
   });
   window.addEventListener("focus", function(){ setTimeout(function(){ pullIfStale(15000); }, 200); });
   window.addEventListener("online", function(){ flushCloudPush(); setTimeout(function(){ pullIfStale(0); }, 500); });
-  // 開いている間は1分ごとに確認
+  // 購読が切れている時だけ、1分ごとに確認する(保険)
   setInterval(function(){
+    if (realtimeActive()) return;
     if (document.visibilityState === "visible") pullIfStale(60000);
   }, 60000);
 })();
@@ -9339,9 +9428,43 @@ function pullAndStore(id, force) {
     });
   }).catch(function(){});
 }
+/* この端末が最後に同期したアカウント。
+   別のアカウントでログインした時に、端末のノートを勝手に
+   相手のアカウントへ混ぜてしまわないための目印。 */
+function lastUid() { try { return localStorage.getItem("inknote_last_uid") || ""; } catch (e) { return ""; } }
+function setLastUid(v) { try { localStorage.setItem("inknote_last_uid", v || ""); } catch (e) {} }
+var uidAskOpen = false;
+function askAccountChange(newUid) {
+  if (uidAskOpen) return;
+  uidAskOpen = true;
+  showSheet("別のアカウントでログインしました", [
+    { label: "☁ このアカウントのノートを開く(端末のノートは残す)", fn: function(){
+        uidAskOpen = false;
+        setLastUid(newUid);
+        pages = [];                       // 相手のアカウントへ混ぜない
+        saveIndex().then(function(){ syncing = false; syncAll(); });
+        statusEl.textContent = "元のノートは「🔍消えたページを探す」で戻せます";
+      } },
+    { label: "➕ 端末のノートもこのアカウントに追加する", fn: function(){
+        uidAskOpen = false;
+        setLastUid(newUid);
+        syncing = false;
+        syncAll();
+      } },
+    { label: "キャンセル(同期しない)", cancel: true, fn: function(){ uidAskOpen = false; } }
+  ]);
+}
 function syncAll() {
   var u = cloudUser();
   if (!u || syncing) return Promise.resolve();
+  // ★アカウントが変わったら、混ぜる前に確認する
+  var prev = lastUid();
+  if (prev && prev !== u.uid) {
+    setSyncStatus("別のアカウントです。確認してください");
+    askAccountChange(u.uid);
+    return Promise.resolve();
+  }
+  if (!prev) setLastUid(u.uid);
   syncing = true;
   setSyncStatus("同期中…");
   /* ★ここで無条件にsaveDocNow()すると、何も編集していなくても
@@ -9429,6 +9552,7 @@ function syncAll() {
         }, 40);
       }
       if (booting) { booting = false; if (!pages.length) createFirstPage(); }
+      startRealtime();          // ★以後はクラウドから変更が届く
     });
   }).catch(function(err){
     var code = (err && err.code) || "";
@@ -9444,6 +9568,131 @@ function syncAll() {
       setSyncStatus("同期エラー" + (code ? "(" + code + ")" : "(通信を確認)"));
     if (booting) createFirstPage();     // クラウド不通でもアプリは使える
   }).then(function(){ syncing = false; });
+}
+
+/* =========================================================
+   リアルタイム購読(クラウドを正とする)
+   ------------------------------------------------------
+   これまでは「いつ読むか」を自分で決めていたため、判断を1つ間違える
+   たびに不整合が出た。ここではクラウド側の変更を受け取る形にする。
+   ・ページ一覧(meta/index)を購読 → 他端末の追加・改名・削除が即届く
+   ・ページ一覧(pagesコレクション)の ts を購読 → 中身の更新が即届く
+   自分が書いた分(hasPendingWrites)は無視するので、往復ループにならない。
+========================================================= */
+var unsubIndex = null, unsubPages = null, realtimeOn = false;
+function realtimeActive() { return realtimeOn; }
+
+function stopRealtime() {
+  try { if (unsubIndex) unsubIndex(); } catch (e) {}
+  try { if (unsubPages) unsubPages(); } catch (e) {}
+  unsubIndex = unsubPages = null;
+  realtimeOn = false;
+}
+
+function startRealtime() {
+  var u = cloudUser();
+  if (!u || !fbLoaded()) return;
+  if (lastUid() && lastUid() !== u.uid) return;    // アカウント確認が先
+  stopRealtime();
+  var base = fdb().collection("users").doc(u.uid);
+
+  // --- ページ一覧の変更を受け取る ---
+  unsubIndex = base.collection("meta").doc("index").onSnapshot(function(snap){
+    if (!snap.exists) return;
+    if (snap.metadata && snap.metadata.hasPendingWrites) return;   // 自分の書き込み
+    var d = snap.data() || {};
+    applyRemoteIndex(d);
+  }, function(err){
+    setSyncStatus("受信できません(" + ((err && err.code) || "通信") + ")");
+    realtimeOn = false;
+  });
+
+  // --- 各ページの更新時刻を受け取る ---
+  unsubPages = base.collection("pages").onSnapshot(function(qs){
+    if (qs.metadata && qs.metadata.hasPendingWrites) return;
+    qs.docChanges().forEach(function(ch){
+      if (ch.type === "removed") return;             // 削除は索引側で処理
+      var id = ch.doc.id;
+      var rts = (ch.doc.data() || {}).ts || 0;
+      onRemotePageChanged(id, rts);
+    });
+  }, function(err){
+    setSyncStatus("受信できません(" + ((err && err.code) || "通信") + ")");
+    realtimeOn = false;
+  });
+
+  realtimeOn = true;
+  setSyncStatus("接続中(変更はすぐ届きます)");
+}
+
+/* 届いたページ一覧を手元に反映する(消えたものは消さず、増えたものを足す) */
+function applyRemoteIndex(d) {
+  var remote = d.pages || [];
+  deletedIds = mergeDeleted(d.deleted || []);
+  (d.folders || []).forEach(function(f){ ensureFolder(f); });
+
+  var byId = {}, order = [], changed = false;
+  function put(p) {
+    if (!p || p.id == null || isDeleted(p.id)) return;
+    var k = String(p.id), prev = byId[k];
+    if (!prev) { byId[k] = p; order.push(k); return; }
+    if ((p.ts || 0) > (prev.ts || 0)) byId[k] = p;
+  }
+  pages.forEach(put);
+  remote.forEach(put);
+  var merged = [];
+  for (var i = 0; i < order.length; i++) merged.push(byId[order[i]]);
+  // 削除されたページを手元からも消す
+  merged = merged.filter(function(p){ return !isDeleted(p.id); });
+
+  if (merged.length !== pages.length) changed = true;
+  else for (var j = 0; j < merged.length; j++)
+    if (merged[j].title !== pages[j].title || merged[j].id !== pages[j].id) { changed = true; break; }
+
+  pages = merged;
+  saveIndex();
+  if (changed) {
+    updatePageBtn();
+    if ($("#pagesPanel").classList.contains("show")) {
+      var refresh = function(){
+        if (listIsBusy()) { setTimeout(refresh, 300); return; }
+        renderPageList();
+      };
+      setTimeout(refresh, 60);
+    }
+  }
+}
+
+/* 1ページの中身が他の端末で更新された */
+var pullQueue = Promise.resolve();
+function onRemotePageChanged(id, remoteTs) {
+  var nid = isNaN(+id) ? id : +id;
+  if (isDeleted(nid)) return;
+  pullQueue = pullQueue.then(function(){
+    return kvGet("page_" + nid).then(function(cur){
+      var localTs = (cur && cur.ts) || 0;
+      if (remoteTs <= localTs) return;                    // 手元が同じか新しい
+      // 開いているページを編集中なら、上書きしない(あとで送り直す)
+      if (nid === currentId && dirtySinceSave) {
+        statusEl.textContent = "編集中のため、この端末の内容を優先しました";
+        return;
+      }
+      return pullAndStore(nid).then(function(){
+        var pg = findPage(nid);
+        if (pg) { pg.ts = remoteTs; saveIndex(); }
+        if (nid === currentId) {
+          loadPage(nid);
+          // loadPageが状態表示を書き換えるので、少し遅らせて知らせる
+          setTimeout(function(){
+            statusEl.textContent = "他の端末の変更を反映しました";
+          }, 120);
+        } else {
+          updateCardThumb(nid);
+        }
+      });
+    });
+  }).catch(function(){});
+  return pullQueue;
 }
 
 /* ---------- 同期パネルUI ---------- */
@@ -9787,8 +10036,10 @@ function initAfterStore() {
         setSyncStatus("クラウドを確認中…");
         loadFirebase().then(function(){
           attachAuth();
-          // ログイン済みならすぐ、まだならログイン確定後に同期が走る
-          if (cloudUser()) { lastPullAt = Date.now(); syncAll(); }
+          /* ★ログインの復元は非同期。attachAuth()の直後は cloudUser() がまだ空で、
+             ここで判定すると同期が一度も走らない(iPadで「ログインできているのに
+             古いまま」の原因)。復元が終わるまで少し待ってから走らせる。 */
+          waitForLoginThenSync(12000);
         }).catch(function(){ setSyncStatus("クラウドに接続できません(端末の内容で続行)"); });
       }
       return;
