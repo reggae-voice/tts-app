@@ -521,11 +521,17 @@
     font-size:14px;font-weight:800;padding:0 6px;
   }
   #richBar #rbUnder{text-decoration:underline}
-  #richBar .rb-col,#richBar .rb-mark{
-    width:24px;min-width:24px;height:24px;border-radius:50%;
+  /* 文字色は「A」の字そのものに色を付けて示す(マーカーと見分けるため) */
+  #richBar .rb-col{
+    width:28px;min-width:28px;height:28px;border-radius:8px;
+    background:#F2EFE6;font-size:15px;font-weight:900;line-height:1;
+  }
+  /* マーカーは塗りつぶしの四角で示す */
+  #richBar .rb-mark{
+    width:26px;min-width:26px;height:22px;border-radius:5px;
     border:1.5px solid rgba(255,255,255,.35);
   }
-  #richBar .rb-mark{border-radius:6px}
+  #richBar .rb-lab{color:var(--ui-dim);font-size:9.5px;font-weight:700;padding:0 1px}
   #richBar .rb-sep{width:1px;height:20px;background:var(--ui-line)}
   #ctxbar{
     position:fixed;display:none;z-index:35;
@@ -929,7 +935,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v18.3">InkNote <small>v18.3</small></div>
+  <div class="brand" title="InkNote v18.7">InkNote <small>v18.7</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1111,13 +1117,15 @@ window.onerror = function(msg, src, line){
   <button id="rbBold" title="太字">B</button>
   <button id="rbUnder" title="下線">U</button>
   <span class="rb-sep"></span>
-  <button class="rb-col" data-c="#1C1E22" title="黒" style="background:#1C1E22"></button>
-  <button class="rb-col" data-c="#D6453C" title="赤" style="background:#D6453C"></button>
-  <button class="rb-col" data-c="#2C6BD6" title="青" style="background:#2C6BD6"></button>
-  <button class="rb-col" data-c="#1E9E5A" title="緑" style="background:#1E9E5A"></button>
+  <span class="rb-lab">字の色</span>
+  <button class="rb-col" data-c="#1C1E22" title="文字を黒に" style="color:#1C1E22">A</button>
+  <button class="rb-col" data-c="#D6453C" title="文字を赤に" style="color:#D6453C">A</button>
+  <button class="rb-col" data-c="#2C6BD6" title="文字を青に" style="color:#2C6BD6">A</button>
+  <button class="rb-col" data-c="#1E9E5A" title="文字を緑に" style="color:#1E9E5A">A</button>
   <span class="rb-sep"></span>
-  <button class="rb-mark" data-m="#FFE066" title="マーカー" style="background:#FFE066"></button>
-  <button class="rb-mark" data-m="#B6E3FF" title="マーカー(青)" style="background:#B6E3FF"></button>
+  <span class="rb-lab">マーカー</span>
+  <button class="rb-mark" data-m="#FFE066" title="黄色のマーカー" style="background:#FFE066"></button>
+  <button class="rb-mark" data-m="#B6E3FF" title="青のマーカー" style="background:#B6E3FF"></button>
   <span class="rb-sep"></span>
   <button id="rbClear" title="装飾を消す">✕</button>
 </div>
@@ -1413,6 +1421,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1442,7 +1451,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "18.3";
+var APP_VERSION = "18.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2650,12 +2659,16 @@ function sanitizeRich(html) {
       var col = n.style ? (n.style.color || "") : "";
       var bg  = n.style ? (n.style.backgroundColor || "") : "";
       var bold = n.style ? (n.style.fontWeight || "") : "";
+      // ★下線も属性を消す前に読み取る(後だと空になる)
+      var dec = n.style ? (n.style.textDecoration || n.style.textDecorationLine || "") : "";
+      if (n.tagName === "U") dec = dec || "underline";
       if (n.tagName === "FONT" && n.getAttribute("color")) col = n.getAttribute("color");
       var attrs = Array.prototype.slice.call(n.attributes || []);
       for (var a = 0; a < attrs.length; a++) n.removeAttribute(attrs[a].name);
       if (col) keep += "color:" + col + ";";
-      if (bg) keep += "background-color:" + bg + ";";
+      if (bg && bg !== "transparent") keep += "background-color:" + bg + ";";
       if (bold) keep += "font-weight:" + bold + ";";
+      if (dec && dec !== "none") keep += "text-decoration:" + dec + ";";
       if (keep) n.setAttribute("style", keep);
       walk(n);
     }
@@ -6316,7 +6329,18 @@ function restoreVersion(id, key) {
     if (!v || !v.json) { statusEl.textContent = "その版を読み込めませんでした"; return; }
     // 戻す前に、今の中身も控えに残す(戻しすぎても元に戻せるように)
     return keepVersion(id, "版を戻す前").then(function(){
-      return kvSet("page_" + id, { json: v.json, ts: Date.now() });
+      // 今の設定を土台にして、控えにあるものだけ上書きする
+      return kvGet("page_" + id).then(function(cur){
+        cur = cur || {};
+        return kvSet("page_" + id, {
+          json: v.json,
+          view: (v.view != null) ? v.view : cur.view,
+          bookmarks: (v.bookmarks != null) ? v.bookmarks : cur.bookmarks,
+          canvasMode: (v.canvasMode != null) ? v.canvasMode : cur.canvasMode,
+          bg: (v.bg != null) ? v.bg : cur.bg,
+          ts: Date.now()
+        });
+      });
     }).then(function(){
       var pg = findPage(id);
       if (pg) { pg.ts = Date.now(); saveIndex(); }
@@ -8410,12 +8434,91 @@ document.addEventListener("selectionchange", function(){
   window.__rbTimer = setTimeout(updateRichBar, 180);
 });
 
-/* 選んだ範囲に書式をかける */
-function applyRich(fn) {
+/* 選んだ範囲を <span> で包んで書式をかける。
+   ★ブラウザ任せ(execCommand)だと、環境によって文字色の指定が
+     背景色として当たってしまうことがあるため、自分で指定する。 */
+/* 選んだ文字が、装飾の入れ物(<span>など)の中身とちょうど同じなら、
+   その入れ物ごと選び直す。こうしないと入れ物が残って
+   古い色が外側に残ってしまう。 */
+function expandToStyledWrapper(r) {
+  if (!editingObj || !editingObj.el) return r;
+  for (var i = 0; i < 6; i++) {
+    var node = r.commonAncestorContainer;
+    if (node.nodeType === 3) node = node.parentNode;
+    if (!node || node === editingObj.el || !editingObj.el.contains(node)) break;
+    if (!node.getAttribute || !node.getAttribute("style")) break;
+    var full = document.createRange();
+    full.selectNodeContents(node);
+    // 中身とぴったり同じ範囲を選んでいるか
+    if (String(full.toString()) !== String(r.toString())) break;
+    var outer = document.createRange();
+    outer.selectNode(node);
+    r = outer;
+  }
+  return r;
+}
+function wrapSelection(styles, clearAll) {
   var r = selectionInsideEditing();
-  if (!r) return;
-  try { document.execCommand("styleWithCSS", false, true); } catch (e) {}
-  fn();
+  if (!r) return false;
+  r = expandToStyledWrapper(r);
+  var sel2 = window.getSelection();
+  try {
+    var frag = r.extractContents();
+    if (clearAll) {
+      // 装飾を消す: 中の書式をすべて外して文字だけ残す
+      var tmp = document.createElement("div");
+      tmp.appendChild(frag);
+      var plain = document.createTextNode(tmp.textContent || "");
+      r.insertNode(plain);
+      var pr = document.createRange();
+      pr.selectNodeContents(plain);
+      sel2.removeAllRanges(); sel2.addRange(pr);
+      return true;
+    }
+    var span = document.createElement("span");
+    for (var k in styles) if (styles.hasOwnProperty(k)) span.style[k] = styles[k];
+    // 同じ書式が中にあれば外しておく(二重掛けを防ぐ)
+    var box = document.createElement("div");
+    box.appendChild(frag);
+    var inner = box.querySelectorAll("span,b,strong,i,em,u,font");
+    for (var i = 0; i < inner.length; i++) {
+      var e2 = inner[i];
+      for (var k2 in styles) if (styles.hasOwnProperty(k2) && e2.style) e2.style[k2] = "";
+    }
+    // 中身が空になった入れ物は外す(<span></span>が残らないように)
+    for (var i2 = inner.length - 1; i2 >= 0; i2--) {
+      var e3 = inner[i2];
+      if (e3.getAttribute && !e3.getAttribute("style") && e3.parentNode) {
+        while (e3.firstChild) e3.parentNode.insertBefore(e3.firstChild, e3);
+        e3.parentNode.removeChild(e3);
+      }
+    }
+    while (box.firstChild) span.appendChild(box.firstChild);
+    r.insertNode(span);
+    // ★包んでいた要素にも同じ書式が付いていれば外す
+    //   (外側が赤・内側が緑だと、赤の中に緑が入って前の色が残って見える)
+    var par = span.parentNode;
+    while (par && editingObj && editingObj.el && par !== editingObj.el) {
+      if (par.style && par.childNodes.length === 1) {
+        for (var k3 in styles) if (styles.hasOwnProperty(k3)) par.style[k3] = "";
+        if (par.getAttribute && !par.getAttribute("style")) {
+          var gp = par.parentNode;
+          while (par.firstChild) gp.insertBefore(par.firstChild, par);
+          gp.removeChild(par);
+          par = gp;
+          continue;
+        }
+      }
+      par = par.parentNode;
+    }
+    var nr = document.createRange();
+    nr.selectNodeContents(span);
+    sel2.removeAllRanges(); sel2.addRange(nr);
+    return true;
+  } catch (e) { return false; }
+}
+function applyRich(styles, clearAll) {
+  if (!wrapSelection(styles, clearAll)) return;
   if (editingObj) {
     measureObj(editingObj);
     syncEmptyClass(editingObj);
@@ -8423,31 +8526,53 @@ function applyRich(fn) {
   }
   setTimeout(updateRichBar, 30);
 }
+/* 選んだ範囲がすでにその書式か(押すたびに戻せるように)。
+   ★選んだ範囲そのものを包んでいる要素だけを見る。
+     親をたどると、外側の別の装飾を自分のものと勘違いしてしまう。 */
+function styleValueOf(node, prop) {
+  if (!node) return "";
+  if (node.nodeType === 3) node = node.parentNode;
+  if (!node || !node.style) return "";
+  return String(node.style[prop] || "");
+}
+function selectionHas(prop, val) {
+  var r = selectionInsideEditing();
+  if (!r) return false;
+  // 範囲がちょうど1つの要素の中身と一致する時だけ「その書式」とみなす
+  var node = r.commonAncestorContainer;
+  var v = styleValueOf(node, prop);
+  if (!v) return false;
+  if (v === "none" || v === "400" || v === "transparent" || v === "normal") return false;
+  if (!val) return true;
+  return v.replace(/\s/g, "").toLowerCase() === String(val).replace(/\s/g, "").toLowerCase();
+}
 function bindRichBar() {
   var b = rbEl();
   if (!b) return;
   // バーを押した時に文字の選択が外れないようにする
   b.addEventListener("pointerdown", function(ev){ ev.preventDefault(); });
-  $("#rbBold").onclick = function(){ applyRich(function(){ document.execCommand("bold"); }); };
-  $("#rbUnder").onclick = function(){ applyRich(function(){ document.execCommand("underline"); }); };
+  $("#rbBold").onclick = function(){
+    var on = selectionHas("fontWeight");
+    applyRich({ fontWeight: on ? "400" : "700" });
+  };
+  $("#rbUnder").onclick = function(){
+    var on = selectionHas("textDecoration");
+    applyRich({ textDecoration: on ? "none" : "underline" });
+  };
+  // ★文字そのものの色(背景ではない)
   var cols = b.querySelectorAll(".rb-col");
   for (var i = 0; i < cols.length; i++)
     cols[i].addEventListener("click", function(){
-      var c = this.getAttribute("data-c");
-      applyRich(function(){ document.execCommand("foreColor", false, c); });
+      applyRich({ color: this.getAttribute("data-c") });
     });
+  // ★マーカー(背景の色)
   var mks = b.querySelectorAll(".rb-mark");
   for (var j = 0; j < mks.length; j++)
     mks[j].addEventListener("click", function(){
       var m = this.getAttribute("data-m");
-      applyRich(function(){
-        if (!document.execCommand("hiliteColor", false, m))
-          document.execCommand("backColor", false, m);
-      });
+      applyRich({ backgroundColor: selectionHas("backgroundColor", m) ? "transparent" : m });
     });
-  $("#rbClear").onclick = function(){
-    applyRich(function(){ document.execCommand("removeFormat"); });
-  };
+  $("#rbClear").onclick = function(){ applyRich(null, true); };
 }
 bindRichBar();
 
@@ -9469,19 +9594,65 @@ function pageDocRef(id) {
   var u = cloudUser();
   return fdb().collection("users").doc(u.uid).collection("pages").doc(String(id));
 }
-function cloudPushPage(id) {
+/* 中身が変わったかを見分ける印(長さと簡単な合計値) */
+function contentStamp(json) {
+  var s = String(json || ""), h = 0;
+  for (var i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }
+  return s.length + ":" + h;
+}
+/* ★端末の時計に頼らない「版番号」で新旧を決める。
+   時計は端末ごとにずれるため、時刻で比べると「時計が進んでいる端末の
+   古い内容」が勝ってしまい、他の端末の新しい編集を消してしまう。 */
+function cloudPushPage(id, force) {
   var u = cloudUser();
   if (!u) return Promise.resolve();
+  var base = pageDocRef(id);
   return kvGet("page_" + id).then(function(payload){
     if (!payload) return;
-    var str = JSON.stringify(payload);
-    var n = Math.max(1, Math.ceil(str.length / CLOUD_CHUNK));
-    var base = pageDocRef(id);
-    var batch = fdb().batch();
-    batch.set(base, { ts: payload.ts || Date.now(), chunks: n });
-    for (var i = 0; i < n; i++)
-      batch.set(base.collection("data").doc(String(i)), { s: str.substr(i * CLOUD_CHUNK, CLOUD_CHUNK) });
-    return batch.commit();
+    return base.get().then(function(snap){
+      var rd = (snap && snap.exists) ? (snap.data() || {}) : {};
+      var remoteRev = rd.rev || 0;
+      var localRev = payload.rev || 0;
+      var stamp = contentStamp(payload.json);
+
+      // 中身が同じなら送らない(開いただけで上書きするのを防ぐ)
+      if (!force && rd.stamp && rd.stamp === stamp) return;
+
+      /* ★相手の方が進んでいる版なら、こちらの古い内容で塗り潰さない。
+         先に取り込んでもらう(この端末に未保存の編集がある時だけ上書きする)。 */
+      /* ★この端末がまだ見ていない新しい版がクラウドにある場合は、
+         たとえこの端末で何か編集していても、黙って上書きしない。
+         ここを通していたため「iPadで何か操作しただけで、スマホの
+         新しい内容がiPadの古い内容に置き換わる」ことが起きていた。
+         この端末の内容は控えに残してから、新しい方を取り込む。 */
+      if (!force && remoteRev > localRev) {
+        var wasDirty = (id === currentId && dirtySinceSave);
+        return keepVersion(id, "他の端末の新しい版を取り込む前").then(function(){
+          return onRemotePageChanged(id, rd.ts || 0, remoteRev, rd.stamp || "", true);
+        }).then(function(){
+          dirtySinceSave = false;      // 控えに残したので、この端末の未保存分は畳む
+          setSyncStatus("他の端末の新しい内容を取り込みました");
+          if (wasDirty) {
+            setTimeout(function(){
+              statusEl.textContent =
+                "この端末の編集は ⋮→「以前の版に戻す」から取り出せます";
+            }, 60);
+          }
+        });
+      }
+
+      var newRev = Math.max(remoteRev, localRev) + 1;
+      payload.rev = newRev;
+      var str = JSON.stringify(payload);
+      var n = Math.max(1, Math.ceil(str.length / CLOUD_CHUNK));
+      var batch = fdb().batch();
+      batch.set(base, { ts: payload.ts || Date.now(), rev: newRev, stamp: stamp, chunks: n });
+      for (var i = 0; i < n; i++)
+        batch.set(base.collection("data").doc(String(i)), { s: str.substr(i * CLOUD_CHUNK, CLOUD_CHUNK) });
+      return batch.commit().then(function(){
+        return kvSet("page_" + id, payload);      // 版番号を手元にも残す
+      });
+    });
   });
 }
 function cloudPullPage(id) {
@@ -9646,7 +9817,11 @@ function keepVersion(id, why) {
     var key = "ver_" + id + "_" + (cur.ts || Date.now());
     return kvGet(key).then(function(exists){
       if (exists) return;               // 同じ版は二重に残さない
+      // ★用紙の向き・背景・しおりも一緒に控える
+      //   (これが無いと、版を戻した時にA4縦がA4横に変わってしまう)
       return kvSet(key, { json: cur.json, ts: cur.ts || Date.now(),
+                          view: cur.view, bookmarks: cur.bookmarks,
+                          canvasMode: cur.canvasMode, bg: cur.bg,
                           count: cnt, why: why || "", savedAt: Date.now() });
     }).then(function(){ return trimVersions(id); });
   }).catch(function(){});
@@ -9695,8 +9870,13 @@ function pullAndStore(id, force) {
     if (!payload || !payload.json) return;
     return kvGet("page_" + id).then(function(cur){
       if (!force && cur && cur.json) {
-        var curTs = cur.ts || 0, newTs = payload.ts || 0;
-        if (curTs > newTs) return;      // 手元の方が新しい → 守る
+        var curRev = cur.rev || 0, newRev = payload.rev || 0;
+        if (curRev || newRev) {
+          if (newRev <= curRev) return;               // 版番号で判定(時計に頼らない)
+        } else {
+          var curTs = cur.ts || 0, newTs = payload.ts || 0;
+          if (curTs > newTs) return;                  // 版番号が無い古いデータ用
+        }
       }
       return keepVersion(id, "同期で取り込む前").then(function(){
         return kvSet("page_" + id, payload);
@@ -9889,8 +10069,8 @@ function startRealtime() {
     qs.docChanges().forEach(function(ch){
       if (ch.type === "removed") return;             // 削除は索引側で処理
       var id = ch.doc.id;
-      var rts = (ch.doc.data() || {}).ts || 0;
-      onRemotePageChanged(id, rts);
+      var d = ch.doc.data() || {};
+      onRemotePageChanged(id, d.ts || 0, d.rev || 0, d.stamp || "");
     });
   }, function(err){
     setSyncStatus("受信できません(" + ((err && err.code) || "通信") + ")");
@@ -9941,19 +10121,26 @@ function applyRemoteIndex(d) {
 
 /* 1ページの中身が他の端末で更新された */
 var pullQueue = Promise.resolve();
-function onRemotePageChanged(id, remoteTs) {
+function onRemotePageChanged(id, remoteTs, remoteRev, remoteStamp, forcePull) {
   var nid = isNaN(+id) ? id : +id;
   if (isDeleted(nid)) return;
   pullQueue = pullQueue.then(function(){
     return kvGet("page_" + nid).then(function(cur){
       var localTs = (cur && cur.ts) || 0;
-      if (remoteTs <= localTs) return;                    // 手元が同じか新しい
+      var localRev = (cur && cur.rev) || 0;
+      /* ★新旧は版番号で決める(時計のずれに影響されないため)。
+         版番号が分かる時は時刻を見ない。 */
+      if (remoteRev != null && remoteRev > 0) {
+        if (remoteStamp && cur && contentStamp(cur.json) === remoteStamp) return;  // 同じ中身
+        if (remoteRev <= localRev) return;                // 手元が同じか新しい
+      } else if (remoteTs <= localTs) return;             // 版番号が無い古いデータ用
       // 開いているページを編集中なら、上書きしない(あとで送り直す)
-      if (nid === currentId && dirtySinceSave) {
+      // ただし控えを取った後(forcePull)は、取り込みを優先する
+      if (!forcePull && nid === currentId && dirtySinceSave) {
         statusEl.textContent = "編集中のため、この端末の内容を優先しました";
         return;
       }
-      return pullAndStore(nid).then(function(){
+      return pullAndStore(nid, forcePull).then(function(){
         var pg = findPage(nid);
         if (pg) { pg.ts = remoteTs; saveIndex(); }
         if (nid === currentId) {
