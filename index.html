@@ -909,7 +909,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v17.0">InkNote <small>v17.0</small></div>
+  <div class="brand" title="InkNote v17.1">InkNote <small>v17.1</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1378,6 +1378,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1407,7 +1408,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "17.0";
+var APP_VERSION = "17.1";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -8149,6 +8150,18 @@ function loadMathJax() {
     });
   return mathReady;
 }
+/* 組版の前に整える。
+   「\ 」(バックスラッシュ+空白)などの空白命令は、環境によって
+   バックスラッシュがそのまま字として出てしまうので、素の空白に直す。 */
+function sanitizeLatex(s) {
+  s = String(s || "");
+  s = s.replace(/\\[ \t]/g, " ");        // \␣ → 空白
+  s = s.replace(/\\quad|\\qquad/g, "  ");
+  s = s.replace(/\\[,;:!]/g, " ");        // \, \; \: \! → 空白
+  s = s.replace(/\\\\(?!\w)/g, " ");     // 単独の \\ は改行指定 → 空白に
+  s = s.replace(/[ \t]{2,}/g, " ");
+  return s.trim();
+}
 /* 入力からLaTeXの本体を取り出す($ や \( \) を外す) */
 function stripMathDelims(s) {
   s = String(s || "").trim();
@@ -8161,7 +8174,15 @@ function stripMathDelims(s) {
 /* LaTeX → SVGのデータURL。太さと色は今のテーマに合わせる */
 function renderLatexToImage(latex, px) {
   return loadMathJax().then(function(){
-    var node = window.MathJax.tex2svg(latex, { display: true });
+    var tex = sanitizeLatex(latex);
+    var node = window.MathJax.tex2svg(tex, { display: true });
+    // うまく組めなかった時(赤いエラー表示など)は、装飾を外してもう一度試す
+    if (node.querySelector && node.querySelector("[data-mjx-error], mjx-merror")) {
+      var plain = tex.replace(/\\text\s*\{([^{}]*)\}/g, "$1")
+                     .replace(/\\mathrm\s*\{([^{}]*)\}/g, "$1");
+      var retry = window.MathJax.tex2svg(plain, { display: true });
+      if (retry.querySelector && !retry.querySelector("[data-mjx-error], mjx-merror")) node = retry;
+    }
     var svg = node.querySelector("svg");
     if (!svg) throw new Error("render failed");
     // 文字色をノートのペン色に合わせる
@@ -9112,16 +9133,63 @@ function cloudPushIndex() {
       .then(function(){ return saveIndex(); });
   });
 }
+var pendingPushId = null;      // まだクラウドへ送れていないページ
 function scheduleCloudPush(id) {
   if (!cloudUser()) return;
+  pendingPushId = id;
   clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(function(){
-    setSyncStatus("同期中…");
-    cloudPushPage(id).then(cloudPushIndex).then(function(){
-      setSyncStatus("同期済み " + new Date().toTimeString().slice(0, 5));
-    }).catch(function(){ setSyncStatus("同期エラー(オフライン?)"); });
-  }, 3000);
+  cloudTimer = setTimeout(function(){ flushCloudPush(); }, 3000);
 }
+/* たまっている分をすぐ送る(画面を離れる時など) */
+function flushCloudPush() {
+  if (!cloudUser() || pendingPushId == null) return Promise.resolve();
+  var id = pendingPushId;
+  pendingPushId = null;
+  clearTimeout(cloudTimer);
+  setSyncStatus("同期中…");
+  return cloudPushPage(id).then(cloudPushIndex).then(function(){
+    setSyncStatus("同期済み " + new Date().toTimeString().slice(0, 5));
+  }).catch(function(){
+    pendingPushId = id;                       // 失敗したら次の機会に送り直す
+    setSyncStatus("同期エラー(オフライン?)");
+  });
+}
+
+/* ===== いつ保存して、いつ読み込むか =====
+   ・編集 → 3秒後に自動でクラウドへ(従来どおり)
+   ・画面を離れる/アプリを切り替える → その場ですぐ送る(取りこぼし防止)
+   ・画面に戻る → クラウドから取り直す(他の端末の更新を反映)
+   ・開いている間は1分ごとに取り直す                                     */
+var lastPullAt = 0;
+function pullIfStale(minMs) {
+  if (!cloudUser() || syncing) return;
+  if (Date.now() - lastPullAt < (minMs || 20000)) return;
+  lastPullAt = Date.now();
+  syncAll();
+}
+(function(){
+  document.addEventListener("visibilitychange", function(){
+    if (document.visibilityState === "hidden") {
+      saveDocNow();                    // 端末内へ即保存
+      flushCloudPush();                // クラウドへも即送信
+      // 保存処理は非同期で送信を積み直すので、そのぶんも送りきる
+      setTimeout(flushCloudPush, 120);
+      setTimeout(flushCloudPush, 600);
+    } else {
+      lastPullAt = 0;                  // 戻ってきたら必ず取り直す
+      setTimeout(function(){ pullIfStale(0); }, 300);
+    }
+  });
+  window.addEventListener("pagehide", function(){
+    saveDocNow(); flushCloudPush(); setTimeout(flushCloudPush, 120);
+  });
+  window.addEventListener("focus", function(){ setTimeout(function(){ pullIfStale(15000); }, 200); });
+  window.addEventListener("online", function(){ flushCloudPush(); setTimeout(function(){ pullIfStale(0); }, 500); });
+  // 開いている間は1分ごとに確認
+  setInterval(function(){
+    if (document.visibilityState === "visible") pullIfStale(60000);
+  }, 60000);
+})();
 
 /* ---------- 全体同期(起動時・ログイン時・手動) ---------- */
 /* ===== 版の履歴 =====
