@@ -909,7 +909,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v16.8">InkNote <small>v16.8</small></div>
+  <div class="brand" title="InkNote v16.9">InkNote <small>v16.9</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1306,6 +1306,11 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
       <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
     </div>
+    <div class="st-row"><span class="st-label">画像</span>
+      <button class="stybtn iq-opt sel" data-iq="high">高画質</button>
+      <button class="stybtn iq-opt" data-iq="small">容量優先</button>
+      <span style="color:var(--ui-dim);font-size:11px">スクショの文字を残すなら高画質</span>
+    </div>
     <div class="st-row"><span class="st-label">数式</span>
       <button class="stybtn" id="mathAddBtn">∑ 数式を追加</button>
       <span style="color:var(--ui-dim);font-size:11px">分数・指数をきれいに組んで貼る</span>
@@ -1402,7 +1407,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "16.8";
+var APP_VERSION = "16.9";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1504,6 +1509,7 @@ try {
     if (_st.bg) bgStyle = _st.bg;
     if (typeof _st.pressure === "boolean") usePressure = _st.pressure;
     if (typeof _st.eraserAuto === "boolean") eraserAuto = _st.eraserAuto;
+    if (_st.imgQuality === "high" || _st.imgQuality === "small") imgQuality = _st.imgQuality;
     if (_st.penDyn === "off" || _st.penDyn === "pressure" || _st.penDyn === "auto") penDyn = _st.penDyn;
     else penDyn = usePressure ? "pressure" : "off";      // 旧設定からの引き継ぎ
     usePressure = (penDyn !== "off");
@@ -1517,7 +1523,7 @@ function saveSettings() {
     localStorage.setItem("inknote_settings",
       JSON.stringify({ pen: pen, fingerDraws: fingerDraws, fingerManual: fingerManual,
                        lastStylusAt: lastStylusAt,
-                       eraser: eraser, eraserAuto: eraserAuto,
+                       eraser: eraser, eraserAuto: eraserAuto, imgQuality: imgQuality,
                        bg: bgStyle, pressure: usePressure, penDyn: penDyn, theme: themeName,
                        minimap: showMini, shapeStyle: shapeStyle, canvasMode: canvasMode }));
   } catch (e) {}
@@ -6476,6 +6482,7 @@ function openMenu() {
     cvs[k2].classList.toggle("sel", cvs[k2].getAttribute("data-cv") === canvasMode);
   syncDynUI();
   syncEraserAutoUI();
+  syncImgQualityUI();
   $("#mmToggle").classList.toggle("on", showMini);
   $("#msToggle").classList.toggle("on", memorizeMode);
   $("#menuPanel").classList.add("show");
@@ -6800,20 +6807,45 @@ $("#psAdd").onclick = function(){
 /* =========================================================
    容量対策: 画像圧縮 / 使用量表示
 ========================================================= */
+/* 画像の取り込み方。
+   "high" : 文字が読めることを優先(スクショ向け・既定)
+   "small": 容量を優先(写真をたくさん貼る時)
+   ★スマホのスクショは1080×2400などで、以前は1600pxに縮めた上にJPEGへ
+     変換していたため、文字がつぶれて読めなくなっていた。 */
+var imgQuality = "high";
 function compressImage(img, mime) {
-  var MAX = 1600;
-  var scale = Math.min(1, MAX / Math.max(img.width, img.height));
-  // 小さめのPNG(図・スクショで透過の可能性)はそのまま保持
-  if (mime === "image/png" && Math.max(img.width, img.height) <= 1200) return null;
+  var longSide = Math.max(img.width, img.height);
+  var isPng = (mime === "image/png");
+
+  if (imgQuality === "high") {
+    // 文字のスクショはそのまま残すのが一番きれい(縮小も再圧縮もしない)
+    if (longSide <= 2800) return null;
+    // それ以上に大きい時だけ縮める。PNGはPNGのまま(文字がにじまない)
+    var s1 = 2800 / longSide;
+    var c1 = document.createElement("canvas");
+    c1.width = Math.max(1, Math.round(img.width * s1));
+    c1.height = Math.max(1, Math.round(img.height * s1));
+    var g1 = c1.getContext("2d");
+    if (g1.imageSmoothingQuality) g1.imageSmoothingQuality = "high";
+    if (!isPng) { g1.fillStyle = "#fff"; g1.fillRect(0, 0, c1.width, c1.height); }
+    g1.drawImage(img, 0, 0, c1.width, c1.height);
+    return isPng ? c1.toDataURL("image/png") : c1.toDataURL("image/jpeg", 0.94);
+  }
+
+  // 容量優先(従来の考え方。ただし画質は少し上げる)
+  var MAX = 1800;
+  var scale = Math.min(1, MAX / longSide);
+  if (isPng && longSide <= 1400) return null;
   if (scale >= 1 && mime === "image/jpeg") return null;
   var c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(img.width * scale));
   c.height = Math.max(1, Math.round(img.height * scale));
   var g = c.getContext("2d");
+  if (g.imageSmoothingQuality) g.imageSmoothingQuality = "high";
   g.fillStyle = "#fff";
   g.fillRect(0, 0, c.width, c.height);
   g.drawImage(img, 0, 0, c.width, c.height);
-  return c.toDataURL("image/jpeg", 0.85);
+  return c.toDataURL("image/jpeg", 0.9);
 }
 function updateUsage() {
   var el = $("#usageInfo");
@@ -8532,6 +8564,24 @@ $("#ctxMath").onclick = function(e){
   else openFormulaInput();
 };
 $("#tocOpenBtn").onclick = function(){ closeMenu(); setTimeout(openToc, 80); };
+(function(){
+  var iq = document.querySelectorAll(".iq-opt");
+  for (var i = 0; i < iq.length; i++)
+    iq[i].addEventListener("click", function(){
+      imgQuality = this.getAttribute("data-iq");
+      var all = document.querySelectorAll(".iq-opt");
+      for (var j = 0; j < all.length; j++) all[j].classList.toggle("sel", all[j] === this);
+      saveSettings();
+      statusEl.textContent = (imgQuality === "high")
+        ? "高画質: スクショの文字がそのまま残ります"
+        : "容量優先: 大きい画像を縮めて保存します";
+    });
+})();
+function syncImgQualityUI() {
+  var iq = document.querySelectorAll(".iq-opt");
+  for (var i = 0; i < iq.length; i++)
+    iq[i].classList.toggle("sel", iq[i].getAttribute("data-iq") === imgQuality);
+}
 $("#mathAddBtn").onclick = function(){ closeMenu(); setTimeout(function(){ setSelection([]); openFormulaInput(); }, 120); };
 $("#tocShowToggle").onclick = function(){
   showAnchors = !showAnchors;
