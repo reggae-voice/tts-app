@@ -909,7 +909,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v17.1">InkNote <small>v17.1</small></div>
+  <div class="brand" title="InkNote v17.2">InkNote <small>v17.2</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -952,6 +952,7 @@ window.onerror = function(msg, src, line){
   <div class="prow">
     <span class="plabel">モード</span>
     <button class="stybtn ls-mode sel" data-m="select">選択</button>
+    <button class="stybtn ls-mode" data-m="rect">▭ 長方形で切る</button>
     <button class="stybtn ls-mode" data-m="dup">⧉ 複製</button>
     <button class="stybtn ls-mode" data-m="shot">📋 他アプリへ</button>
     <button class="stybtn ls-mode" data-m="save">💾 保存</button>
@@ -1378,7 +1379,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1408,7 +1408,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "17.1";
+var APP_VERSION = "17.2";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4477,8 +4477,15 @@ function copyCanvasToClipboard(c) {
    囲んだ内側だけの画像と、そこをくり抜いた残りの画像の2つに分ける。
    元の解像度で切るので、切っても画質は落ちない。 */
 function cutImageByPath(o, path, px1, py1, px2, py2) {
-  var img = o.el && o.el.querySelector ? o.el.querySelector("img") : null;
-  if (!img || !img.src) return null;
+  // 画面上の<img>を使う。無い/読み込み前なら、保存してあるデータから作り直す
+  var img = (o.el && o.el.querySelector) ? o.el.querySelector("img") : null;
+  if ((!img || !img.src) && o.src) {
+    img = new Image();
+    img.src = o.src;
+  }
+  if (!img) return null;
+  if (!img.src && o.src) img.src = o.src;
+  if (!img.src) return null;
   // 表示上の大きさ(o.w/o.h)と、元データの大きさの比。元の細かさで切り出す
   var natW = img.naturalWidth || o.w, natH = img.naturalHeight || o.h;
   var sx = natW / (o.w || natW), sy = natH / (o.h || natH);
@@ -4628,7 +4635,27 @@ function finishLasso() {
   var path = lassoPath;
   lassoPath = null;
   inkDirty = true;
-  if (!path || path.length < 3) return;
+  // 長方形は始点と終点の2点あれば足りる(囲む必要がない)
+  var minPts = (lassoMode === "rect") ? 2 : 3;
+  if (!path || path.length < minPts) return;
+  if (lassoMode === "rect") {
+    // なぞった範囲を四角くして切る(縦横をきっちり合わせたい時に使う)
+    var rx1 = Infinity, ry1 = Infinity, rx2 = -Infinity, ry2 = -Infinity;
+    for (var r0 = 0; r0 < path.length; r0++) {
+      var rp = path[r0];
+      if (rp.x < rx1) rx1 = rp.x;
+      if (rp.y < ry1) ry1 = rp.y;
+      if (rp.x > rx2) rx2 = rp.x;
+      if (rp.y > ry2) ry2 = rp.y;
+    }
+    if (rx2 - rx1 < 4 || ry2 - ry1 < 4) {
+      statusEl.textContent = "範囲が小さすぎます(斜めになぞってください)";
+      return;
+    }
+    performLassoCut([{ x: rx1, y: ry1 }, { x: rx2, y: ry1 },
+                     { x: rx2, y: ry2 }, { x: rx1, y: ry2 }]);
+    return;
+  }
   if (lassoMode === "cut") { performLassoCut(path); return; }
   if (lassoMode === "dup") { performLassoDup(path); return; }
   if (lassoMode === "shot") { performLassoShot(path, "clipboard"); return; }
@@ -5103,6 +5130,7 @@ $("#penAutoBtn").onclick = function(){
 syncDynUI();
 var LS_HINT = {
   select: "選択: 囲んだものを掴む(移動・削除・複製)",
+  rect:   "長方形で切る: 斜めになぞった範囲を四角く切り取ります",
   dup:    "複製: 囲んだものをこのノート内に複製(そのまま動かせます)",
   shot:   "他アプリへ: 囲んだ範囲を画像でコピー(このノートには貼れません)",
   save:   "保存: 囲んだ範囲をPNG画像として端末に保存",
