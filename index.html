@@ -909,7 +909,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v17.2">InkNote <small>v17.2</small></div>
+  <div class="brand" title="InkNote v17.8">InkNote <small>v17.8</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1408,7 +1408,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "17.2";
+var APP_VERSION = "17.8";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2298,19 +2298,24 @@ function rebuildScene(json) {
   }
   setSelection([]);
   inkDirty = true;
+  dirtySinceSave = false;      // 開いただけでは「編集した」ことにしない
   // ★文字の実寸が出てからマーカーの位置を合わせ直す。
   //   端末ごとにフォントが違い、行の折り返しや高さが変わるため、
   //   これをしないと「引いた位置とズレる」ことになる。
+  /* ★ここでは保存しない。
+     マーカーの位置合わせは「その端末のフォントに合わせた表示上の調整」で、
+     開くたびに作り直せる。保存すると更新時刻が変わり、
+     フォントの違う端末どうしで保存を送り合う無限ループになる。 */
   setTimeout(function(){
     refreshMeasures();
-    if (realignHighlighters()) scheduleSave();
+    realignHighlighters();
   }, 60);
   // 端末によってはフォントの読み込みが遅れるので、もう一度合わせる
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(function(){
       setTimeout(function(){
         refreshMeasures();
-        if (realignHighlighters()) scheduleSave();
+        realignHighlighters();
       }, 30);
     }).catch(function(){});
   }
@@ -5479,21 +5484,30 @@ function recoverLostPages() {
   });
 }
 
+/* 未保存の変更があるか。
+   同期のたびに「編集していないのに更新時刻を新しくする」のを防ぐために使う
+   (それをやると、いつも手元が最新と判定されて他端末の変更を取り込めない) */
+var dirtySinceSave = false;
 function scheduleSave() {
+  dirtySinceSave = true;
   statusEl.textContent = "保存中…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveDoc, 700);
 }
 function saveDoc() {
-  if (currentId == null) return;
+  if (currentId == null) return Promise.resolve();
+  dirtySinceSave = false;
   // canvasModeはノートの属性(A4横で作ったノートはどの端末でもA4横)。
   // 端末ごとのlocalStorage設定だと他端末に伝わらないため、ページ側に持たせる。
   var payload = { json: serializeScene(), view: view, bookmarks: bookmarks,
                   canvasMode: canvasMode, bg: bgStyle, ts: Date.now() };
   var pid = currentId;
-  kvSet("page_" + pid, payload).then(function(ok){
+  // ★書き込みの完了を返す。同期はこれを待ってから始める
+  //   (待たないと、書き終わる前の古い中身をクラウドへ送ってしまう)
+  var done = kvSet("page_" + pid, payload).then(function(ok){
     statusEl.textContent = ok ? "保存済み ✓" : "保存エラー";
     scheduleCloudPush(pid);
+    return ok;
   });
   var pg = findPage(currentId);
   if (pg) { pg.ts = Date.now(); saveIndex(); }
@@ -5505,6 +5519,7 @@ function saveDoc() {
     window.__lastVer[pid] = Date.now();
     keepVersion(pid, "自動");
   }
+  return done;
 }
 /* ---- サムネイル: 保存が落ち着いたら小さなJPEGを作って残す(端末内のみ) ---- */
 var thumbTimer = null;
@@ -5679,7 +5694,7 @@ function refreshStaleThumbs() {
   }
   step();
 }
-function saveDocNow() { clearTimeout(saveTimer); saveDoc(); }
+function saveDocNow() { clearTimeout(saveTimer); return saveDoc(); }
 function saveIndex() {
   return kvSet("pages_index", { pages: pages, currentId: currentId,
                                 deleted: deletedIds, folders: folders });
@@ -6463,12 +6478,41 @@ var tapDownCard = null, tapUpCard = null;
     tapUpCard = (ev.target.closest) ? ev.target.closest(".pp-card") : null;
   }, true);
 })();
+/* ★ノート一覧を開いたら、その場でクラウドを見に行く。
+   起動時も一覧から始まるので、ここを押さえておけば
+   「他の端末で編集したのに古いまま」が起きない。 */
+function pullOnOpenList() {
+  // ★編集直後に一覧を開いた時、まだ保存できていない分があると
+  //   「手元の方が古い」と誤判定されかねない。先に確定させる。
+  if (dirtySinceSave) saveDocNow();
+  if (!cloudUser()) return;
+  if (syncing) return;
+  if (Date.now() - lastPullAt < 3000) return;   // 開き直しの連打だけは抑える
+  lastPullAt = Date.now();
+  setSyncStatus("クラウドを確認中…");
+  var before = pages.length;
+  syncAll().then(function(){
+    // 中身が変わっていれば一覧を作り直す(操作中は少し待つ)
+    var tries = 0;
+    var refresh = function(){
+      if (!$("#pagesPanel").classList.contains("show")) return;
+      // 指で触っている間は待つ(カードが入れ替わって誤タップになるのを防ぐ)
+      if (listIsBusy() && tries < 12) { tries++; setTimeout(refresh, 300); return; }
+      renderPageList();
+      updatePageBtn();
+    };
+    setTimeout(refresh, 60);
+    if (pages.length !== before)
+      statusEl.textContent = "クラウドから " + pages.length + " 件を読み込みました";
+  }).catch(function(){});
+}
 function openPages() {
-  markListBusy(1500);
+  markListBusy(400);          // 開いた直後はまだ触っていないので短くてよい
   $("#pagesPanel").classList.toggle("tall", pagesTall);
   setToolsOpen(toolsOpen);
   renderPageList();
   refreshThumbIfOld(currentId);
+  pullOnOpenList();                      // ★開いたらクラウドを確認
   setTimeout(refreshStaleThumbs, 400);   // 内容より古いサムネを順番に作り直す
   updateUsage();
   $("#pagesPanel").classList.add("show");
@@ -9189,6 +9233,7 @@ function flushCloudPush() {
    ・画面に戻る → クラウドから取り直す(他の端末の更新を反映)
    ・開いている間は1分ごとに取り直す                                     */
 var lastPullAt = 0;
+var keptLocalOnSync = false;   // 同期中に編集していて、手元を優先したか
 function pullIfStale(minMs) {
   if (!cloudUser() || syncing) return;
   if (Date.now() - lastPullAt < (minMs || 20000)) return;
@@ -9198,7 +9243,9 @@ function pullIfStale(minMs) {
 (function(){
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState === "hidden") {
-      saveDocNow();                    // 端末内へ即保存
+      // 編集がある時だけ保存する。無条件だと更新時刻だけが新しくなり、
+      // 実際には何も変わっていないのに他端末へ送り続けることになる
+      if (dirtySinceSave) saveDocNow();
       flushCloudPush();                // クラウドへも即送信
       // 保存処理は非同期で送信を積み直すので、そのぶんも送りきる
       setTimeout(flushCloudPush, 120);
@@ -9209,7 +9256,8 @@ function pullIfStale(minMs) {
     }
   });
   window.addEventListener("pagehide", function(){
-    saveDocNow(); flushCloudPush(); setTimeout(flushCloudPush, 120);
+    if (dirtySinceSave) saveDocNow();
+    flushCloudPush(); setTimeout(flushCloudPush, 120);
   });
   window.addEventListener("focus", function(){ setTimeout(function(){ pullIfStale(15000); }, 200); });
   window.addEventListener("online", function(){ flushCloudPush(); setTimeout(function(){ pullIfStale(0); }, 500); });
@@ -9296,8 +9344,17 @@ function syncAll() {
   if (!u || syncing) return Promise.resolve();
   syncing = true;
   setSyncStatus("同期中…");
-  if (currentId != null) saveDocNow();
-  return fdb().collection("users").doc(u.uid).collection("meta").doc("index").get()
+  /* ★ここで無条件にsaveDocNow()すると、何も編集していなくても
+     更新時刻が「今」に書き換わり、常に「手元が最新」と判定されて
+     他の端末の変更を取り込めなくなる(PCで開いても古いままの原因)。
+     未保存の変更がある時だけ保存し、★書き終わるまで待ってから同期する。 */
+  var preSave = (currentId != null && dirtySinceSave)
+              ? Promise.resolve(saveDocNow()).catch(function(){})
+              : Promise.resolve();
+  var syncStartedAt = Date.now();
+  return preSave.then(function(){
+    return fdb().collection("users").doc(u.uid).collection("meta").doc("index").get();
+  })
   .then(function(snap){
     var remotePages = (snap.exists && snap.data().pages) || [];
     var remoteDeleted = (snap.exists && snap.data().deleted) || [];
@@ -9350,12 +9407,27 @@ function syncAll() {
         if (pages.length) loadPage(pages[0].id);   // クラウドから復元した場合
         else { renderPageList(); updatePageBtn(); }
       } else if (pulledCurrent) {
-        loadPage(currentId);         // 現在ページが更新されたら読み直し
+        // ★同期の最中に書き足していたら、読み直して消してしまわない。
+        //   手元の内容を優先し、そのままクラウドへ送り直す。
+        if (dirtySinceSave) {
+          keptLocalOnSync = true;      // 後で同期完了の表示に上書きされないよう覚えておく
+          saveDocNow();
+          renderPageList();
+          updatePageBtn();
+        } else {
+          loadPage(currentId);       // 現在ページが更新されたら読み直し
+        }
       } else {
         renderPageList();
         updatePageBtn();
       }
       setSyncStatus("同期済み " + new Date().toTimeString().slice(0, 5));
+      if (keptLocalOnSync) {
+        keptLocalOnSync = false;
+        setTimeout(function(){
+          statusEl.textContent = "編集中だったので、この端末の内容を優先しました";
+        }, 40);
+      }
       if (booting) { booting = false; if (!pages.length) createFirstPage(); }
     });
   }).catch(function(err){
@@ -9707,6 +9779,18 @@ function initAfterStore() {
       loadPage(cur);
       // 起動画面としてノート一覧を出す(前回の続きはカードから1タップで開ける)
       if (openListOnStart) setTimeout(function(){ openPages(); }, 350);
+
+      /* ★端末に保存があっても、必ずクラウドを読みに行く。
+         以前はここで終わっていたため、他の端末で編集した内容が
+         起動しても反映されなかった(この端末の古い内容のまま)。 */
+      if (syncEnabled()) {
+        setSyncStatus("クラウドを確認中…");
+        loadFirebase().then(function(){
+          attachAuth();
+          // ログイン済みならすぐ、まだならログイン確定後に同期が走る
+          if (cloudUser()) { lastPullAt = Date.now(); syncAll(); }
+        }).catch(function(){ setSyncStatus("クラウドに接続できません(端末の内容で続行)"); });
+      }
       return;
     }
     deletedIds = (idx && idx.deleted) || [];
