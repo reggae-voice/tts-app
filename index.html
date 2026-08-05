@@ -909,7 +909,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v16.9">InkNote <small>v16.9</small></div>
+  <div class="brand" title="InkNote v17.0">InkNote <small>v17.0</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1407,7 +1407,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "16.9";
+var APP_VERSION = "17.0";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4472,6 +4472,59 @@ function copyCanvasToClipboard(c) {
 }
 
 /* ---------- 投げ縄カッター: 囲んだ境界で線を分割 ---------- */
+/* ===== 画像を投げ縄の形で切り分ける =====
+   囲んだ内側だけの画像と、そこをくり抜いた残りの画像の2つに分ける。
+   元の解像度で切るので、切っても画質は落ちない。 */
+function cutImageByPath(o, path, px1, py1, px2, py2) {
+  var img = o.el && o.el.querySelector ? o.el.querySelector("img") : null;
+  if (!img || !img.src) return null;
+  // 表示上の大きさ(o.w/o.h)と、元データの大きさの比。元の細かさで切り出す
+  var natW = img.naturalWidth || o.w, natH = img.naturalHeight || o.h;
+  var sx = natW / (o.w || natW), sy = natH / (o.h || natH);
+
+  // 囲みと画像が重なっている範囲(world座標)
+  var ix1 = Math.max(o.x, px1), iy1 = Math.max(o.y, py1);
+  var ix2 = Math.min(o.x + o.w, px2), iy2 = Math.min(o.y + o.h, py2);
+  if (ix2 - ix1 < 4 || iy2 - iy1 < 4) return null;
+
+  function tracePath(g, offX, offY, scaleX, scaleY) {
+    g.beginPath();
+    for (var i = 0; i < path.length; i++) {
+      var X = (path[i].x - offX) * scaleX, Y = (path[i].y - offY) * scaleY;
+      if (i === 0) g.moveTo(X, Y); else g.lineTo(X, Y);
+    }
+    g.closePath();
+  }
+
+  // ① 内側だけを切り出す
+  var inW = Math.max(1, Math.round((ix2 - ix1) * sx));
+  var inH = Math.max(1, Math.round((iy2 - iy1) * sy));
+  var ci = document.createElement("canvas");
+  ci.width = inW; ci.height = inH;
+  var gi = ci.getContext("2d");
+  gi.save();
+  tracePath(gi, ix1, iy1, sx, sy);
+  gi.clip();
+  // 画像全体を、切り出し範囲の左上が原点に来るように描く
+  gi.drawImage(img, (o.x - ix1) * sx, (o.y - iy1) * sy, o.w * sx, o.h * sy);
+  gi.restore();
+
+  // ② 残り(内側をくり抜いたもの)
+  var ow = Math.max(1, Math.round(o.w * sx)), oh = Math.max(1, Math.round(o.h * sy));
+  var co = document.createElement("canvas");
+  co.width = ow; co.height = oh;
+  var go = co.getContext("2d");
+  go.drawImage(img, 0, 0, ow, oh);
+  go.globalCompositeOperation = "destination-out";
+  tracePath(go, o.x, o.y, sx, sy);
+  go.fill();
+  go.globalCompositeOperation = "source-over";
+
+  return {
+    inside: { src: ci.toDataURL("image/png"), x: ix1, y: iy1, w: ix2 - ix1, h: iy2 - iy1 },
+    outside: { src: co.toDataURL("image/png"), x: o.x, y: o.y, w: o.w, h: o.h }
+  };
+}
 function performLassoCut(path) {
   var snap = serializeScene();
   var insidePieces = [];
@@ -4484,8 +4537,36 @@ function performLassoCut(path) {
     if (pp.x > px2) px2 = pp.x;
     if (pp.y > py2) py2 = pp.y;
   }
+  var cutImages = 0;
   for (var i = objects.length - 1; i >= 0; i--) {
     var o = objects[i];
+
+    // ---- 画像を投げ縄の形で切り分ける ----
+    if (o.type === "image") {
+      var ib = objBBox(o);
+      if (ib.x > px2 || ib.y > py2 || ib.x + ib.w < px1 || ib.y + ib.h < py1) continue;
+      var cut = null;
+      try { cut = cutImageByPath(o, path, px1, py1, px2, py2); } catch (e) { cut = null; }
+      if (!cut) continue;
+      var mk = function(part, isInside){
+        var n = { id: idSeq++, type: "image", x: part.x, y: part.y,
+                  w: part.w, h: part.h, _mw: part.w, _mh: part.h, src: part.src };
+        if (o.opacity != null) n.opacity = o.opacity;
+        if (o.grp != null) n.grp = o.grp;
+        if (isInside && o.latex) n.latex = o.latex;   // 数式は内側に引き継ぐ
+        return n;
+      };
+      var inObj = mk(cut.inside, true), outObj = mk(cut.outside, false);
+      if (sel.indexOf(o) !== -1) setSelection(sel.filter(function(x){ return x !== o; }));
+      if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+      objects.splice(i, 1, outObj, inObj);          // 残り→内側 の順(内側が手前)
+      makeImageEl(outObj); makeImageEl(inObj);
+      insidePieces.push(inObj);
+      cutImages++;
+      changed = true;
+      continue;
+    }
+
     if (o.type !== "stroke") continue;
     var b = objBBox(o);
     if (b.x > px2 || b.y > py2 || b.x + b.w < px1 || b.y + b.h < py1) continue;
@@ -4520,11 +4601,15 @@ function performLassoCut(path) {
   if (changed) {
     pushSnapshot(snap);
     inkDirty = true;
+    refreshMeasures();
     switchTool("select");
     setSelection(insidePieces);
-    statusEl.textContent = "✂ 分割しました(内側 " + insidePieces.length + " 本を選択中)";
+    var msg = cutImages
+      ? ("✂ 画像を切り分けました(切り出した " + cutImages + " 枚を選択中)")
+      : ("✂ 分割しました(内側 " + insidePieces.length + " 本を選択中)");
+    setTimeout(function(){ statusEl.textContent = msg; }, 40);
   } else {
-    statusEl.textContent = "分割できる線がありません(線をまたいで囲んでください)";
+    statusEl.textContent = "切り分けるものがありません(線や画像をまたいで囲んでください)";
   }
 }
 
@@ -5020,7 +5105,7 @@ var LS_HINT = {
   dup:    "複製: 囲んだものをこのノート内に複製(そのまま動かせます)",
   shot:   "他アプリへ: 囲んだ範囲を画像でコピー(このノートには貼れません)",
   save:   "保存: 囲んだ範囲をPNG画像として端末に保存",
-  cut:    "カッター: 囲んだ境界で手書き線を2つに分割(内側が選択されます)"
+  cut:    "カッター: 囲んだ形で手書き線や画像を切り分ける(内側が選択されます)"
 };
 (function(){
   var ls = document.querySelectorAll(".ls-mode");
