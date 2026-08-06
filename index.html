@@ -935,7 +935,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v18.7">InkNote <small>v18.7</small></div>
+  <div class="brand" title="InkNote v18.8">InkNote <small>v18.8</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1421,7 +1421,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1451,7 +1450,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "18.7";
+var APP_VERSION = "18.8";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5658,6 +5657,11 @@ function recoverLostPages() {
    同期のたびに「編集していないのに更新時刻を新しくする」のを防ぐために使う
    (それをやると、いつも手元が最新と判定されて他端末の変更を取り込めない) */
 var dirtySinceSave = false;
+/* ★今開いているページの版番号。
+   保存のたびに作り直すpayloadへ引き継がないと版が0に戻り、
+   「クラウドの方が新しい」と誤判定して、書いたばかりの内容が
+   古い版で塗り潰されてしまう(貼り付けた文字が消える原因)。 */
+var pageRev = 0;
 function scheduleSave() {
   dirtySinceSave = true;
   statusEl.textContent = "保存中…";
@@ -5670,7 +5674,8 @@ function saveDoc() {
   // canvasModeはノートの属性(A4横で作ったノートはどの端末でもA4横)。
   // 端末ごとのlocalStorage設定だと他端末に伝わらないため、ページ側に持たせる。
   var payload = { json: serializeScene(), view: view, bookmarks: bookmarks,
-                  canvasMode: canvasMode, bg: bgStyle, ts: Date.now() };
+                  canvasMode: canvasMode, bg: bgStyle,
+                  rev: pageRev, ts: Date.now() };
   var pid = currentId;
   // ★書き込みの完了を返す。同期はこれを待ってから始める
   //   (待たないと、書き終わる前の古い中身をクラウドへ送ってしまう)
@@ -5903,6 +5908,7 @@ function loadPage(id) {
   undoStack = []; redoStack = []; updateUndoUI();
   saveIndex();
   kvGet("page_" + id).then(function(rec){
+    pageRev = (rec && rec.rev) || 0;      // このページの版番号を覚える
     if (rec && rec.json) {
       rebuildScene(rec.json);
       if (rec.view) view = rec.view;
@@ -9625,6 +9631,14 @@ function cloudPushPage(id, force) {
          ここを通していたため「iPadで何か操作しただけで、スマホの
          新しい内容がiPadの古い内容に置き換わる」ことが起きていた。
          この端末の内容は控えに残してから、新しい方を取り込む。 */
+      /* ★今この端末で書いている最中(未保存の変更がある)なら、
+         取り込みで消さずに、まず書いた分を確定させてから送る。
+         これをしないと、貼り付けた直後に古い版へ戻されてしまう。 */
+      if (!force && remoteRev > localRev && id === currentId && dirtySinceSave) {
+        return Promise.resolve(saveDocNow()).then(function(){
+          return cloudPushPage(id, true);        // 書いた内容を優先して送る
+        });
+      }
       if (!force && remoteRev > localRev) {
         var wasDirty = (id === currentId && dirtySinceSave);
         return keepVersion(id, "他の端末の新しい版を取り込む前").then(function(){
@@ -9650,6 +9664,7 @@ function cloudPushPage(id, force) {
       for (var i = 0; i < n; i++)
         batch.set(base.collection("data").doc(String(i)), { s: str.substr(i * CLOUD_CHUNK, CLOUD_CHUNK) });
       return batch.commit().then(function(){
+        if (id === currentId) pageRev = newRev;   // 開いているページなら覚え直す
         return kvSet("page_" + id, payload);      // 版番号を手元にも残す
       });
     });
@@ -9879,6 +9894,7 @@ function pullAndStore(id, force) {
         }
       }
       return keepVersion(id, "同期で取り込む前").then(function(){
+        if (id === currentId) pageRev = payload.rev || 0;
         return kvSet("page_" + id, payload);
       });
     });
