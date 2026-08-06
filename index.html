@@ -47,6 +47,16 @@
   /* テキストは長押しでの文字選択を許可する(画面スクロールはJSで処理) */
   .obj-text{touch-action:auto;-webkit-touch-callout:default}
   .obj.selected{outline:1.5px dashed var(--accent);outline-offset:3px}
+  /* ノートの中の表 */
+  .obj-text table{
+    border-collapse:collapse;width:100%;table-layout:fixed;
+    font-size:.92em;margin:2px 0;
+  }
+  .obj-text th,.obj-text td{
+    border:1px solid rgba(60,60,60,.45);
+    padding:4px 6px;vertical-align:top;word-break:break-word;
+  }
+  .obj-text th{background:rgba(120,120,120,.16);font-weight:700;text-align:left}
   .obj-text{
     min-height:1em;padding:2px 4px;line-height:1.45;
     white-space:pre-wrap;word-break:break-word;cursor:default;
@@ -509,29 +519,30 @@
   /* ===== 選択メニュー ===== */
   /* なぞって選んだ時に出る装飾バー */
   #richBar{
-    position:fixed;z-index:64;display:none;gap:4px;align-items:center;
+    position:fixed;z-index:64;display:none;gap:3px;align-items:center;
     background:var(--ui-bg2);border:1px solid var(--ui-line);border-radius:12px;
-    padding:6px 8px;box-shadow:0 8px 24px rgba(10,12,16,.45);
+    padding:5px 6px;box-shadow:0 8px 24px rgba(10,12,16,.45);
     -webkit-user-select:none;user-select:none;
+    max-width:calc(100vw - 16px);            /* 画面からはみ出さない */
   }
   #richBar.show{display:flex}
   #richBar button{
     border:none;background:#20242B;color:var(--ui-text);
-    min-width:30px;height:30px;border-radius:8px;cursor:pointer;
-    font-size:14px;font-weight:800;padding:0 6px;
+    min-width:27px;height:27px;border-radius:7px;cursor:pointer;
+    font-size:13px;font-weight:800;padding:0 4px;
   }
   #richBar #rbUnder{text-decoration:underline}
   /* 文字色は「A」の字そのものに色を付けて示す(マーカーと見分けるため) */
   #richBar .rb-col{
-    width:28px;min-width:28px;height:28px;border-radius:8px;
-    background:#F2EFE6;font-size:15px;font-weight:900;line-height:1;
+    width:26px;min-width:26px;height:26px;border-radius:7px;
+    background:#F2EFE6;font-size:14px;font-weight:900;line-height:1;
   }
   /* マーカーは塗りつぶしの四角で示す */
   #richBar .rb-mark{
-    width:26px;min-width:26px;height:22px;border-radius:5px;
+    width:24px;min-width:24px;height:20px;border-radius:5px;
     border:1.5px solid rgba(255,255,255,.35);
   }
-  #richBar .rb-lab{color:var(--ui-dim);font-size:9.5px;font-weight:700;padding:0 1px}
+  #richBar .rb-sep{width:1px;height:18px;background:var(--ui-line);margin:0 1px}
   #richBar .rb-sep{width:1px;height:20px;background:var(--ui-line)}
   #ctxbar{
     position:fixed;display:none;z-index:35;
@@ -935,7 +946,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v18.8">InkNote <small>v18.8</small></div>
+  <div class="brand" title="InkNote v19.1">InkNote <small>v19.1</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1117,13 +1128,11 @@ window.onerror = function(msg, src, line){
   <button id="rbBold" title="太字">B</button>
   <button id="rbUnder" title="下線">U</button>
   <span class="rb-sep"></span>
-  <span class="rb-lab">字の色</span>
   <button class="rb-col" data-c="#1C1E22" title="文字を黒に" style="color:#1C1E22">A</button>
   <button class="rb-col" data-c="#D6453C" title="文字を赤に" style="color:#D6453C">A</button>
   <button class="rb-col" data-c="#2C6BD6" title="文字を青に" style="color:#2C6BD6">A</button>
   <button class="rb-col" data-c="#1E9E5A" title="文字を緑に" style="color:#1E9E5A">A</button>
   <span class="rb-sep"></span>
-  <span class="rb-lab">マーカー</span>
   <button class="rb-mark" data-m="#FFE066" title="黄色のマーカー" style="background:#FFE066"></button>
   <button class="rb-mark" data-m="#B6E3FF" title="青のマーカー" style="background:#B6E3FF"></button>
   <span class="rb-sep"></span>
@@ -1354,6 +1363,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn iq-opt" data-iq="small">容量優先</button>
       <span style="color:var(--ui-dim);font-size:11px">スクショの文字を残すなら高画質</span>
     </div>
+    <div class="st-row"><span class="st-label">表</span>
+      <button class="stybtn" id="tableAddBtn">⊞ 表を作る</button>
+      <span style="color:var(--ui-dim);font-size:11px">行×列を指定して作ります</span>
+    </div>
     <div class="st-row"><span class="st-label">数式</span>
       <button class="stybtn" id="mathAddBtn">∑ 数式を追加</button>
       <span style="color:var(--ui-dim);font-size:11px">分数・指数をきれいに組んで貼る</span>
@@ -1450,7 +1463,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "18.8";
+var APP_VERSION = "19.1";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2638,7 +2651,8 @@ function isDarkColor(hex) {
    一部を太字にしたり色を変えたりできるよう、テキストは
    「読める文字(o.text)」と「装飾つきの中身(o.rich)」の2つで持つ。
    o.rich は安全のため、太字・斜体・下線・色・マーカーだけを通す。 */
-var RICH_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, BR:1, SPAN:1, DIV:1, P:1, FONT:1 };
+var RICH_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, BR:1, SPAN:1, DIV:1, P:1, FONT:1,
+                  TABLE:1, THEAD:1, TBODY:1, TFOOT:1, TR:1, TD:1, TH:1 };
 function sanitizeRich(html) {
   var box = document.createElement("div");
   box.innerHTML = String(html || "");
@@ -8415,17 +8429,47 @@ function showRichBarFor(range) {
   b.classList.add("show");
   var rect = null;
   try { rect = range.getBoundingClientRect(); } catch (e) {}
-  var bw = b.offsetWidth || 260, bh = b.offsetHeight || 42;
+  var bw = b.offsetWidth || 300, bh = b.offsetHeight || 40;
+
+  /* 使える高さ。キーボードが出ている分は除く */
+  var vv = window.visualViewport;
+  var viewTop = vv ? vv.offsetTop : 0;
+  var viewH = vv ? vv.height : innerHeight;
+  var bottomLimit = viewTop + viewH - bh - 10;
+  var topLimit = viewTop + 10;
+
   var x, y;
   if (rect && (rect.width || rect.height)) {
     x = rect.left + rect.width / 2 - bw / 2;
-    y = rect.top - bh - 10;                       // 選んだ文字の上に出す
-    if (y < 8) y = rect.bottom + 10;              // 上が狭ければ下へ
+    /* ★選んだ文字の「上」に出すのが基本。
+       ただし、すぐ上には端末標準の「切り取り/コピー/貼り付け」が
+       出るので、その高さぶん(約56px)よけて更に上に出す。 */
+    var OS_MENU = 56;
+    y = rect.top - bh - OS_MENU;
+    if (y < topLimit) {
+      // 上に入らない時だけ下へ回す
+      y = rect.bottom + 12;
+      if (y > bottomLimit) y = Math.max(topLimit, rect.top - bh - 8);
+    }
   } else {
-    x = innerWidth / 2 - bw / 2; y = innerHeight * 0.3;
+    x = innerWidth / 2 - bw / 2;
+    y = bottomLimit - 40;
   }
   x = Math.max(8, Math.min(innerWidth - bw - 8, x));
-  y = Math.max(8, Math.min(innerHeight - bh - 8, y));
+  y = Math.max(topLimit, Math.min(bottomLimit, y));
+
+  /* 右上の「✓確定」ボタンに重ならないようにする */
+  var ok = $("#editHandle");
+  if (ok && ok.classList.contains("show")) {
+    var okr = ok.getBoundingClientRect();
+    var hit = !(x + bw < okr.left - 8 || x > okr.right + 8 ||
+                y + bh < okr.top - 8 || y > okr.bottom + 8);
+    if (hit) {
+      var below = okr.bottom + 10;
+      if (below + bh <= bottomLimit) y = below;      // 確定ボタンの下へ
+      else x = Math.max(8, okr.left - bw - 10);      // 入らなければ左へ
+    }
+  }
   b.style.left = x + "px";
   b.style.top = y + "px";
 }
@@ -8439,6 +8483,15 @@ document.addEventListener("selectionchange", function(){
   clearTimeout(window.__rbTimer);
   window.__rbTimer = setTimeout(updateRichBar, 180);
 });
+/* キーボードが開いたり閉じたりしたら位置を取り直す */
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", function(){
+    if (rbEl() && rbEl().classList.contains("show")) setTimeout(updateRichBar, 60);
+  });
+  window.visualViewport.addEventListener("scroll", function(){
+    if (rbEl() && rbEl().classList.contains("show")) setTimeout(updateRichBar, 60);
+  });
+}
 
 /* 選んだ範囲を <span> で包んで書式をかける。
    ★ブラウザ任せ(execCommand)だと、環境によって文字色の指定が
@@ -8756,6 +8809,105 @@ function openFormulaInput() {
     }
   });
 }
+/* ===== 表 =====
+   AIの回答などにある「| 見出し | 見出し |」形式の表を、本物の表にする。
+   文字だけの塊で貼られると読みにくいため。 */
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function splitRow(line) {
+  var s = String(line).trim();
+  s = s.replace(/^\|/, "").replace(/\|$/, "");
+  return s.split("|").map(function(c){ return c.trim(); });
+}
+function isSepRow(line) {
+  return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+}
+/* 続いている表の行を1つの表に変換。表でなければ null */
+function mdTableToHtml(lines) {
+  if (!lines || lines.length < 2) return null;
+  if (!isSepRow(lines[1])) return null;
+  var head = splitRow(lines[0]);
+  var html = "<table><thead><tr>";
+  for (var i = 0; i < head.length; i++) html += "<th>" + esc(cleanPastedText(head[i])) + "</th>";
+  html += "</tr></thead><tbody>";
+  for (var r = 2; r < lines.length; r++) {
+    var cells = splitRow(lines[r]);
+    html += "<tr>";
+    for (var c = 0; c < head.length; c++)
+      html += "<td>" + esc(cleanPastedText(cells[c] || "")) + "</td>";
+    html += "</tr>";
+  }
+  return html + "</tbody></table>";
+}
+/* 文章の中から表の部分を取り出す → [{t:"text"|"table", s:...}] */
+function splitTableBlocks(text) {
+  var lines = String(text || "").split("\n");
+  var out = [], buf = [], i = 0;
+  function flushText() {
+    if (buf.length) { out.push({ t: "text", s: buf.join("\n") }); buf = []; }
+  }
+  while (i < lines.length) {
+    var isRow = /^\s*\|.*\|\s*$/.test(lines[i]);
+    if (isRow && i + 1 < lines.length && isSepRow(lines[i + 1])) {
+      var block = [lines[i], lines[i + 1]];
+      var j = i + 2;
+      while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) { block.push(lines[j]); j++; }
+      var html = mdTableToHtml(block);
+      if (html) { flushText(); out.push({ t: "table", s: html }); i = j; continue; }
+    }
+    buf.push(lines[i]); i++;
+  }
+  flushText();
+  return out;
+}
+/* 空の表を作る */
+function makeEmptyTable(rows, cols) {
+  var html = "<table><thead><tr>";
+  for (var c = 0; c < cols; c++) html += "<th>見出し" + (c + 1) + "</th>";
+  html += "</tr></thead><tbody>";
+  for (var r = 0; r < rows; r++) {
+    html += "<tr>";
+    for (var c2 = 0; c2 < cols; c2++) html += "<td><br></td>";
+    html += "</tr>";
+  }
+  return html + "</tbody></table>";
+}
+/* 表をノートに置く */
+function insertTable(html, w) {
+  var cw = toWorld(innerWidth / 2, innerHeight / 2);
+  var width = w || Math.min(560, Math.max(320, innerWidth - 80));
+  var o = { id: idSeq++, type: "text", x: cw.x - width / 2, y: cw.y, w: width,
+            text: "", rich: sanitizeRich(html), fontSize: 18,
+            color: (THEMES[themeName] || THEMES.cream).pen };
+  var box = document.createElement("div");
+  box.innerHTML = o.rich;
+  o.text = (box.innerText || box.textContent || "").trim();
+  pushUndo();
+  objects.push(o);
+  makeTextEl(o);
+  measureObj(o);
+  clampToSheet(o);
+  switchTool("select");
+  setSelection([o]);
+  scheduleSave();
+  return o;
+}
+/* 「3x4」のような入力から表を作る */
+function openTableInput() {
+  askText("表の大きさ(行×列) 例: 4x3", "4x3", function(v){
+    if (v == null) return;
+    var m = /(\d+)\s*[x×*]\s*(\d+)/.exec(String(v));
+    if (!m) { statusEl.textContent = "「4x3」のように入力してください"; return; }
+    var rows = Math.max(1, Math.min(30, +m[1]));
+    var cols = Math.max(1, Math.min(8, +m[2]));
+    insertTable(makeEmptyTable(rows, cols));
+    setTimeout(function(){
+      statusEl.textContent = rows + "行" + cols + "列の表を作りました(ダブルタップで文字を入れられます)";
+    }, 40);
+  });
+}
+
 /* ===== 貼り付けた文章を「文章 + 組版した数式」に分けて置く =====
    文章はテキストのまま、組版しないと読みにくい式(分数・根号・総和など)だけを
    図として組み、上から順に並べる。写真のような見た目を保つのが狙い。 */
@@ -8779,8 +8931,97 @@ function splitMathBlocks(s) {
 function needsTypeset(latex) {
   return /\\(d|t)?frac|\\sqrt|\\sum|\\int|\\prod|\\lim|\\binom|\\begin\{|\\over|\\substack|\\left|\\matrix/.test(latex);
 }
+/* 表以外の部分を、指定した位置から縦に並べて置く(表と混在した貼り付け用) */
+function insertRichPasteInner(raw, left, top, W, done) {
+  var blocks = splitMathBlocks(String(raw || ""));
+  var parts = [], buf = "";
+  function flush() {
+    var s = buf.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (s) parts.push({ t: "text", s: s });
+    buf = "";
+  }
+  blocks.forEach(function(b){
+    if (b.t === "text") { buf += b.s; return; }
+    if (!needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }
+    flush();
+    parts.push({ t: "math", s: b.s });
+  });
+  flush();
+  var made = [], y = top;
+  var chain = Promise.resolve();
+  parts.forEach(function(p){
+    chain = chain.then(function(){
+      if (p.t === "text") {
+        var txt = cleanPastedText(p.s);
+        if (!txt.trim()) return;
+        var o = { id: idSeq++, type: "text", x: left, y: y, w: W, text: txt, fontSize: 20,
+                  color: (THEMES[themeName] || THEMES.cream).pen };
+        objects.push(o); makeTextEl(o); made.push(o); measureObj(o);
+        y += Math.max(28, objBBox(o).h) + 12;
+        return;
+      }
+      return renderLatexToImage(p.s, 26).then(function(r){
+        var o2 = { id: idSeq++, type: "image", x: left + (W - r.w) / 2, y: y,
+                   w: r.w, h: r.h, _mw: r.w, _mh: r.h, src: r.src, latex: p.s };
+        objects.push(o2); makeImageEl(o2); made.push(o2);
+        y += r.h + 16;
+      }).catch(function(){
+        var t2 = cleanPastedText("$" + p.s + "$");
+        var o3 = { id: idSeq++, type: "text", x: left, y: y, w: W, text: t2, fontSize: 20,
+                   color: (THEMES[themeName] || THEMES.cream).pen };
+        objects.push(o3); makeTextEl(o3); made.push(o3); measureObj(o3);
+        y += Math.max(28, objBBox(o3).h) + 12;
+      });
+    });
+  });
+  chain.then(function(){ done(made, y); });
+}
+
 /* 貼り付けを「文章」と「組版する式」に振り分けて、縦に並べて置く */
 function insertRichPaste(raw) {
+  /* ★先に表を切り出す。表は文章と混ぜずに、そのまま表として置く */
+  var tblParts = splitTableBlocks(String(raw || ""));
+  if (tblParts.some(function(p){ return p.t === "table"; })) {
+    var W0 = Math.min(560, Math.max(320, innerWidth - 80));
+    var start0 = toWorld(innerWidth / 2, innerHeight / 2);
+    var y0 = start0.y, left0 = start0.x - W0 / 2, made0 = [];
+    var chain0 = Promise.resolve();
+    pushUndo();
+    tblParts.forEach(function(p){
+      chain0 = chain0.then(function(){
+        if (p.t === "table") {
+          var o = { id: idSeq++, type: "text", x: left0, y: y0, w: W0,
+                    text: "", rich: sanitizeRich(p.s), fontSize: 18,
+                    color: (THEMES[themeName] || THEMES.cream).pen };
+          var bx = document.createElement("div");
+          bx.innerHTML = o.rich;
+          o.text = (bx.innerText || bx.textContent || "").trim();
+          objects.push(o); makeTextEl(o); measureObj(o); made0.push(o);
+          y0 += Math.max(40, objBBox(o).h) + 14;
+          return;
+        }
+        if (!String(p.s).trim()) return;
+        // 表以外の部分は、これまでどおり文章と数式に分けて置く
+        return new Promise(function(res){
+          var before = objects.length;
+          insertRichPasteInner(p.s, left0, y0, W0, function(objs, nextY){
+            made0 = made0.concat(objs); y0 = nextY; res();
+          });
+        });
+      });
+    });
+    chain0.then(function(){
+      inkDirty = true; refreshMeasures();
+      switchTool("select"); setSelection(made0);
+      for (var i = 0; i < made0.length; i++) clampToSheet(made0[i]);
+      scheduleSave();
+      var nT = tblParts.filter(function(p){ return p.t === "table"; }).length;
+      setTimeout(function(){
+        statusEl.textContent = "貼り付けました(表 " + nT + "個)";
+      }, 40);
+    });
+    return;
+  }
   var blocks = splitMathBlocks(String(raw || ""));
   // 組版が必要な式が無ければ、これまでどおり1つのテキストとして置く
   var hasMath = blocks.some(function(b){ return b.t === "math" && needsTypeset(b.s); });
@@ -9142,6 +9383,7 @@ function syncImgQualityUI() {
   for (var i = 0; i < iq.length; i++)
     iq[i].classList.toggle("sel", iq[i].getAttribute("data-iq") === imgQuality);
 }
+$("#tableAddBtn").onclick = function(){ closeMenu(); setTimeout(openTableInput, 120); };
 $("#mathAddBtn").onclick = function(){ closeMenu(); setTimeout(function(){ setSelection([]); openFormulaInput(); }, 120); };
 $("#tocShowToggle").onclick = function(){
   showAnchors = !showAnchors;
