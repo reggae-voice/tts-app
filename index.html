@@ -946,7 +946,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v19.1">InkNote <small>v19.1</small></div>
+  <div class="brand" title="InkNote v19.2">InkNote <small>v19.2</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1356,6 +1356,7 @@ window.onerror = function(msg, src, line){
     </div>
     <div class="st-row"><span class="st-label">更新</span>
       <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
+      <span id="verInfo" style="color:var(--ui-dim);font-size:11px"></span>
       <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
     </div>
     <div class="st-row"><span class="st-label">画像</span>
@@ -1463,7 +1464,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "19.1";
+var APP_VERSION = "19.2";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6848,6 +6849,22 @@ function openMenu() {
   syncDynUI();
   syncEraserAutoUI();
   syncImgQualityUI();
+  /* この端末の版と、配信元(サーバー)の版を並べて出す。
+     食い違っていれば「更新しても変わらない」理由がすぐ分かる。 */
+  (function(){
+    var vi = $("#verInfo");
+    if (!vi) return;
+    vi.textContent = "この端末 v" + APP_VERSION + " / 配信元 確認中…";
+    fetch(location.pathname + "?v=" + Date.now(), { cache: "no-store" })
+      .then(function(r){ return r.text(); })
+      .then(function(txt){
+        var m = /<small>v([\d.]+)<\/small>/.exec(txt);
+        var sv = m ? m[1] : "?";
+        vi.textContent = "この端末 v" + APP_VERSION + " / 配信元 v" + sv +
+                         (sv === APP_VERSION ? "(最新)" : "(更新あり)");
+      })
+      .catch(function(){ vi.textContent = "この端末 v" + APP_VERSION + " / 配信元 確認できず"; });
+  })();
   $("#mmToggle").classList.toggle("on", showMini);
   $("#msToggle").classList.toggle("on", memorizeMode);
   $("#menuPanel").classList.add("show");
@@ -6960,11 +6977,19 @@ $("#updateApp").onclick = function(){
   }).then(function(txt){
     var m = /<small>v([\d.]+)<\/small>/.exec(txt);
     var server = m ? m[1] : "?";
+    /* ★サーバー側がまだ古いなら、取り直しても意味がない。
+       端末のせいだと誤解しないよう、はっきり伝える。 */
     if (server !== "?" && server === APP_VERSION) {
-      statusEl.textContent = "サーバーも v" + server + " です(GitHubの反映待ちの可能性)";
-    } else {
-      statusEl.textContent = "v" + server + " を取得します…";
+      setSyncStatus("最新版です(この端末 v" + APP_VERSION + " / 配信元 v" + server + ")");
+      showSheet("すでに最新版です", [
+        { label: "この端末: v" + APP_VERSION + " / 配信元: v" + server, cancel: true },
+        { label: "🔄 それでも読み直す", fn: function(){ hardRefresh(url); } },
+        { label: "閉じる", cancel: true }
+      ]);
+      statusEl.textContent = "配信元も v" + server + " でした";
+      return;
     }
+    statusEl.textContent = "v" + server + " を取得します…";
     return hardRefresh(url);
   }).catch(function(){
     statusEl.textContent = "通信できません。オフラインの可能性があります";
