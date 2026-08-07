@@ -942,11 +942,12 @@ window.onerror = function(msg, src, line){
     <div id="status">準備中…</div>
   </div>
   <!-- 右: 操作ボタン。常に見える(スクロールしない) -->
+  <button class="chip-btn" id="saveBtn" title="いま保存する">💾</button>
   <button class="chip-btn disabled" id="undoBtn" title="戻す">↩︎</button>
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v19.4">InkNote <small>v19.4</small></div>
+  <div class="brand" title="InkNote v19.5">InkNote <small>v19.5</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1142,6 +1143,7 @@ window.onerror = function(msg, src, line){
   <button id="ctxEdit" title="編集"><span class="ci">✎</span><span class="cl">編集</span></button>
   <button id="ctxStyle" title="見た目"><span class="ci">Aa</span><span class="cl">見た目</span></button>
   <button id="ctxLock" title="ロック"><span class="ci">🔓</span><span class="cl">ロック</span></button>
+  <button id="ctxMath" title="数式にする/編集する"><span class="ci">∑</span><span class="cl">数式</span></button>
   <button id="ctxDel" class="del" title="削除"><span class="ci">🗑</span><span class="cl">削除</span></button>
   <button id="ctxMore" title="その他"><span class="ci">⋯</span><span class="cl">その他</span></button>
   <span id="ctxExtra">
@@ -1153,7 +1155,6 @@ window.onerror = function(msg, src, line){
     <button id="ctxStraighten" title="手書き線を直線化">📏</button>
     <button id="ctxShapify" title="手書きを図形に補正(丸・四角・直線)">🔷</button>
     <button id="ctxTidy" title="位置をそろえる">📐</button>
-    <button id="ctxMath" title="数式にする/編集する">∑</button>
     <button id="ctxCrop" title="トリミング">✂</button>
     <button id="ctxDup" title="複製">⧉</button>
     <button id="ctxFront" title="前面へ">⬆</button>
@@ -1464,7 +1465,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "19.4";
+var APP_VERSION = "19.5";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2388,10 +2389,28 @@ function updateUndoUI() {
   $("#undoBtn").classList.toggle("disabled", !undoStack.length);
   $("#redoBtn").classList.toggle("disabled", !redoStack.length);
 }
+/* 手動の保存。自動保存を待たずに、その場で端末とクラウドへ確定させる */
+$("#saveBtn").onclick = function(){
+  statusEl.textContent = "保存しています…";
+  Promise.resolve(saveDocNow()).then(function(){
+    if (!cloudUser()) { statusEl.textContent = "保存しました ✓"; return; }
+    return Promise.resolve(cloudPushPage(currentId))
+      .then(function(){ return cloudPushIndex(); })
+      .then(function(){
+        statusEl.textContent = "保存してクラウドへ送りました ✓ " +
+          new Date().toTimeString().slice(0, 5);
+      })
+      .catch(function(){
+        statusEl.textContent = "端末には保存しました(クラウドは後で送ります)";
+      });
+  }).catch(function(){ statusEl.textContent = "保存できませんでした"; });
+};
 $("#undoBtn").onclick = function(){
   if (!undoStack.length) return;
   redoStack.push(serializeScene());
   rebuildScene(undoStack.pop());
+  // 空白ページの挿入/削除も戻せるよう、用紙の枚数と表示を作り直す
+  try { updateSheets(); applyView(); } catch (e) {}
   scheduleSave();
   updateUndoUI();
 };
@@ -2399,6 +2418,7 @@ $("#redoBtn").onclick = function(){
   if (!redoStack.length) return;
   undoStack.push(serializeScene());
   rebuildScene(redoStack.pop());
+  try { updateSheets(); applyView(); } catch (e) {}
   scheduleSave();
   updateUndoUI();
 };
@@ -6358,12 +6378,15 @@ function restoreVersion(id, key) {
       // 今の設定を土台にして、控えにあるものだけ上書きする
       return kvGet("page_" + id).then(function(cur){
         cur = cur || {};
+        /* ★版番号を引き継ぐ。入れないと0に戻り、
+           「クラウドの方が新しい」と判定されてすぐ元に戻されてしまう。 */
         return kvSet("page_" + id, {
           json: v.json,
           view: (v.view != null) ? v.view : cur.view,
           bookmarks: (v.bookmarks != null) ? v.bookmarks : cur.bookmarks,
           canvasMode: (v.canvasMode != null) ? v.canvasMode : cur.canvasMode,
           bg: (v.bg != null) ? v.bg : cur.bg,
+          rev: cur.rev || 0,
           ts: Date.now()
         });
       });
@@ -6372,8 +6395,9 @@ function restoreVersion(id, key) {
       if (pg) { pg.ts = Date.now(); saveIndex(); }
       if (id === currentId) loadPage(id);
       else renderPageList();
-      if (cloudUser()) cloudPushPage(id).then(cloudPushIndex).catch(function(){});
-      statusEl.textContent = "以前の版に戻しました";
+      // ★戻した内容を「新しい版」としてクラウドへ送る(forceで確実に)
+      if (cloudUser()) cloudPushPage(id, true).then(cloudPushIndex).catch(function(){});
+      setTimeout(function(){ statusEl.textContent = "以前の版に戻しました"; }, 60);
     });
   }).catch(function(){ statusEl.textContent = "戻せませんでした"; });
 }
@@ -9444,12 +9468,94 @@ function openExportSelSheet() {
   items.push({ label: "キャンセル", cancel: true });
   showSheet("画像として取り出す", items);
 }
+/* ===== ノート内のコピー・切り取り・貼り付け =====
+   選んだ項目を覚えておき、別の場所やページに貼り付ける。
+   (投げ縄の「複製」はその場に増やすだけ、画像の「切り抜き」は別物) */
+var appClip = null;              // { items:[...], cut:bool }
+function cloneObjForClip(o) {
+  return JSON.parse(JSON.stringify(o, function(k, v){
+    return (k === "el" || k === "img" || k.charAt(0) === "_") ? undefined : v;
+  }));
+}
+function clipCopy(cut) {
+  if (!sel.length) return false;
+  var items = [];
+  for (var i = 0; i < sel.length; i++) items.push(cloneObjForClip(sel[i]));
+  appClip = { items: items, cut: !!cut };
+  if (cut) {
+    pushUndo();
+    for (var j = 0; j < sel.length; j++) {
+      var o = sel[j];
+      var k2 = objects.indexOf(o);
+      if (k2 !== -1) objects.splice(k2, 1);
+      if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+    }
+    setSelection([]);
+    inkDirty = true;
+    scheduleSave();
+  }
+  statusEl.textContent = (cut ? "切り取りました" : "コピーしました") +
+    "(" + items.length + "個) → 貼り付けから置けます";
+  return true;
+}
+/* 覚えたものを、いま見えている中央に貼る */
+function clipPaste() {
+  if (!appClip || !appClip.items.length) { statusEl.textContent = "コピーしたものがありません"; return false; }
+  // 元の位置関係を保ったまま、画面中央へ寄せる
+  var minX = Infinity, minY = Infinity;
+  appClip.items.forEach(function(o){
+    if (o.type === "stroke") {
+      (o.points || []).forEach(function(p){ if (p.x < minX) minX = p.x; if (p.y < minY) minY = p.y; });
+    } else if (o.type === "shape") {
+      minX = Math.min(minX, o.x1, o.x2); minY = Math.min(minY, o.y1, o.y2);
+    } else { minX = Math.min(minX, o.x); minY = Math.min(minY, o.y); }
+  });
+  if (!isFinite(minX)) { minX = 0; minY = 0; }
+  var c = toWorld(innerWidth / 2, innerHeight / 2);
+  var dx = c.x - minX - 40, dy = c.y - minY - 40;
+
+  pushUndo();
+  var made = [];
+  appClip.items.forEach(function(src2){
+    var o = JSON.parse(JSON.stringify(src2));
+    o.id = idSeq++;
+    o.anch = null;                       // 目次の印は複製しない
+    if (o.type === "stroke") {
+      (o.points || []).forEach(function(p){ p.x += dx; p.y += dy; });
+    } else if (o.type === "shape") {
+      o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy;
+    } else { o.x += dx; o.y += dy; }
+    objects.push(o);
+    if (o.type === "text") makeTextEl(o);
+    else if (o.type === "image") makeImageEl(o);
+    made.push(o);
+  });
+  inkDirty = true;
+  refreshMeasures();
+  switchTool("select");
+  setSelection(made);
+  for (var i = 0; i < made.length; i++) clampToSheet(made[i]);
+  scheduleSave();
+  appClip.cut = false;                   // 切り取りでも何度でも貼れる
+  setTimeout(function(){
+    statusEl.textContent = made.length + "個を貼り付けました(そのまま動かせます)";
+  }, 40);
+  return true;
+}
+function clipHas() { return !!(appClip && appClip.items && appClip.items.length); }
+
 function openMoreSheet() {
   var items = [];
   var one = (sel.length === 1) ? sel[0] : null;
 
+  // --- 持ち運ぶ ---
+  items.push({ label: "📄 コピーする(別の場所に貼れる)", fn: function(){ clipCopy(false); } });
+  items.push({ label: "✂️ 切り取る(別の場所へ移す)", fn: function(){ clipCopy(true); } });
+  if (clipHas())
+    items.push({ label: "📋 ここに貼り付ける", fn: function(){ clipPaste(); } });
+
   // --- よく使う ---
-  if (ctxVisible("ctxDup")) items.push({ label: "⧉ 複製する", fn: function(){ pressCtx("ctxDup"); } });
+  if (ctxVisible("ctxDup")) items.push({ label: "⧉ 複製する(その場に増やす)", fn: function(){ pressCtx("ctxDup"); } });
   if (ctxVisible("ctxFront")) items.push({ label: "⬆ いちばん前に出す", fn: function(){ pressCtx("ctxFront"); } });
   if (ctxVisible("ctxOpa")) items.push({ label: "🌓 透明度を変える", fn: function(){ pressCtx("ctxOpa"); } });
 
@@ -9631,7 +9737,19 @@ $("#findLost").onclick = function(){
     { label: "キャンセル", cancel: true }
   ]);
 };
-$("#pasteChip").onclick = pasteFromClipboard;
+$("#pasteChip").onclick = function(){
+  // ノート内でコピー/切り取りしたものがあれば、どちらを貼るか選ばせる
+  if (clipHas()) {
+    showSheet("貼り付け", [
+      { label: "📄 ノート内でコピーしたもの(" + appClip.items.length + "個)",
+        fn: function(){ clipPaste(); } },
+      { label: "📋 外部からコピーした文字や画像", fn: function(){ pasteFromClipboard(); } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
+  }
+  pasteFromClipboard();
+};
 
 /* PC: Ctrl+C / Ctrl+V(テキスト編集中はブラウザ標準に任せる) */
 document.addEventListener("keydown", function(e){
