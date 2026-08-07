@@ -946,7 +946,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v19.2">InkNote <small>v19.2</small></div>
+  <div class="brand" title="InkNote v19.4">InkNote <small>v19.4</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1464,7 +1464,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "19.2";
+var APP_VERSION = "19.4";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3121,7 +3121,10 @@ function commitText() {
   o.text = raw.replace(/\n$/, "");
   // 装飾が付いていれば残す(無ければ普通の文字に戻す)
   var cleaned = sanitizeRich(el.innerHTML);
-  o.rich = /<(b|strong|i|em|u|span|font)\b/i.test(cleaned) ? cleaned : null;
+  // ★表も装飾として残す。ここに table が無かったため、
+  //   編集して確定するたびに表の枠が消えてただの文章になっていた。
+  o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody)\b/i.test(cleaned)
+           ? cleaned : null;
   // ★キーボードを閉じるのは contenteditable を外す「前」に行う。
   //   属性を外した後だと要素がフォーカス対象でなくなり、blurが効かず
   //   iPadなどでキーボードが出たまま残ってしまう。
@@ -4954,6 +4957,8 @@ $("#ctxDup").onclick = function(){
   scheduleSave();
 };
 $("#ctxEdit").onclick = function(){
+  // 表は「文字を入れる」か「行や列を増減」かを選べるようにする
+  if (sel.length === 1 && isTableObj(sel[0])) { openTableMenu(sel[0]); return; }
   if (sel.length === 1 && sel[0].type === "text") startTextEdit(sel[0]);
   else if (sel.length === 1 && sel[0].type === "shape") shapeTextEdit(sel[0]);
 };
@@ -6854,6 +6859,10 @@ function openMenu() {
   (function(){
     var vi = $("#verInfo");
     if (!vi) return;
+    if (typeof fetch !== "function") {          // 古い環境では確認しない
+      vi.textContent = "この端末 v" + APP_VERSION;
+      return;
+    }
     vi.textContent = "この端末 v" + APP_VERSION + " / 配信元 確認中…";
     fetch(location.pathname + "?v=" + Date.now(), { cache: "no-store" })
       .then(function(r){ return r.text(); })
@@ -6970,6 +6979,7 @@ $("#updateApp").onclick = function(){
   statusEl.textContent = "サーバーの最新版を確認中…";
   saveDocNow();
   var url = location.pathname + "?u=" + Date.now();
+  if (typeof fetch !== "function") { hardRefresh(url); return; }
 
   // ①サーバーの実物を no-store で取得し、本当に新しい版があるか確かめる
   fetch(url, { cache: "no-store" }).then(function(res){
@@ -8918,6 +8928,93 @@ function insertTable(html, w) {
   scheduleSave();
   return o;
 }
+/* この項目が表かどうか */
+function isTableObj(o) {
+  return !!(o && o.type === "text" && o.rich && /<table\b/i.test(o.rich));
+}
+/* 表の中身を書き換える(編集中でも確定後でも動く) */
+function editTable(o, fn) {
+  if (!isTableObj(o)) return false;
+  var box = document.createElement("div");
+  box.innerHTML = o.rich;
+  var tbl = box.querySelector("table");
+  if (!tbl) return false;
+  if (fn(tbl, box) === false) return false;
+  pushUndo();
+  o.rich = sanitizeRich(box.innerHTML);
+  var b2 = document.createElement("div");
+  b2.innerHTML = o.rich;
+  o.text = (b2.innerText || b2.textContent || "").trim();
+  if (o.el) o.el.innerHTML = o.rich;
+  measureObj(o);
+  inkDirty = true;
+  scheduleSave();
+  return true;
+}
+function tableCols(tbl) {
+  var r = tbl.querySelector("tr");
+  return r ? r.children.length : 0;
+}
+function tableAddRow(o) {
+  return editTable(o, function(tbl){
+    var body = tbl.querySelector("tbody") || tbl;
+    var n = tableCols(tbl);
+    if (!n) return false;
+    var tr = document.createElement("tr");
+    for (var i = 0; i < n; i++) {
+      var td = document.createElement("td");
+      td.innerHTML = "<br>";
+      tr.appendChild(td);
+    }
+    body.appendChild(tr);
+  });
+}
+function tableDelRow(o) {
+  return editTable(o, function(tbl){
+    var rows = tbl.querySelectorAll("tbody tr");
+    if (!rows.length) return false;
+    var last = rows[rows.length - 1];
+    last.parentNode.removeChild(last);
+  });
+}
+function tableAddCol(o) {
+  return editTable(o, function(tbl){
+    var rows = tbl.querySelectorAll("tr");
+    if (!rows.length || tableCols(tbl) >= 8) return false;
+    for (var i = 0; i < rows.length; i++) {
+      var isHead = !!rows[i].querySelector("th");
+      var cell = document.createElement(isHead ? "th" : "td");
+      cell.innerHTML = isHead ? ("見出し" + (rows[i].children.length + 1)) : "<br>";
+      rows[i].appendChild(cell);
+    }
+  });
+}
+function tableDelCol(o) {
+  return editTable(o, function(tbl){
+    var rows = tbl.querySelectorAll("tr");
+    if (!rows.length || tableCols(tbl) <= 1) return false;
+    for (var i = 0; i < rows.length; i++) {
+      var last = rows[i].lastElementChild;
+      if (last) rows[i].removeChild(last);
+    }
+  });
+}
+/* 表の操作メニュー */
+function openTableMenu(o) {
+  showSheet("表", [
+    { label: "✎ 文字を入れる/直す", fn: function(){ startTextEdit(o); } },
+    { label: "＋ 行を増やす", fn: function(){
+        if (!tableAddRow(o)) statusEl.textContent = "行を増やせませんでした"; } },
+    { label: "－ 行を減らす", fn: function(){
+        if (!tableDelRow(o)) statusEl.textContent = "これ以上減らせません"; } },
+    { label: "＋ 列を増やす", fn: function(){
+        if (!tableAddCol(o)) statusEl.textContent = "列は8までです"; } },
+    { label: "－ 列を減らす", fn: function(){
+        if (!tableDelCol(o)) statusEl.textContent = "これ以上減らせません"; } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+
 /* 「3x4」のような入力から表を作る */
 function openTableInput() {
   askText("表の大きさ(行×列) 例: 4x3", "4x3", function(v){
@@ -9355,6 +9452,10 @@ function openMoreSheet() {
   if (ctxVisible("ctxDup")) items.push({ label: "⧉ 複製する", fn: function(){ pressCtx("ctxDup"); } });
   if (ctxVisible("ctxFront")) items.push({ label: "⬆ いちばん前に出す", fn: function(){ pressCtx("ctxFront"); } });
   if (ctxVisible("ctxOpa")) items.push({ label: "🌓 透明度を変える", fn: function(){ pressCtx("ctxOpa"); } });
+
+  // --- 表 ---
+  if (one && isTableObj(one))
+    items.push({ label: "⊞ 表を編集する(行や列を増減)…", fn: function(){ openTableMenu(one); } });
 
   // --- 内容を変える ---
   if (ctxVisible("ctxCrop")) items.push({ label: "✂ 画像を切り抜く", fn: function(){ pressCtx("ctxCrop"); } });
