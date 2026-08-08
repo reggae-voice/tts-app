@@ -57,6 +57,12 @@
     padding:4px 6px;vertical-align:top;word-break:break-word;
   }
   .obj-text th{background:rgba(120,120,120,.16);font-weight:700;text-align:left}
+  /* ★自動で横に伸びるテキスト。
+     折り返さず、入力した分だけ幅が広がる(改行は自分で入れた時だけ) */
+  .obj-text.autow{
+    white-space:pre;word-break:normal;
+    width:auto !important;display:inline-block;
+  }
   .obj-text{
     min-height:1em;padding:2px 4px;line-height:1.45;
     white-space:pre-wrap;word-break:break-word;cursor:default;
@@ -947,7 +953,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v19.5">InkNote <small>v19.5</small></div>
+  <div class="brand" title="InkNote v19.6">InkNote <small>v19.6</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1465,7 +1471,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "19.5";
+var APP_VERSION = "19.6";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2712,12 +2718,24 @@ function sanitizeRich(html) {
 /* 装飾つきの中身があるか(無ければ普通の文字として扱う) */
 function hasRich(o) { return !!(o && o.rich && /<[a-z]/i.test(o.rich)); }
 
+/* 自動で伸びるテキストの、伸びてよい幅の上限 */
+function autoTextMaxW(o) {
+  if (canvasMode === "a4v") return Math.max(160, A4W - 40 - ((o.x % A4W) || 0));
+  if (canvasMode === "a4h") return Math.max(160, A4H - 40);
+  return 1600;                       // 無限キャンバスはゆったり
+}
 function makeTextEl(o) {
   var el = document.createElement("div");
-  el.className = "obj obj-text";
+  el.className = "obj obj-text" + (o.autoW ? " autow" : "");
   el.style.left = o.x + "px";
   el.style.top = o.y + "px";
-  el.style.width = o.w + "px";
+  if (o.autoW) {
+    // 伸びる上限。用紙からはみ出さない範囲まで
+    el.style.width = "auto";
+    el.style.maxWidth = autoTextMaxW(o) + "px";
+  } else {
+    el.style.width = o.w + "px";
+  }
   o.el = el;
   applyTextStyle(o);
   if (hasRich(o)) el.innerHTML = sanitizeRich(o.rich);
@@ -2768,7 +2786,9 @@ function shapeTextEdit(sh) {
 }
 function createTextAt(w) {
   // タップした場所がBOXの中央に来るように配置
+  // 新しいテキストは、入力に合わせて横に伸びる方式(勝手に折り返さない)
   var o = { id: idSeq++, type: "text", x: w.x - 130, y: w.y - 18, w: 260,
+            autoW: true,
             text: "", fontSize: 22, color: (THEMES[themeName] || THEMES.cream).pen };
   pushUndo();
   objects.push(o);
@@ -2835,6 +2855,9 @@ var lastMeasure = 0;
 function onTextInput() {
   // 案内の出し分けは毎回行う(間引きより前。1文字入れたらすぐ消えるように)
   if (editingObj) syncEmptyClass(editingObj);
+  // 伸びる方式なら、広がった分を覚えておく(枠や選択の当たり判定に使う)
+  if (editingObj && editingObj.autoW && editingObj.el)
+    editingObj.w = editingObj.el.offsetWidth || editingObj.w;
   // 入力のたびに実寸を測ると重い。150msに1回だけ測る
   var now = Date.now();
   if (now - lastMeasure < 150) return;
@@ -3140,6 +3163,7 @@ function commitText() {
   var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
   o.text = raw.replace(/\n$/, "");
   // 装飾が付いていれば残す(無ければ普通の文字に戻す)
+  if (o.autoW && el.offsetWidth) o.w = el.offsetWidth;   // 伸びた幅を保存
   var cleaned = sanitizeRich(el.innerHTML);
   // ★表も装飾として残す。ここに table が無かったため、
   //   編集して確定するたびに表の枠が消えてただの文章になっていた。
@@ -9544,9 +9568,42 @@ function clipPaste() {
 }
 function clipHas() { return !!(appClip && appClip.items && appClip.items.length); }
 
+/* 折り返す / 横に伸ばす を切り替える */
+function toggleAutoWidth(o) {
+  if (!o || o.type !== "text") return;
+  pushUndo();
+  o.autoW = !o.autoW;
+  if (o.el) {
+    o.el.classList.toggle("autow", !!o.autoW);
+    if (o.autoW) {
+      o.el.style.width = "auto";
+      o.el.style.maxWidth = autoTextMaxW(o) + "px";
+    } else {
+      o.el.style.maxWidth = "";
+      o.el.style.width = (o.w || 260) + "px";
+    }
+  }
+  measureObj(o);
+  if (o.autoW && o.el && o.el.offsetWidth) o.w = o.el.offsetWidth;
+  inkDirty = true;
+  updateSelUI();
+  scheduleSave();
+  statusEl.textContent = o.autoW
+    ? "入力に合わせて横に伸びます(改行は自分で入れた時だけ)"
+    : "決まった幅で折り返します";
+}
+
 function openMoreSheet() {
   var items = [];
   var one = (sel.length === 1) ? sel[0] : null;
+
+  // --- 文字の折り返し ---
+  if (one && one.type === "text" && !isTableObj(one)) {
+    items.push({
+      label: one.autoW ? "↩ 決まった幅で折り返す" : "⇢ 入力に合わせて横に伸ばす",
+      fn: function(){ toggleAutoWidth(one); }
+    });
+  }
 
   // --- 持ち運ぶ ---
   items.push({ label: "📄 コピーする(別の場所に貼れる)", fn: function(){ clipCopy(false); } });
