@@ -953,7 +953,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v19.6">InkNote <small>v19.6</small></div>
+  <div class="brand" title="InkNote v19.7">InkNote <small>v19.7</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1471,7 +1471,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "19.6";
+var APP_VERSION = "19.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2403,6 +2403,7 @@ $("#saveBtn").onclick = function(){
     return Promise.resolve(cloudPushPage(currentId))
       .then(function(){ return cloudPushIndex(); })
       .then(function(){
+        unsyncedEdits = false;
         statusEl.textContent = "保存してクラウドへ送りました ✓ " +
           new Date().toTimeString().slice(0, 5);
       })
@@ -5721,6 +5722,12 @@ function recoverLostPages() {
    同期のたびに「編集していないのに更新時刻を新しくする」のを防ぐために使う
    (それをやると、いつも手元が最新と判定されて他端末の変更を取り込めない) */
 var dirtySinceSave = false;
+/* ★クラウドへの送信が確実に終わるまで立てておく印。
+   保存(dirtySinceSave)は端末に書いた時点で下りるが、送信が終わるとは限らない。
+   アプリを切り替えた瞬間に送信が中断すると、クラウドだけ版が進んだ状態になり、
+   戻ってきた時に「クラウドの方が新しい」と誤判定して、
+   貼り付けたばかりの内容が消えることがあった。 */
+var unsyncedEdits = false;
 /* ★今開いているページの版番号。
    保存のたびに作り直すpayloadへ引き継がないと版が0に戻り、
    「クラウドの方が新しい」と誤判定して、書いたばかりの内容が
@@ -5728,6 +5735,7 @@ var dirtySinceSave = false;
 var pageRev = 0;
 function scheduleSave() {
   dirtySinceSave = true;
+  unsyncedEdits = true;
   statusEl.textContent = "保存中…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveDoc, 700);
@@ -5973,6 +5981,7 @@ function loadPage(id) {
   saveIndex();
   kvGet("page_" + id).then(function(rec){
     pageRev = (rec && rec.rev) || 0;      // このページの版番号を覚える
+    unsyncedEdits = false;                // 開いただけでは未送信ではない
     if (rec && rec.json) {
       rebuildScene(rec.json);
       if (rec.view) view = rec.view;
@@ -10177,7 +10186,8 @@ function cloudPushPage(id, force) {
       /* ★今この端末で書いている最中(未保存の変更がある)なら、
          取り込みで消さずに、まず書いた分を確定させてから送る。
          これをしないと、貼り付けた直後に古い版へ戻されてしまう。 */
-      if (!force && remoteRev > localRev && id === currentId && dirtySinceSave) {
+      if (!force && remoteRev > localRev && id === currentId &&
+          (dirtySinceSave || unsyncedEdits)) {
         return Promise.resolve(saveDocNow()).then(function(){
           return cloudPushPage(id, true);        // 書いた内容を優先して送る
         });
@@ -10209,6 +10219,10 @@ function cloudPushPage(id, force) {
       return batch.commit().then(function(){
         if (id === currentId) pageRev = newRev;   // 開いているページなら覚え直す
         return kvSet("page_" + id, payload);      // 版番号を手元にも残す
+      }).then(function(r){
+        // ★ここまで来て初めて「送り終わった」。以後は取り込んでよい
+        if (id === currentId) unsyncedEdits = false;
+        return r;
       });
     });
   });
@@ -10337,11 +10351,19 @@ function pullIfStale(minMs) {
       // 編集がある時だけ保存する。無条件だと更新時刻だけが新しくなり、
       // 実際には何も変わっていないのに他端末へ送り続けることになる
       if (dirtySinceSave) saveDocNow();
+      // まだ送れていない編集があれば、確実に送る(切り替えで消えるのを防ぐ)
+      if (unsyncedEdits && cloudUser() && currentId != null)
+        setTimeout(function(){ cloudPushPage(currentId, true).catch(function(){}); }, 40);
       flushCloudPush();                // クラウドへも即送信
       // 保存処理は非同期で送信を積み直すので、そのぶんも送りきる
       setTimeout(flushCloudPush, 120);
       setTimeout(flushCloudPush, 600);
     } else {
+      // ★戻ってきた時に未送信の編集が残っていたら、取り込みより先に送る
+      if (unsyncedEdits && cloudUser() && currentId != null) {
+        statusEl.textContent = "編集を送っています…";
+        setTimeout(function(){ cloudPushPage(currentId, true).catch(function(){}); }, 100);
+      }
       // 購読が切れていれば張り直す(復帰後に届かなくなるのを防ぐ)
       if (cloudUser() && !realtimeActive()) setTimeout(startRealtime, 300);
       lastPullAt = 0;
@@ -10693,6 +10715,13 @@ function onRemotePageChanged(id, remoteTs, remoteRev, remoteStamp, forcePull) {
         if (remoteStamp && cur && contentStamp(cur.json) === remoteStamp) return;  // 同じ中身
         if (remoteRev <= localRev) return;                // 手元が同じか新しい
       } else if (remoteTs <= localTs) return;             // 版番号が無い古いデータ用
+      /* ★まだクラウドへ送れていない編集があるうちは、絶対に上書きしない。
+         代わりに、その編集を送り直す。 */
+      if (!forcePull && nid === currentId && unsyncedEdits) {
+        statusEl.textContent = "この端末の編集を優先して送ります";
+        setTimeout(function(){ cloudPushPage(nid, true).catch(function(){}); }, 50);
+        return;
+      }
       // 開いているページを編集中なら、上書きしない(あとで送り直す)
       // ただし控えを取った後(forcePull)は、取り込みを優先する
       if (!forcePull && nid === currentId && dirtySinceSave) {
