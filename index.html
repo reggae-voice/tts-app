@@ -959,7 +959,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v19.8">InkNote <small>v19.8</small></div>
+  <div class="brand" title="InkNote v20.0">InkNote <small>v20.0</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1448,6 +1448,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1477,7 +1478,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "19.8";
+var APP_VERSION = "20.0";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2958,12 +2959,18 @@ function cleanPastedText(t) {
   //   先に外すと \cdot\text{m} が \cdotm になり、英字が続くため置換できなくなる。
   var syms0 = TEX_SYM.slice().sort(function(a, b){ return b[0].length - a[0].length; });
   for (var s0 = 0; s0 < syms0.length; s0++) {
-    var re0 = new RegExp("\\\\" + syms0[s0][0] + "(?![A-Za-z])[ ]?", "g");
+    // ★あとに続く空白は残す(消すと「≈-1.91」「→信号」のように詰まって読みにくい)
+    var re0 = new RegExp("\\\\" + syms0[s0][0] + "(?![A-Za-z])", "g");
     s = s.replace(re0, syms0[s0][1]);
   }
 
-  // \text{...} \mathrm{...} などの装飾は中身だけ残す
-  s = s.replace(/\\(?:text|mathrm|mathbf|mathit|textbf|textit|operatorname|rm|bf|it)\s*\{([^{}]*)\}/g, "$1");
+  // \text{...} \mathrm{...} などの装飾は中身だけ残す。
+  // 入れ子(\mathbf{4\text{倍}})もあるので、無くなるまで繰り返す
+  for (var dc = 0; dc < 6; dc++) {
+    var before = s;
+    s = s.replace(/\\(?:text|mathrm|mathbf|mathit|textbf|textit|operatorname|boldsymbol|bm|rm|bf|it)\s*\{([^{}]*)\}/g, "$1");
+    if (s === before) break;
+  }
 
   // 分数・平方根
   // 入れ子の分数(\frac{\frac{a}{b}}{c})にも対応するため、無くなるまで繰り返す
@@ -2981,7 +2988,7 @@ function cleanPastedText(t) {
   // コマンド記号(\approx など)。単語境界で区切り、長い名前から置換
   var syms = TEX_SYM.slice().sort(function(a, b){ return b[0].length - a[0].length; });
   for (var i = 0; i < syms.length; i++) {
-    var re2 = new RegExp("\\\\" + syms[i][0] + "(?![A-Za-z])[ ]?", "g");
+    var re2 = new RegExp("\\\\" + syms[i][0] + "(?![A-Za-z])", "g");
     s = s.replace(re2, syms[i][1]);
   }
 
@@ -8948,6 +8955,43 @@ function insertPreformatted(text, left, top, W) {
   return o;
 }
 
+/* ===== HTMLで貼られた表を取り込む =====
+   GeminiなどのアプリからコピーするとHTMLの<table>で渡ってくる。
+   文字だけを取り出すとセルの区切りが失われ、繋がった1つの文章になってしまう。
+   そこで、貼り付けの中身がHTMLなら表をそのまま使う。 */
+function htmlHasTable(html) { return /<table[\s>]/i.test(String(html || "")); }
+
+/* HTMLを [{t:"table"|"text", s}] に切り分ける */
+function splitHtmlBlocks(html) {
+  var box = document.createElement("div");
+  box.innerHTML = String(html || "");
+  var out = [], buf = document.createElement("div");
+  function flushText() {
+    var txt = (buf.innerText || buf.textContent || "").replace(/\u00a0/g, " ");
+    if (txt.trim()) out.push({ t: "text", s: txt });
+    buf = document.createElement("div");
+  }
+  var kids = Array.prototype.slice.call(box.childNodes);
+  (function walk(nodes){
+    for (var i = 0; i < nodes.length; i++) {
+      var n = nodes[i];
+      if (n.nodeType === 1 && n.tagName === "TABLE") {
+        flushText();
+        out.push({ t: "table", s: n.outerHTML });
+        continue;
+      }
+      // 中に表を含む入れ物は、さらに中を見る
+      if (n.nodeType === 1 && n.querySelector && n.querySelector("table")) {
+        walk(Array.prototype.slice.call(n.childNodes));
+        continue;
+      }
+      buf.appendChild(n.cloneNode(true));
+    }
+  })(kids);
+  flushText();
+  return out;
+}
+
 /* ===== 表 =====
    AIの回答などにある「| 見出し | 見出し |」形式の表を、本物の表にする。
    文字だけの塊で貼られると読みにくいため。 */
@@ -9211,6 +9255,51 @@ function insertRichPasteInner(raw, left, top, W, done) {
 }
 
 /* 貼り付けを「文章」と「組版する式」に振り分けて、縦に並べて置く */
+/* HTMLで渡された内容を、表はそのまま・文章は通常どおりに置く */
+function insertRichHtml(html) {
+  var parts = splitHtmlBlocks(html);
+  if (!parts.length) return false;
+  if (!parts.some(function(p){ return p.t === "table"; })) return false;
+
+  pushUndo();
+  var W = Math.min(560, Math.max(320, innerWidth - 80));
+  var start = toWorld(innerWidth / 2, innerHeight / 2);
+  var y = start.y, left = start.x - W / 2, made = [], nT = 0;
+  var chain = Promise.resolve();
+  parts.forEach(function(p){
+    chain = chain.then(function(){
+      if (p.t === "table") {
+        var o = { id: idSeq++, type: "text", x: left, y: y, w: W,
+                  text: "", rich: sanitizeRich(p.s), fontSize: 18,
+                  color: (THEMES[themeName] || THEMES.cream).pen };
+        var bx = document.createElement("div");
+        bx.innerHTML = o.rich;
+        o.text = (bx.innerText || bx.textContent || "").trim();
+        objects.push(o); makeTextEl(o); measureObj(o); made.push(o); nT++;
+        y += Math.max(40, objBBox(o).h) + 14;
+        return;
+      }
+      return new Promise(function(res){
+        insertRichPasteInner(p.s, left, y, W, function(objs, nextY){
+          made = made.concat(objs); y = nextY; res();
+        });
+      });
+    });
+  });
+  chain.then(function(){
+    inkDirty = true;
+    refreshMeasures();
+    switchTool("select");
+    setSelection(made);
+    for (var i = 0; i < made.length; i++) clampToSheet(made[i]);
+    scheduleSave();
+    setTimeout(function(){
+      statusEl.textContent = "貼り付けました(表 " + nT + "個)";
+    }, 40);
+  });
+  return true;
+}
+
 function insertRichPaste(raw) {
   /* ★図やコード(文字の位置で意味が決まるもの)は、そのまま等幅で置く。
      文章と混ざっている場合は、段落ごとに分けて図の部分だけ等幅にする。 */
@@ -9439,14 +9528,17 @@ function closePasteCatcher() {
 }
 function commitPasteCatcher() {
   var area = $("#pcArea");
-  // textContent を主に見る(innerText は環境によって古い値を返すことがある)
-  var raw = "";
+  var raw = "", html = "";
   if (area) {
+    html = area.innerHTML || "";
     raw = area.textContent || "";
     if (!raw.trim() && area.innerText) raw = area.innerText;
   }
   if (area) { area.innerHTML = ""; area.textContent = ""; }
   closePasteCatcher();
+  /* ★表がHTMLで来ていたら、そのまま表として取り込む。
+     文字だけ取り出すと、セルの区切りが消えて繋がった文章になってしまう。 */
+  if (htmlHasTable(html) && insertRichHtml(html)) return;
   if (!raw || !raw.trim()) { statusEl.textContent = "貼り付ける内容がありませんでした"; return; }
   insertRichPaste(raw.trim());
 }
@@ -9468,6 +9560,22 @@ function pasteFromClipboard() {
           handled = true;
           chain = chain.then(function(){ return item.getType(imgType); })
             .then(function(blob){ addImageFiles([blob]); });
+        } else if (item.types.indexOf("text/html") !== -1 && !handled) {
+          /* ★表を含む場合はHTMLの方が正確(文字だけだとセルの区切りが消える) */
+          handled = true;
+          chain = chain.then(function(){ return item.getType("text/html"); })
+            .then(function(b){ return b.text(); })
+            .then(function(html){
+              if (htmlHasTable(html) && insertRichHtml(html)) return;
+              // 表が無ければ、これまでどおり文字として扱う
+              if (item.types.indexOf("text/plain") !== -1)
+                return item.getType("text/plain").then(function(b2){ return b2.text(); })
+                  .then(function(txt){ if (txt && txt.trim()) insertRichPaste(txt.trim()); });
+              var box = document.createElement("div");
+              box.innerHTML = String(html || "");
+              var t2 = (box.innerText || box.textContent || "").trim();
+              if (t2) insertRichPaste(t2);
+            });
         } else if (item.types.indexOf("text/plain") !== -1 && !handled) {
           handled = true;
           chain = chain.then(function(){ return item.getType("text/plain"); })
@@ -9780,10 +9888,54 @@ function openMoreSheet() {
 
 $("#ctxMath").onclick = function(e){
   e.stopPropagation();
-  // 数式を選んでいる時は「編集 / 文字に戻す」を選ばせる。テキストならそのまま数式化
-  if (sel.length === 1 && sel[0].type === "image" && sel[0].latex) openFormulaMenu(sel[0]);
-  else openFormulaInput();
+  // 数式を選んでいる時は「編集 / 文字に戻す」
+  if (sel.length === 1 && sel[0].type === "image" && sel[0].latex) { openFormulaMenu(sel[0]); return; }
+  /* ★複数行の文章をまるごと1つの式にすると、横1行に潰れてしまう。
+     どちらにするかを選べるようにする。 */
+  var one = (sel.length === 1 && sel[0].type === "text") ? sel[0] : null;
+  if (one && /\n/.test(String(one.text || ""))) {
+    showSheet("この文章をどうしますか", [
+      { label: "📐 文章はそのまま、中の式だけ組版する", fn: function(){ typesetInPlace(one); } },
+      { label: "∑ 全体を1つの式にする(1行になります)", fn: function(){ openFormulaInput(); } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
+  }
+  openFormulaInput();
 };
+
+/* 選んだ文章を、行の並びを保ったまま「文章 + 組版した式」に置き換える */
+function typesetInPlace(o) {
+  if (!o || o.type !== "text") return;
+  var raw = String(o.text || "");
+  if (!raw.trim()) return;
+  var left = o.x, top = o.y, W = Math.max(280, o.w || 420);
+  var keep = { opacity: o.opacity, grp: o.grp, fontSize: o.fontSize, color: o.color };
+  statusEl.textContent = "式を組版しています…";
+  pushUndo();
+  insertRichPasteInner(raw, left, top, W, function(made){
+    // 元のテキストを取り除く
+    var k = objects.indexOf(o);
+    if (k !== -1) objects.splice(k, 1);
+    if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+    for (var i = 0; i < made.length; i++) {
+      if (keep.opacity != null) made[i].opacity = keep.opacity;
+      if (keep.grp != null) made[i].grp = keep.grp;
+      clampToSheet(made[i]);
+    }
+    inkDirty = true;
+    refreshMeasures();
+    switchTool("select");
+    setSelection(made);
+    scheduleSave();
+    var nf = made.filter(function(x){ return x.latex; }).length;
+    setTimeout(function(){
+      statusEl.textContent = nf
+        ? ("式 " + nf + "個を組版しました(文章の並びはそのままです)")
+        : "組版が必要な式は見つかりませんでした";
+    }, 60);
+  });
+}
 $("#tocOpenBtn").onclick = function(){ closeMenu(); setTimeout(openToc, 80); };
 (function(){
   var iq = document.querySelectorAll(".iq-opt");
