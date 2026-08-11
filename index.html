@@ -57,6 +57,12 @@
     padding:4px 6px;vertical-align:top;word-break:break-word;
   }
   .obj-text th{background:rgba(120,120,120,.16);font-weight:700;text-align:left}
+  /* 図やコードのように、文字の位置を揃えたいテキスト */
+  .obj-text.mono{
+    font-family:"SF Mono","Roboto Mono",Menlo,Consolas,"Courier New",monospace !important;
+    white-space:pre;word-break:normal;line-height:1.35;
+    letter-spacing:0;
+  }
   /* ★自動で横に伸びるテキスト。
      折り返さず、入力した分だけ幅が広がる(改行は自分で入れた時だけ) */
   .obj-text.autow{
@@ -953,7 +959,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v19.7">InkNote <small>v19.7</small></div>
+  <div class="brand" title="InkNote v19.8">InkNote <small>v19.8</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1471,7 +1477,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "19.7";
+var APP_VERSION = "19.8";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2727,7 +2733,7 @@ function autoTextMaxW(o) {
 }
 function makeTextEl(o) {
   var el = document.createElement("div");
-  el.className = "obj obj-text" + (o.autoW ? " autow" : "");
+  el.className = "obj obj-text" + (o.autoW ? " autow" : "") + (o.mono ? " mono" : "");
   el.style.left = o.x + "px";
   el.style.top = o.y + "px";
   if (o.autoW) {
@@ -8901,6 +8907,47 @@ function openFormulaInput() {
     }
   });
 }
+/* ===== 図(記号で描いた絵)やコードの貼り付け =====
+   文字の位置で意味が決まるものは、等幅フォントで空白をそのまま残す。
+   普通の文章と同じ扱いにすると、字幅が揃わず図が崩れてしまう。 */
+function looksPreformatted(text) {
+  var s = String(text || "");
+  if (/```/.test(s)) return true;                      // コードの囲み
+  var lines = s.split("\n");
+  if (lines.length < 3) return false;
+  var artChars = 0, indented = 0, boxLines = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var L = lines[i];
+    if (/^\s{2,}\S/.test(L)) indented++;              // 行頭に2つ以上の空白
+    if (/\S\s{2,}\S/.test(L)) indented++;             // 行の途中にも空白の並び
+    var m = L.match(/[|\/\\+^><`_─│┌┐└┘├┤┬┴┼━┃]/g);
+    if (m) { artChars += m.length; if (m.length >= 2) boxLines++; }
+  }
+  // 罫線のような記号が多く、空白で位置を合わせている行が複数ある
+  return (boxLines >= 3 && artChars >= 8 && indented >= 3);
+}
+/* 囲み(```)があれば中身だけ取り出す */
+function stripCodeFence(s) {
+  var m = /^\s*```[^\n]*\n([\s\S]*?)```\s*$/.exec(String(s || ""));
+  return m ? m[1].replace(/\n$/, "") : String(s || "");
+}
+/* 図やコードをそのまま置く */
+function insertPreformatted(text, left, top, W) {
+  var body = stripCodeFence(text).replace(/\n+$/, "");
+  var cw = (left == null) ? toWorld(innerWidth / 2, innerHeight / 2) : null;
+  var o = { id: idSeq++, type: "text",
+            x: (left != null) ? left : (cw.x - 160),
+            y: (top != null) ? top : cw.y,
+            w: W || 420, autoW: true, mono: true,
+            text: body, fontSize: 15,
+            color: (THEMES[themeName] || THEMES.cream).pen };
+  objects.push(o);
+  makeTextEl(o);
+  measureObj(o);
+  if (o.el && o.el.offsetWidth) o.w = o.el.offsetWidth;
+  return o;
+}
+
 /* ===== 表 =====
    AIの回答などにある「| 見出し | 見出し |」形式の表を、本物の表にする。
    文字だけの塊で貼られると読みにくいため。 */
@@ -9131,6 +9178,13 @@ function insertRichPasteInner(raw, left, top, W, done) {
   parts.forEach(function(p){
     chain = chain.then(function(){
       if (p.t === "text") {
+        // 途中に図やコードが混ざっていたら、そこだけ等幅で置く
+        if (looksPreformatted(p.s)) {
+          var po2 = insertPreformatted(p.s, left, y, W);
+          made.push(po2);
+          y += Math.max(40, objBBox(po2).h) + 14;
+          return;
+        }
         var txt = cleanPastedText(p.s);
         if (!txt.trim()) return;
         var o = { id: idSeq++, type: "text", x: left, y: y, w: W, text: txt, fontSize: 20,
@@ -9158,6 +9212,44 @@ function insertRichPasteInner(raw, left, top, W, done) {
 
 /* 貼り付けを「文章」と「組版する式」に振り分けて、縦に並べて置く */
 function insertRichPaste(raw) {
+  /* ★図やコード(文字の位置で意味が決まるもの)は、そのまま等幅で置く。
+     文章と混ざっている場合は、段落ごとに分けて図の部分だけ等幅にする。 */
+  var paras = String(raw || "").split(/\n{2,}/);
+  if (paras.some(looksPreformatted)) {
+    pushUndo();
+    var Wp = Math.min(560, Math.max(320, innerWidth - 80));
+    var startP = toWorld(innerWidth / 2, innerHeight / 2);
+    var yp = startP.y, leftP = startP.x - Wp / 2, madeP = [], nPre = 0;
+    var chainP = Promise.resolve();
+    paras.forEach(function(para){
+      if (!String(para).trim()) return;
+      chainP = chainP.then(function(){
+        if (looksPreformatted(para)) {
+          var po = insertPreformatted(para, leftP, yp, Wp);
+          madeP.push(po); nPre++;
+          yp += Math.max(40, objBBox(po).h) + 14;
+          return;
+        }
+        return new Promise(function(res){
+          insertRichPasteInner(para, leftP, yp, Wp, function(objs, nextY){
+            madeP = madeP.concat(objs); yp = nextY; res();
+          });
+        });
+      });
+    });
+    chainP.then(function(){
+      inkDirty = true;
+      refreshMeasures();
+      switchTool("select");
+      setSelection(madeP);
+      for (var i = 0; i < madeP.length; i++) clampToSheet(madeP[i]);
+      scheduleSave();
+      setTimeout(function(){
+        statusEl.textContent = "貼り付けました(図 " + nPre + "個は文字の位置をそのまま保っています)";
+      }, 40);
+    });
+    return;
+  }
   /* ★先に表を切り出す。表は文章と混ぜずに、そのまま表として置く */
   var tblParts = splitTableBlocks(String(raw || ""));
   if (tblParts.some(function(p){ return p.t === "table"; })) {
@@ -9577,6 +9669,28 @@ function clipPaste() {
 }
 function clipHas() { return !!(appClip && appClip.items && appClip.items.length); }
 
+/* 等幅(図・コード向け) と ふつうの文字 を切り替える */
+function toggleMono(o) {
+  if (!o || o.type !== "text") return;
+  pushUndo();
+  o.mono = !o.mono;
+  if (o.mono) o.autoW = true;             // 等幅は折り返さない方が図が崩れない
+  if (o.el) {
+    o.el.classList.toggle("mono", !!o.mono);
+    o.el.classList.toggle("autow", !!o.autoW);
+    if (o.autoW) { o.el.style.width = "auto"; o.el.style.maxWidth = autoTextMaxW(o) + "px"; }
+  }
+  applyTextStyle(o);
+  measureObj(o);
+  if (o.autoW && o.el && o.el.offsetWidth) o.w = o.el.offsetWidth;
+  inkDirty = true;
+  updateSelUI();
+  scheduleSave();
+  statusEl.textContent = o.mono
+    ? "等幅にしました(記号で描いた図の位置が揃います)"
+    : "ふつうの文字に戻しました";
+}
+
 /* 折り返す / 横に伸ばす を切り替える */
 function toggleAutoWidth(o) {
   if (!o || o.type !== "text") return;
@@ -9605,6 +9719,14 @@ function toggleAutoWidth(o) {
 function openMoreSheet() {
   var items = [];
   var one = (sel.length === 1) ? sel[0] : null;
+
+  // --- 図・コードの表示 ---
+  if (one && one.type === "text" && !isTableObj(one)) {
+    items.push({
+      label: one.mono ? "🔤 ふつうの文字にする" : "🔡 等幅にする(図やコードの位置を保つ)",
+      fn: function(){ toggleMono(one); }
+    });
+  }
 
   // --- 文字の折り返し ---
   if (one && one.type === "text" && !isTableObj(one)) {
