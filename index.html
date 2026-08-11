@@ -959,7 +959,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.0">InkNote <small>v20.0</small></div>
+  <div class="brand" title="InkNote v20.4">InkNote <small>v20.4</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1448,7 +1448,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1478,7 +1477,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.0";
+var APP_VERSION = "20.4";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1519,7 +1518,12 @@ try {
 } catch (e) {}      // ⚙「アプリを更新」でサーバー版と照合する
 var bookmarks = [];
 var deletedIds = [];          // 削除済みページの墓標(復活防止・削除の同期)
-var booting = true;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
+var booting = true;
+/* ★ページを開いている最中・同期で受け取っている最中は自動保存を止める。
+   読込時の再測定やマーカーの位置合わせが scheduleSave() を呼んでしまい、
+   「開いただけ」なのに未送信扱いになって、古い内容をクラウドへ
+   送り返してしまうことがあった。 */
+var isLoadingPage = false;           // 起動処理中(クラウド待ち)フラグ          // 位置の記憶 [{id, name, view}] ページごと
 var shapeKind = "line";      // 図形ツールの種類
 var activeShape = null;      // ドラッグ中の図形
 var eraser = { size: 18, mode: "partial" };  // 消しゴム設定
@@ -1766,14 +1770,29 @@ function renderInk() {
   ictx.save();
   ictx.translate(view.x, view.y);
   ictx.scale(view.s, view.s);
+  /* ★いま画面に映っている範囲(ノート座標)。
+     この外にあるものは描かない。ページが長くなっても重くならない。 */
+  var _vpad = 80 / (view.s || 1);
+  var VX0 = -view.x / view.s - _vpad, VY0 = -view.y / view.s - _vpad;
+  var VX1 = VX0 + innerWidth / view.s + _vpad * 2;
+  var VY1 = VY0 + innerHeight / view.s + _vpad * 2;
+  function onScreen(o) {
+    var b = objBBox(o);
+    if (!b) return true;
+    return !(b.x > VX1 || b.y > VY1 || b.x + b.w < VX0 || b.y + b.h < VY0);
+  }
   var tinyZoom = view.s < TEXT_DOM_MIN;
   if (tinyZoom) {
     for (var ti = 0; ti < objects.length; ti++)
-      if (objects[ti].type === "text") drawTextToCanvas(ictx, objects[ti]);
+      if (objects[ti].type === "text" && onScreen(objects[ti]))
+        drawTextToCanvas(ictx, objects[ti]);
   }
   for (var i = 0; i < objects.length; i++) {
-    if (objects[i].type === "stroke") drawStroke(objects[i]);
-    else if (objects[i].type === "shape") drawShape(objects[i]);
+    var _o = objects[i];
+    if (_o.type !== "stroke" && _o.type !== "shape") continue;
+    if (!onScreen(_o)) continue;              // 画面の外は描かない
+    if (_o.type === "stroke") drawStroke(_o);
+    else drawShape(_o);
   }
   if (activeStroke) drawStroke(activeStroke);
   if (activeShape) drawShape(activeShape);
@@ -2083,7 +2102,41 @@ function drawShapeBody(o) {
     ictx.stroke();
   }
 }
-(function loop(){ renderInk(); maybeRenderMini(); maybeSheets(); requestAnimationFrame(loop); })();
+/* ===== 描画のまわし方 =====
+   画面に変化が無い間は、毎秒60回の呼び出しを休ませて電池を節約する。
+   ただし「起こし忘れ」で描画が止まると致命的なので、休んでいる間も
+   0.25秒ごとに様子を見て、必要なら自分で復帰する(保険)。 */
+var rafOn = false, idleFrames = 0;
+function wakeRender() {
+  idleFrames = 0;
+  if (rafOn) return;
+  rafOn = true;
+  requestAnimationFrame(loopFrame);
+}
+function loopFrame() {
+  var drew = inkDirty;
+  renderInk(); maybeRenderMini(); maybeSheets();
+  // 何か動いている間は回し続ける
+  if (drew || inkDirty ||
+      (typeof activeStroke !== "undefined" && activeStroke) ||
+      (typeof activeShape !== "undefined" && activeShape) ||
+      (typeof lassoPath !== "undefined" && lassoPath) ||
+      (typeof pinch !== "undefined" && pinch)) {
+    idleFrames = 0;
+  } else {
+    idleFrames++;
+  }
+  if (idleFrames > 30) { rafOn = false; return; }   // 静止したら休む
+  requestAnimationFrame(loopFrame);
+}
+setInterval(function(){
+  // 休んでいる間も、描くものがあれば起きる(起こし忘れの保険)
+  if (!rafOn && (inkDirty ||
+      (typeof activeStroke !== "undefined" && activeStroke) ||
+      (typeof activeShape !== "undefined" && activeShape) ||
+      (typeof lassoPath !== "undefined" && lassoPath))) wakeRender();
+}, 250);
+wakeRender();
 
 /* ---------- bbox ---------- */
 /* DOM要素の実寸を測ってキャッシュする(測定は必要な時だけ) */
@@ -2346,6 +2399,43 @@ function updateSelUI() {
 }
 
 /* ---------- undo/redo/保存 ---------- */
+/* ===== 元に戻す用の控え(画像は別置き) =====
+   画像のデータは1枚で数MBある。控えに丸ごと入れると
+   40件で数十MBになり、端末のメモリが尽きて落ちることがある。
+   控えには短い合言葉だけを入れ、実体は1か所にまとめて持つ。 */
+var undoImgPool = Object.create(null);
+var undoImgRev = null;
+var undoImgSeq = 0;
+function poolImage(src2) {
+  if (!undoImgRev) { try { undoImgRev = new Map(); } catch (e) { undoImgRev = null; } }
+  if (!undoImgRev) return src2;                 // 使えない環境では従来どおり
+  var k = undoImgRev.get(src2);
+  if (!k) {
+    k = "#img" + (++undoImgSeq);
+    undoImgPool[k] = src2;
+    undoImgRev.set(src2, k);
+  }
+  return k;
+}
+function snapshotForUndo() {
+  return JSON.stringify(objects, function(k, v){
+    if (k === "el" || k === "img" || k.charAt(0) === "_") return undefined;
+    // 長い画像データは合言葉に置き換える
+    if (k === "src" && typeof v === "string" && v.length > 512) return poolImage(v);
+    return v;
+  });
+}
+/* 控えを元に戻す時に、合言葉を実体へ差し替える */
+function expandSnapshot(json) {
+  var arr;
+  try { arr = JSON.parse(json); } catch (e) { return json; }
+  for (var i = 0; i < arr.length; i++) {
+    var o = arr[i];
+    if (o && typeof o.src === "string" && o.src.charAt(0) === "#" && undoImgPool[o.src])
+      o.src = undoImgPool[o.src];
+  }
+  return JSON.stringify(arr);
+}
 function serializeScene() {
   return JSON.stringify(objects, function(k, v){
     return (k === "el" || k === "img" || k.charAt(0) === "_") ? undefined : v;
@@ -2397,7 +2487,7 @@ function pushSnapshot(snap) {
   scheduleSave();
   updateUndoUI();
 }
-function pushUndo() { pushSnapshot(serializeScene()); }
+function pushUndo() { pushSnapshot(snapshotForUndo()); }
 function updateUndoUI() {
   $("#undoBtn").classList.toggle("disabled", !undoStack.length);
   $("#redoBtn").classList.toggle("disabled", !redoStack.length);
@@ -2421,8 +2511,8 @@ $("#saveBtn").onclick = function(){
 };
 $("#undoBtn").onclick = function(){
   if (!undoStack.length) return;
-  redoStack.push(serializeScene());
-  rebuildScene(undoStack.pop());
+  redoStack.push(snapshotForUndo());
+  rebuildScene(expandSnapshot(undoStack.pop()));
   // 空白ページの挿入/削除も戻せるよう、用紙の枚数と表示を作り直す
   try { updateSheets(); applyView(); } catch (e) {}
   scheduleSave();
@@ -2430,8 +2520,8 @@ $("#undoBtn").onclick = function(){
 };
 $("#redoBtn").onclick = function(){
   if (!redoStack.length) return;
-  undoStack.push(serializeScene());
-  rebuildScene(redoStack.pop());
+  undoStack.push(snapshotForUndo());
+  rebuildScene(expandSnapshot(redoStack.pop()));
   try { updateSheets(); applyView(); } catch (e) {}
   scheduleSave();
   updateUndoUI();
@@ -4235,7 +4325,7 @@ function partialEraseSegment(x1, y1, x2, y2, r) {
 }
 /* 指タップ時の単発消し */
 function eraseTap(w) {
-  var snap = serializeScene();
+  var snap = snapshotForUndo();
   var rw = (eraser.size / 2) / view.s;
   var changed = false;
   if (eraser.mode === "partial") {
@@ -4784,7 +4874,7 @@ function cutImageByPath(o, path, px1, py1, px2, py2) {
   };
 }
 function performLassoCut(path) {
-  var snap = serializeScene();
+  var snap = snapshotForUndo();
   var insidePieces = [];
   var changed = false;
   var px1 = Infinity, py1 = Infinity, px2 = -Infinity, py2 = -Infinity;
@@ -5747,6 +5837,7 @@ var unsyncedEdits = false;
    古い版で塗り潰されてしまう(貼り付けた文字が消える原因)。 */
 var pageRev = 0;
 function scheduleSave() {
+  if (booting || isLoadingPage) return;   // 読込・同期反映の最中は保存しない
   dirtySinceSave = true;
   unsyncedEdits = true;
   statusEl.textContent = "保存中…";
@@ -5990,11 +6081,13 @@ function findPage(id) {
 /* ---------- ページの読込・追加・切替・改名・削除 ---------- */
 function loadPage(id) {
   currentId = id;
+  isLoadingPage = true;                   // ★開いている間は自動保存を止める
   undoStack = []; redoStack = []; updateUndoUI();
   saveIndex();
   kvGet("page_" + id).then(function(rec){
     pageRev = (rec && rec.rev) || 0;      // このページの版番号を覚える
     unsyncedEdits = false;                // 開いただけでは未送信ではない
+    dirtySinceSave = false;
     if (rec && rec.json) {
       rebuildScene(rec.json);
       if (rec.view) view = rec.view;
@@ -6014,6 +6107,12 @@ function loadPage(id) {
     for (var i = 0; i < objects.length; i++) maxId = Math.max(maxId, objects[i].id || 0);
     idSeq = Math.max(idSeq, maxId + 1);
     setTimeout(measureAll, 60);   // 実寸をまとめて測ってキャッシュ
+    // ★測定やマーカーの位置合わせが済んでから、自動保存を再開する
+    setTimeout(function(){
+      dirtySinceSave = false;
+      unsyncedEdits = false;
+      isLoadingPage = false;
+    }, 400);
     hintEl.style.opacity = objects.length ? 0 : "";
     statusEl.textContent = objects.length ? "保存済み ✓" : "新規ノート";
     updatePageBtn();
@@ -8917,21 +9016,93 @@ function openFormulaInput() {
 /* ===== 図(記号で描いた絵)やコードの貼り付け =====
    文字の位置で意味が決まるものは、等幅フォントで空白をそのまま残す。
    普通の文章と同じ扱いにすると、字幅が揃わず図が崩れてしまう。 */
+/* 「| A | B |」のような表の行か。
+   図の中の「| / |」を表と間違えないよう、区切りの数と中身で見分ける。 */
+function isTableLikeLine(L) {
+  var s = String(L || "").trim();
+  if (!/^\|.*\|$/.test(s)) return false;
+  // |---|---| の区切り行(ハイフンが2つ以上あるものだけ。空白だけの行は図)
+  if (/^\|[\s:|-]*\|$/.test(s) && (s.match(/-/g) || []).length >= 2) return true;
+  var cells = s.replace(/^\|/, "").replace(/\|$/, "").split("|");
+  if (cells.length < 2) return false;
+  // 各セルに中身があり、記号だけの図ではないこと
+  var filled = 0, arty = 0;
+  for (var i = 0; i < cells.length; i++) {
+    var c = cells[i].trim();
+    if (c) filled++;
+    if (c && /^[\/\\^<>+*_.-]+$/.test(c)) arty++;
+  }
+  // 中身が入っているセルが2つ未満なら、図の骨組みとみなす
+  return (filled >= 2 && arty === 0);
+}
 function looksPreformatted(text) {
   var s = String(text || "");
   if (/```/.test(s)) return true;                      // コードの囲み
   var lines = s.split("\n");
   if (lines.length < 3) return false;
-  var artChars = 0, indented = 0, boxLines = 0;
+  var artChars = 0, indented = 0, boxLines = 0, proseLines = 0;
   for (var i = 0; i < lines.length; i++) {
     var L = lines[i];
+    if (!L.trim()) continue;
     if (/^\s{2,}\S/.test(L)) indented++;              // 行頭に2つ以上の空白
     if (/\S\s{2,}\S/.test(L)) indented++;             // 行の途中にも空白の並び
+    if (isTableLikeLine(L)) continue;                 // 表の行は図に数えない
     var m = L.match(/[|\/\\+^><`_─│┌┐└┘├┤┬┴┼━┃]/g);
     if (m) { artChars += m.length; if (m.length >= 2) boxLines++; }
+    // 普通の文らしい行(日本語の句読点や長い文)を数える
+    if (/[。、：]/.test(L) || L.replace(/\s/g, "").length > 24) proseLines++;
   }
-  // 罫線のような記号が多く、空白で位置を合わせている行が複数ある
+  /* ★普通の文章が図の行より多い時は、図とみなさない。
+     これをしないと、長い解説文の途中に少し記号があるだけで
+     全体が等幅になり、レイアウトが崩れてしまう。 */
+  if (proseLines > boxLines) return false;
   return (boxLines >= 3 && artChars >= 8 && indented >= 3);
+}
+/* 文章の中から「図の部分」だけを行単位で切り出す */
+function splitArtBlocks(text) {
+  var lines = String(text || "").split("\n");
+  function isArtLine(L) {
+    if (!L.trim()) return false;
+    if (/[。、]/.test(L)) return false;                 // 文らしい行は図ではない
+    // ★表の行(| A | B | や |---|)は図ではない。表として扱う
+    if (isTableLikeLine(L)) return false;
+    var m = L.match(/[|\/\\+^▲▼←→↑↓─│┌┐└┘├┤┬┴┼━┃]/g);
+    return !!(m && m.length >= 2);
+  }
+  // 字下げされていて句読点が無い行は、図の一部(見出しや注記)とみなす
+  function isArtSideLine(L) {
+    if (!L.trim()) return false;
+    if (/[。、]/.test(L)) return false;
+    return /^\s{4,}\S/.test(L);
+  }
+  // まず図の中心になる行を見つけ、その前後の関連行まで広げる
+  var isArt = [];
+  for (var i = 0; i < lines.length; i++) isArt[i] = isArtLine(lines[i]);
+  for (var j = 0; j < lines.length; j++) {
+    if (!isArt[j]) continue;
+    for (var b = j - 1; b >= 0 && (isArtSideLine(lines[b]) || !lines[b].trim()); b--) isArt[b] = true;
+    for (var f = j + 1; f < lines.length && (isArtSideLine(lines[f]) || !lines[f].trim()); f++) isArt[f] = true;
+  }
+  var out = [], buf = [], art = [];
+  function flushText(){
+    while (buf.length && !buf[buf.length - 1].trim()) buf.pop();
+    if (buf.length) out.push({ t:"text", s: buf.join("\n") });
+    buf = [];
+  }
+  function flushArt(){
+    while (art.length && !art[art.length - 1].trim()) art.pop();
+    var real = art.filter(function(L){ return isArtLine(L); }).length;
+    if (real >= 3) { flushText(); out.push({ t:"art", s: art.join("\n") }); }
+    else { buf = buf.concat(art); }
+    art = [];
+  }
+  for (var k = 0; k < lines.length; k++) {
+    if (isArt[k]) { art.push(lines[k]); continue; }
+    flushArt();
+    buf.push(lines[k]);
+  }
+  flushArt(); flushText();
+  return out;
 }
 /* 囲み(```)があれば中身だけ取り出す */
 function stripCodeFence(s) {
@@ -9201,6 +9372,34 @@ function splitMathBlocks(s) {
 function needsTypeset(latex) {
   return /\\(d|t)?frac|\\sqrt|\\sum|\\int|\\prod|\\lim|\\binom|\\begin\{|\\over|\\substack|\\left|\\matrix/.test(latex);
 }
+/* ★$ で囲まれていない「式だけの行」も数式として扱う。
+   AIの回答では \text{SNR} \propto ... のように囲みなしで来ることが多く、
+   これを文字のまま置くとバックスラッシュだらけで読めない。 */
+function isBareFormulaLine(L) {
+  var s = String(L || "").trim();
+  if (!s || s.length > 200) return false;
+  if (/[。、「」]/.test(s)) return false;              // 文らしい行は除く
+  if (!/\\[A-Za-z]/.test(s)) return false;            // LaTeXの命令が無い
+  // 組版が要る命令(分数・平方根・総和など)を含むか
+  if (!needsTypeset(s)) return false;
+  // 日本語が多い行は文章とみなす(式の中の \text{...} は除いて数える)
+  var noTex = s.replace(/\\text\s*\{[^{}]*\}/g, "").replace(/\\[A-Za-z]+/g, "");
+  var jp = (noTex.match(/[ぁ-んァ-ヶ一-龠]/g) || []).length;
+  return jp <= 2;
+}
+/* 行ごとに「文章」と「囲みなしの式」に分ける */
+function splitBareFormulaLines(text) {
+  var lines = String(text || "").split("\n");
+  var out = [], buf = [];
+  function flush(){ if (buf.length) { out.push({ t:"text", s: buf.join("\n") }); buf = []; } }
+  for (var i = 0; i < lines.length; i++) {
+    if (isBareFormulaLine(lines[i])) { flush(); out.push({ t:"math", s: lines[i].trim() }); }
+    else buf.push(lines[i]);
+  }
+  flush();
+  return out;
+}
+
 /* 表以外の部分を、指定した位置から縦に並べて置く(表と混在した貼り付け用) */
 function insertRichPasteInner(raw, left, top, W, done) {
   var blocks = splitMathBlocks(String(raw || ""));
@@ -9211,7 +9410,15 @@ function insertRichPasteInner(raw, left, top, W, done) {
     buf = "";
   }
   blocks.forEach(function(b){
-    if (b.t === "text") { buf += b.s; return; }
+    if (b.t === "text") {
+      // 囲みなしの式の行も拾い上げる
+      var sub = splitBareFormulaLines(b.s);
+      for (var k = 0; k < sub.length; k++) {
+        if (sub[k].t === "math") { flush(); parts.push({ t: "math", s: sub[k].s }); }
+        else buf += sub[k].s + "\n";
+      }
+      return;
+    }
     if (!needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }
     flush();
     parts.push({ t: "math", s: b.s });
@@ -9303,27 +9510,49 @@ function insertRichHtml(html) {
 function insertRichPaste(raw) {
   /* ★図やコード(文字の位置で意味が決まるもの)は、そのまま等幅で置く。
      文章と混ざっている場合は、段落ごとに分けて図の部分だけ等幅にする。 */
-  var paras = String(raw || "").split(/\n{2,}/);
-  if (paras.some(looksPreformatted)) {
+  /* ★空行が無い長い文書でも図だけを取り出せるよう、行単位で切り分ける */
+  var paras = splitArtBlocks(String(raw || ""));
+  if (paras.some(function(p){ return p.t === "art"; })) {
     pushUndo();
     var Wp = Math.min(560, Math.max(320, innerWidth - 80));
     var startP = toWorld(innerWidth / 2, innerHeight / 2);
     var yp = startP.y, leftP = startP.x - Wp / 2, madeP = [], nPre = 0;
     var chainP = Promise.resolve();
-    paras.forEach(function(para){
+    paras.forEach(function(part){
+      var para = part.s;
       if (!String(para).trim()) return;
       chainP = chainP.then(function(){
-        if (looksPreformatted(para)) {
+        if (part.t === "art") {
           var po = insertPreformatted(para, leftP, yp, Wp);
           madeP.push(po); nPre++;
           yp += Math.max(40, objBBox(po).h) + 14;
           return;
         }
-        return new Promise(function(res){
-          insertRichPasteInner(para, leftP, yp, Wp, function(objs, nextY){
-            madeP = madeP.concat(objs); yp = nextY; res();
+        // 図以外の部分は、表の切り出しも行ってから置く
+        var tparts = splitTableBlocks(para);
+        var sub = Promise.resolve();
+        tparts.forEach(function(tp){
+          sub = sub.then(function(){
+            if (tp.t === "table") {
+              var to = { id: idSeq++, type: "text", x: leftP, y: yp, w: Wp,
+                         text: "", rich: sanitizeRich(tp.s), fontSize: 18,
+                         color: (THEMES[themeName] || THEMES.cream).pen };
+              var bx = document.createElement("div");
+              bx.innerHTML = to.rich;
+              to.text = (bx.innerText || bx.textContent || "").trim();
+              objects.push(to); makeTextEl(to); measureObj(to); madeP.push(to);
+              yp += Math.max(40, objBBox(to).h) + 14;
+              return;
+            }
+            if (!String(tp.s).trim()) return;
+            return new Promise(function(res){
+              insertRichPasteInner(tp.s, leftP, yp, Wp, function(objs, nextY){
+                madeP = madeP.concat(objs); yp = nextY; res();
+              });
+            });
           });
         });
+        return sub;
       });
     });
     chainP.then(function(){
@@ -11002,6 +11231,7 @@ function onRemotePageChanged(id, remoteTs, remoteRev, remoteStamp, forcePull) {
         statusEl.textContent = "編集中のため、この端末の内容を優先しました";
         return;
       }
+      isLoadingPage = true;                    // 受け取り中も自動保存を止める
       return pullAndStore(nid, forcePull).then(function(){
         var pg = findPage(nid);
         if (pg) { pg.ts = remoteTs; saveIndex(); }
@@ -11012,6 +11242,7 @@ function onRemotePageChanged(id, remoteTs, remoteRev, remoteStamp, forcePull) {
             statusEl.textContent = "他の端末の変更を反映しました";
           }, 120);
         } else {
+          isLoadingPage = false;
           updateCardThumb(nid);
         }
       });
