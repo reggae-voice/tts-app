@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.21">InkNote <small>v20.21</small></div>
+  <div class="brand" title="InkNote v20.22">InkNote <small>v20.22</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1463,7 +1463,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1493,7 +1492,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.21";
+var APP_VERSION = "20.22";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2976,6 +2975,11 @@ function startTextEdit(o, pt) {
   el.addEventListener("paste", onTextPaste);
   el.addEventListener("copy", onTextCopyOrCut);
   el.addEventListener("cut", onTextCopyOrCut);
+  /* 文字の上に指を置いている間は「選んでいる最中」とみなし、
+     自動スクロールを止める(iPadの虫めがねが出ている間も含む) */
+  el.addEventListener("pointerdown", onTextTouchStart);
+  el.addEventListener("pointerup", onTextTouchEnd);
+  el.addEventListener("pointercancel", onTextTouchEnd);
   syncEmptyClass(o);
 }
 /* ===== コピー・切り取り時、選択に数式の画像が入っていたら文字として渡す =====
@@ -2983,6 +2987,13 @@ function startTextEdit(o, pt) {
    別のセルへ移せなくなる。選択範囲に数式画像があれば、その場所を
    data-latex(元の式)の文字に置き換えたものをクリップボードへ渡す。
    これなら他のセルに貼った時、その場で読める式として届く。 */
+function onTextTouchStart() {
+  textSelecting = true;
+}
+function onTextTouchEnd() {
+  // 指を離した直後もハンドル操作が続くことがあるので、少し余韻を持たせる
+  setTimeout(function(){ textSelecting = false; }, 400);
+}
 function onTextCopyOrCut(e) {
   var s = window.getSelection();
   if (!s || !s.rangeCount || s.isCollapsed) return;
@@ -3374,8 +3385,21 @@ function caretScreenY() {
 }
 /* カーソルが隠れている時だけ、隠れている分だけ画面を動かす。
    すでに見えていれば一切スクロールしない(触った瞬間に画面が飛ぶのを防ぐ) */
+/* ★文字を選んでいる最中(iPadの虫めがね・選択ハンドル操作中)かどうか。
+   この間に画面を勝手にスクロールすると、指でつまんでいる文字が
+   足元から動いてしまい、選択が破綻して操作不能になる(固まる)。 */
+var textSelecting = false;
+function isSelectingText() {
+  if (textSelecting) return true;
+  var s = window.getSelection && window.getSelection();
+  return !!(s && s.rangeCount && !s.isCollapsed);
+}
 function ensureEditingVisible() {
   if (!editingObj) return;
+  /* ★選んでいる最中は画面を動かさない。
+     iPadは選択ハンドルを動かすたびにvisualViewportのイベントを出すため、
+     ここで view を変えると指の下の文字がずれ、選択できなくなる。 */
+  if (isSelectingText()) { positionEditHandle(); return; }
   var vv = window.visualViewport;
   var visH = vv ? vv.height : innerHeight;
   var visTop = vv ? vv.offsetTop : 0;
@@ -3419,15 +3443,24 @@ function syncEditingObjFromDom() {
 }
 function commitText() {
   if (!editingObj) return;
+  textSelecting = false;
   hideRichBar();
   document.body.classList.remove("editing-mode");
   editHandle.classList.remove("show");
   var o = editingObj;
   editingObj = null;
   var el = o.el;
+  /* ★編集を終えたら、付けたリスナーは全て外す。
+     外し忘れると、編集を開くたびに同じ処理が何重にも積み重なり、
+     やがて1回のタッチで何度も処理が走って動きが重くなる・固まる。 */
   el.removeEventListener("blur", onTextBlur);
   el.removeEventListener("input", onTextInput);
   el.removeEventListener("paste", onTextPaste);
+  el.removeEventListener("copy", onTextCopyOrCut);
+  el.removeEventListener("cut", onTextCopyOrCut);
+  el.removeEventListener("pointerdown", onTextTouchStart);
+  el.removeEventListener("pointerup", onTextTouchEnd);
+  el.removeEventListener("pointercancel", onTextTouchEnd);
   var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
   o.text = raw.replace(/\n$/, "");
   // 装飾が付いていれば残す(無ければ普通の文字に戻す)
@@ -3444,6 +3477,12 @@ function commitText() {
   blurKeyboard();
   el.classList.remove("editing");
   el.removeAttribute("contenteditable");
+  /* ★OS側の文字選択を残さない。残っていると、次にテキストBOXを
+     タップしても「選択の続き」と解釈されて選べなくなることがある。 */
+  try {
+    var s0 = window.getSelection();
+    if (s0 && s0.rangeCount && el.contains(s0.anchorNode)) s0.removeAllRanges();
+  } catch (e2) {}
   if (hasRich(o)) el.innerHTML = sanitizeRich(o.rich);
   else el.textContent = o.text;
   syncEmptyClass(o);
