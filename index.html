@@ -959,7 +959,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.4">InkNote <small>v20.4</small></div>
+  <div class="brand" title="InkNote v20.7">InkNote <small>v20.7</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1149,6 +1149,8 @@ window.onerror = function(msg, src, line){
   <button class="rb-mark" data-m="#FFE066" title="黄色のマーカー" style="background:#FFE066"></button>
   <button class="rb-mark" data-m="#B6E3FF" title="青のマーカー" style="background:#B6E3FF"></button>
   <span class="rb-sep"></span>
+  <button id="rbMath" title="選んだ部分を数式に組版">∑</button>
+  <span class="rb-sep"></span>
   <button id="rbClear" title="装飾を消す">✕</button>
 </div>
 <div id="ctxbar">
@@ -1284,6 +1286,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn st-font" data-f="sans">ゴシック</button>
       <button class="stybtn st-font" data-f="serif" style="font-family:serif">明朝</button>
       <button class="stybtn st-font" data-f="mono" style="font-family:monospace">等幅</button>
+    </div>
+    <div class="st-row"><span class="st-label">図・コード</span>
+      <button class="stybtn" id="stMono">🔡 位置を保つ(折り返さない)</button>
+      <span style="color:var(--ui-dim);font-size:11px">記号で描いた図やコード用</span>
     </div>
     <div class="st-row"><span class="st-label">サイズ</span>
       <button class="stybtn" id="stSmall">Ａ−</button>
@@ -1448,6 +1454,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1477,7 +1484,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.4";
+var APP_VERSION = "20.7";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2588,6 +2595,8 @@ function resizeObject(o, b0, scale) {
     o.el.style.width = o.w + "px"; o.el.style.height = o.h + "px";
   } else if (o.type === "text") {
     if (!o._o) o._o = { x: o.x, y: o.y, w: o.w, f: o.fontSize };
+    // ★角のハンドルでつまんで大きさを変えた時も、以後は指定どおりの幅で固定する
+    if (o.autoW) { o.autoW = false; o.el.classList.remove("autow"); o.el.style.maxWidth = ""; }
     o.x = b0.x + (o._o.x - b0.x) * scale;
     o.y = b0.y + (o._o.y - b0.y) * scale;
     o.w = Math.max(40, o._o.w * scale);
@@ -2777,7 +2786,7 @@ function isDarkColor(hex) {
    「読める文字(o.text)」と「装飾つきの中身(o.rich)」の2つで持つ。
    o.rich は安全のため、太字・斜体・下線・色・マーカーだけを通す。 */
 var RICH_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, BR:1, SPAN:1, DIV:1, P:1, FONT:1,
-                  TABLE:1, THEAD:1, TBODY:1, TFOOT:1, TR:1, TD:1, TH:1 };
+                  TABLE:1, THEAD:1, TBODY:1, TFOOT:1, TR:1, TD:1, TH:1, IMG:1 };
 function sanitizeRich(html) {
   var box = document.createElement("div");
   box.innerHTML = String(html || "");
@@ -2790,6 +2799,22 @@ function sanitizeRich(html) {
       if (!RICH_TAGS[n.tagName]) {                           // 許可外は中身だけ残す
         while (n.firstChild) node.insertBefore(n.firstChild, n);
         node.removeChild(n);
+        continue;
+      }
+      /* ★選んだ範囲だけを組版した数式の画像(<img data-latex>)。
+         data:image の中身だけを許可し、外部URLやonerror等は落とす。 */
+      if (n.tagName === "IMG") {
+        var src2 = n.getAttribute("src") || "";
+        if (src2.indexOf("data:image/") !== 0) { node.removeChild(n); continue; }
+        var lx = n.getAttribute("data-latex") || "";
+        var h2 = n.getAttribute("data-h") || "";
+        var attrs2 = Array.prototype.slice.call(n.attributes || []);
+        for (var a2 = 0; a2 < attrs2.length; a2++) n.removeAttribute(attrs2[a2].name);
+        n.setAttribute("src", src2);
+        if (lx) n.setAttribute("data-latex", lx);
+        if (h2) n.setAttribute("data-h", h2);
+        n.setAttribute("style", "height:" + (h2 || "1.1em") +
+          ";vertical-align:middle;display:inline-block");
         continue;
       }
       // 属性は色まわりだけ残す
@@ -3271,7 +3296,7 @@ function commitText() {
   var cleaned = sanitizeRich(el.innerHTML);
   // ★表も装飾として残す。ここに table が無かったため、
   //   編集して確定するたびに表の枠が消えてただの文章になっていた。
-  o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody)\b/i.test(cleaned)
+  o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
            ? cleaned : null;
   // ★キーボードを閉じるのは contenteditable を外す「前」に行う。
   //   属性を外した後だと要素がフォーカス対象でなくなり、blurが効かず
@@ -3752,6 +3777,17 @@ selWHandle.addEventListener("pointerdown", function(e){
   e.preventDefault();
   e.stopPropagation();
   var o = sel[0];
+  /* ★「入力に合わせて自動で伸びる」がついたままだと、CSSの
+     width:auto が指(handle)で決めた幅を強制的に上書きしてしまい、
+     つまんで広げても見た目が一切変わらない(次に開いた時も元の幅に戻る)。
+     指で幅を決めた = ユーザーが「この幅で固定したい」という明確な意思。
+     ドラッグを始めた時点で自動追従を外し、決めた幅を活かす。 */
+  var hadAutoW = !!o.autoW;
+  if (hadAutoW) {
+    o.autoW = false;
+    o.el.classList.remove("autow");
+    o.el.style.maxWidth = "";
+  }
   var w0 = o.w;
   var startX = e.clientX;
   var snapshot = serializeScene();
@@ -3771,6 +3807,15 @@ selWHandle.addEventListener("pointerdown", function(e){
         measureObj(o);
         clampToSheet(o);
         scheduleSave();
+        if (hadAutoW) setTimeout(function(){
+          statusEl.textContent = "この幅で固定しました(伸縮に戻すには Aa の「入力に合わせて伸ばす」)";
+        }, 40);
+      } else if (hadAutoW) {
+        // つまんだだけで動かさなかった時は、元の自動追従に戻す
+        o.autoW = true;
+        o.el.classList.add("autow");
+        o.el.style.width = "auto";
+        o.el.style.maxWidth = autoTextMaxW(o) + "px";
       }
       updateSelUI();
     }
@@ -5168,6 +5213,7 @@ function refreshStylePanel() {
   for (var j = 0; j < fs.length; j++)
     fs[j].classList.toggle("sel", fs[j].getAttribute("data-f") === (o.font || "sans"));
   $("#stSize").textContent = Math.round(o.fontSize);
+  $("#stMono").classList.toggle("sel", !!o.mono);
   $("#stBold").classList.toggle("sel", !!o.bold);
   $("#stUnder").classList.toggle("sel", !!o.underline);
   $("#bbNone").classList.toggle("sel", !o.bubble);
@@ -5201,6 +5247,7 @@ function styleChange(fn) {
       styleChange(function(o){ o.font = f; });
     });
 })();
+$("#stMono").onclick = function(){ var o = curText(); if (o) toggleMono(o); refreshStylePanel(); };
 $("#stSmall").onclick = function(){ styleChange(function(o){ o.fontSize = Math.max(9, o.fontSize / 1.2); }); };
 $("#stBig").onclick = function(){ styleChange(function(o){ o.fontSize = Math.min(200, o.fontSize * 1.2); }); };
 $("#stBold").onclick = function(){ styleChange(function(o){ o.bold = !o.bold; }); };
@@ -8697,6 +8744,63 @@ if (window.visualViewport) {
   });
 }
 
+/* ===== 選んだ部分だけを数式に組版する =====
+   通常の数式は独立した画像オブジェクトだが、これは文章や表のセルの
+   途中に「差し込む」ための小さな画像。組版した後も data-latex に
+   元の式を残すので、あとで消せば元の文字に戻せる。 */
+function renderLatexInline(latex) {
+  return loadMathJax().then(function(){
+    var tex = sanitizeLatex(latex);
+    var node = window.MathJax.tex2svg(tex, { display: false });
+    if (node.querySelector && node.querySelector("[data-mjx-error], mjx-merror")) {
+      var plain = tex.replace(/\\text\s*\{([^{}]*)\}/g, "$1")
+                     .replace(/\\mathrm\s*\{([^{}]*)\}/g, "$1");
+      var retry = window.MathJax.tex2svg(plain, { display: false });
+      if (retry.querySelector && !retry.querySelector("[data-mjx-error], mjx-merror")) node = retry;
+    }
+    var svg = node.querySelector("svg");
+    if (!svg) throw new Error("render failed");
+    var exH = parseFloat(svg.getAttribute("height")) || 2;    // ex単位の高さ
+    var xml = new XMLSerializer().serializeToString(svg);
+    var b64 = window.btoa ? window.btoa(unescape(encodeURIComponent(xml)))
+                          : Buffer.from(xml, "utf-8").toString("base64");
+    return { src: "data:image/svg+xml;base64," + b64, h: (exH * 0.62).toFixed(2) + "em" };
+  });
+}
+function convertSelectionToMath() {
+  var r = selectionInsideEditing();
+  if (!r) return;
+  var latex = String(r.toString() || "").trim();
+  if (!latex) return;
+  statusEl.textContent = "組版しています…";
+  renderLatexInline(latex).then(function(res){
+    var r2 = selectionInsideEditing();     // 選択が残っていれば使う
+    var range = r2 || r;
+    try {
+      var img = document.createElement("img");
+      img.setAttribute("src", res.src);
+      img.setAttribute("data-latex", latex);
+      img.setAttribute("data-h", res.h);
+      img.style.height = res.h;
+      img.style.verticalAlign = "middle";
+      img.style.display = "inline-block";
+      range.deleteContents();
+      range.insertNode(img);
+      var after = document.createRange();
+      after.setStartAfter(img); after.collapse(true);
+      var s2 = window.getSelection(); s2.removeAllRanges(); s2.addRange(after);
+    } catch (e) { statusEl.textContent = "組版できませんでした"; return; }
+    if (editingObj) {
+      measureObj(editingObj);
+      syncEmptyClass(editingObj);
+      scheduleSave();
+    }
+    hideRichBar();
+    setTimeout(function(){ statusEl.textContent = "式を組版しました(選んだ部分だけ)"; }, 30);
+  }).catch(function(){
+    statusEl.textContent = "式を読み取れませんでした";
+  });
+}
 /* 選んだ範囲を <span> で包んで書式をかける。
    ★ブラウザ任せ(execCommand)だと、環境によって文字色の指定が
      背景色として当たってしまうことがあるため、自分で指定する。 */
@@ -8836,6 +8940,7 @@ function bindRichBar() {
       applyRich({ backgroundColor: selectionHas("backgroundColor", m) ? "transparent" : m });
     });
   $("#rbClear").onclick = function(){ applyRich(null, true); };
+  $("#rbMath").onclick = function(){ convertSelectionToMath(); };
 }
 bindRichBar();
 
@@ -9047,8 +9152,10 @@ function looksPreformatted(text) {
     if (/^\s{2,}\S/.test(L)) indented++;              // 行頭に2つ以上の空白
     if (/\S\s{2,}\S/.test(L)) indented++;             // 行の途中にも空白の並び
     if (isTableLikeLine(L)) continue;                 // 表の行は図に数えない
-    var m = L.match(/[|\/\\+^><`_─│┌┐└┘├┤┬┴┼━┃]/g);
+    var m = L.match(/[|\/\\+^><`_─│┌┐└┘├┤┬┴┼━┃▶◀￣＿▲▼←→↑↓]/g);
     if (m) { artChars += m.length; if (m.length >= 2) boxLines++; }
+    if (/^[\s]*[￣＿─━]{2,}[\s]*$/.test(L)) { artChars += 3; boxLines++; }
+    if (m && m.length >= 1 && /^[\s￣＿─━]*[▲▼←→↑↓▶◀][\s￣＿─━]*$/.test(L)) boxLines++;
     // 普通の文らしい行(日本語の句読点や長い文)を数える
     if (/[。、：]/.test(L) || L.replace(/\s/g, "").length > 24) proseLines++;
   }
@@ -9066,14 +9173,21 @@ function splitArtBlocks(text) {
     if (/[。、]/.test(L)) return false;                 // 文らしい行は図ではない
     // ★表の行(| A | B | や |---|)は図ではない。表として扱う
     if (isTableLikeLine(L)) return false;
-    var m = L.match(/[|\/\\+^▲▼←→↑↓─│┌┐└┘├┤┬┴┼━┃]/g);
-    return !!(m && m.length >= 2);
+    var m = L.match(/[|\/\\+^▲▼←→↑↓─│┌┐└┘├┤┬┴┼━┃▶◀￣＿]/g);
+    if (m && m.length >= 2) return true;
+    // ★矢印や罫線が「1個だけ」の行も図とみなす(▲だけの行、￣が並ぶだけの行など)。
+    //   全角の罫線(￣)は連続して1種類の記号になりがちなので、それだけの行も図。
+    if (m && m.length >= 1 && /^[\s￣＿─━]*[▲▼←→↑↓▶◀][\s￣＿─━]*$/.test(L)) return true;
+    if (/^[\s]*[￣＿─━]{2,}[\s]*$/.test(L)) return true;         // 罫線だけの行
+    return false;
   }
   // 字下げされていて句読点が無い行は、図の一部(見出しや注記)とみなす
   function isArtSideLine(L) {
     if (!L.trim()) return false;
     if (/[。、]/.test(L)) return false;
-    return /^\s{4,}\S/.test(L);
+    if (isArtLine(L)) return true;                       // 図の一部そのものも境界として続ける
+    if (/^[\s]*[￣＿─━]{1,}[\s]*$/.test(L)) return true;   // 罫線だけの短い行
+    return /^\s{2,}\S/.test(L) || L.trim().length <= 14;  // 短い見出し・字下げ行
   }
   // まず図の中心になる行を見つけ、その前後の関連行まで広げる
   var isArt = [];
@@ -10010,12 +10124,18 @@ function clipHas() { return !!(appClip && appClip.items && appClip.items.length)
 function toggleMono(o) {
   if (!o || o.type !== "text") return;
   pushUndo();
+  // ★ONにする直前まで手動で固定していた幅があれば、それを伸びる上限として引き継ぐ。
+  //   引き継がないと、既定の上限まで一瞬で縮んで見える。
+  var prevFixedW = (!o.mono && !o.autoW) ? o.w : null;
   o.mono = !o.mono;
   if (o.mono) o.autoW = true;             // 等幅は折り返さない方が図が崩れない
   if (o.el) {
     o.el.classList.toggle("mono", !!o.mono);
     o.el.classList.toggle("autow", !!o.autoW);
-    if (o.autoW) { o.el.style.width = "auto"; o.el.style.maxWidth = autoTextMaxW(o) + "px"; }
+    if (o.autoW) {
+      o.el.style.width = "auto";
+      o.el.style.maxWidth = (prevFixedW ? Math.max(prevFixedW, 160) : autoTextMaxW(o)) + "px";
+    }
   }
   applyTextStyle(o);
   measureObj(o);
@@ -10122,6 +10242,14 @@ $("#ctxMath").onclick = function(e){
   /* ★複数行の文章をまるごと1つの式にすると、横1行に潰れてしまう。
      どちらにするかを選べるようにする。 */
   var one = (sel.length === 1 && sel[0].type === "text") ? sel[0] : null;
+  /* ★表を選んでいる時にtypesetInPlaceを使うと、表のHTMLごと
+     捨てて読める文字だけから文章を作り直してしまい、表が消える。
+     表の中の式は、ダブルタップしてセルの中の文字を選び、
+     出てくるバーの∑で個別に組版してもらう。 */
+  if (one && isTableObj(one)) {
+    statusEl.textContent = "表の中の式は、セルの文字をダブルタップして選び、出てくる∑で組版できます";
+    return;
+  }
   if (one && /\n/.test(String(one.text || ""))) {
     showSheet("この文章をどうしますか", [
       { label: "📐 文章はそのまま、中の式だけ組版する", fn: function(){ typesetInPlace(one); } },
