@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.10">InkNote <small>v20.10</small></div>
+  <div class="brand" title="InkNote v20.14">InkNote <small>v20.14</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1488,7 +1488,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.10";
+var APP_VERSION = "20.14";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2483,6 +2483,12 @@ function rebuildScene(json) {
   setTimeout(function(){
     refreshMeasures();
     realignHighlighters();
+    /* ★他の端末からの同期などで内容が入れ替わった直後、
+       今の表示位置が新しい内容の範囲外のままだと、
+       (特に🔒ロック中で操作しない限り)何も描かれていないように
+       見え続けてしまう。表示できる範囲を作り直して補正する。 */
+    clampView(); applyView();
+    inkDirty = true; if (typeof wakeRender === "function") wakeRender();
   }, 60);
   // 端末によってはフォントの読み込みが遅れるので、もう一度合わせる
   if (document.fonts && document.fonts.ready) {
@@ -2490,6 +2496,8 @@ function rebuildScene(json) {
       setTimeout(function(){
         refreshMeasures();
         realignHighlighters();
+        clampView(); applyView();
+        inkDirty = true; if (typeof wakeRender === "function") wakeRender();
       }, 30);
     }).catch(function(){});
   }
@@ -3328,6 +3336,21 @@ if (window.visualViewport) {
   window.visualViewport.addEventListener("scroll", function(){
     if (editingObj) ensureEditingVisible();
   });
+}
+/* ★編集セッションを終えずに(キーボードを閉じずに)、今DOMにある中身を
+   o.text/o.rich へ映す。これが無いと、編集中に pushUndo() で控えを取っても
+   objects配列側は編集前のまま(表なら変換前の生の式のまま)なので、
+   何度変換しても同じ「編集前の状態」が積まれるだけになり、
+   1回Undoしただけで最初の状態まで一気に戻ってしまう。 */
+function syncEditingObjFromDom() {
+  if (!editingObj) return;
+  var o = editingObj, el = o.el;
+  var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
+  o.text = raw.replace(/\n$/, "");
+  if (o.autoW && el.offsetWidth) o.w = el.offsetWidth;
+  var cleaned = sanitizeRich(el.innerHTML);
+  o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
+           ? cleaned : null;
 }
 function commitText() {
   if (!editingObj) return;
@@ -4720,24 +4743,69 @@ $("#barToggle").onclick = function(){
   var vs = $("#vscroll"), thumb = $("#vsThumb"), pageEl = $("#vsPage");
   var dragging = false;
 
+  /* ★無限キャンバスでは「用紙の長さ」という概念が無いので、
+     実際に置かれているものの範囲(contentBBox)から可動域を作る。
+     内容が無い/小さい時はスライダーを出さない(動かす意味が無いため)。 */
+  function infExtentAndOrigin(vert) {
+    var cb = contentBBox();
+    var lo = 0, hi = (vert ? innerHeight : innerWidth) / (view.s || 1);
+    if (cb) {
+      var M = 200;                                     // 端に少し余裕を持たせる
+      lo = Math.min(lo, (vert ? cb.y : cb.x) - M);
+      hi = Math.max(hi, (vert ? (cb.y + cb.h) : (cb.x + cb.w)) + M);
+    }
+    return { origin: lo, extent: Math.max(1, hi - lo) };
+  }
+  function vertNow() {
+    if (canvasMode === "a4v") return true;
+    if (canvasMode === "a4h") return false;
+    // ★無限モード: 内容「自体」の縦横比ではなく、原点(現在地)から
+    //   内容まで実際にどれだけスクロールが要るかで縦/横を選ぶ。
+    //   例えば下の方(y=5000)にだけ小さな文字が1つあるだけでも、
+    //   そこへ辿り着くには縦方向に大きく動かす必要がある。
+    var cb = contentBBox();
+    if (!cb) return true;
+    var ve = infExtentAndOrigin(true).extent;
+    var he = infExtentAndOrigin(false).extent;
+    return ve >= he;
+  }
   function scrollRange() {
+    var vert = vertNow();
+    if (canvasMode === "inf") {
+      var info = infExtentAndOrigin(vert);
+      var total2 = info.extent * view.s;
+      return Math.max(1, total2 - (vert ? innerHeight : innerWidth) + 48);
+    }
     // world座標での可動域: 先頭(24) 〜 末尾
-    var vert = (canvasMode === "a4v");
     var total = sheetExtent() * view.s;                 // 画面px換算の総延長
     var span = total - (vert ? innerHeight : innerWidth) + 48;
     return Math.max(1, span);
   }
   function trackLen() {
     // つまみが動ける距離(縦は高さ、横は幅ベース)
-    return (canvasMode === "a4v")
+    return vertNow()
       ? vs.clientHeight - thumb.offsetHeight
       : vs.clientWidth - thumb.offsetWidth;
   }
 
+  window.__vertNow = vertNow;               // テスト・デバッグ用
+  window.__scrollRange = scrollRange;
   /* ビュー位置 → つまみ位置 */
   window.__syncVScroll = function() {
-    if (canvasMode === "inf") { vs.classList.remove("on"); return; }
-    var vert = (canvasMode === "a4v");
+    if (canvasMode === "inf") {
+      var cb0 = contentBBox();
+      if (!cb0) { vs.classList.remove("on"); return; }        // 何も置かれていない
+      // ★内容が今の画面の中にすっぽり収まっているなら、動かす意味が無い。
+      //   余白を含めた可動域(infExtentAndOrigin)ではなく、
+      //   実際に画面外へはみ出しているかどうかで判定する。
+      var vert0 = vertNow();
+      var lo0 = vert0 ? cb0.y : cb0.x;
+      var hi0 = vert0 ? (cb0.y + cb0.h) : (cb0.x + cb0.w);
+      var scrLo = -(vert0 ? view.y : view.x) / view.s;
+      var scrHi = scrLo + (vert0 ? innerHeight : innerWidth) / view.s;
+      if (lo0 >= scrLo - 1 && hi0 <= scrHi + 1) { vs.classList.remove("on"); return; }
+    }
+    var vert = vertNow();
     vs.classList.add("on");
     vs.classList.toggle("v", vert);      // A4縦: 右端の縦スライダー
     vs.classList.toggle("h", !vert);     // A4横: 下端の横スライダー
@@ -4751,9 +4819,13 @@ $("#barToggle").onclick = function(){
       thumb.style.top = "";
     }
     if (dragging) {
-      var pgN = Math.floor((pos / view.s) / A4H) + 1;
-      var total = Math.max(1, Math.round(sheetExtent() / A4H));
-      pageEl.textContent = pgN + " / " + total + " ページ";
+      if (canvasMode === "inf") {
+        pageEl.textContent = "移動中…";
+      } else {
+        var pgN = Math.floor((pos / view.s) / A4H) + 1;
+        var total = Math.max(1, Math.round(sheetExtent() / A4H));
+        pageEl.textContent = pgN + " / " + total + " ページ";
+      }
       if (vert) {
         pageEl.style.top = Math.max(0, Math.min(trackLen(), parseFloat(thumb.style.top))) + "px";
         pageEl.style.left = "";
@@ -4767,17 +4839,20 @@ $("#barToggle").onclick = function(){
 
   /* つまみ位置 → ビュー位置 */
   function applyFromRatio(ratio) {
-    var vert = (canvasMode === "a4v");
+    var vert = vertNow();
     var pos = ratio * scrollRange();
-    if (vert) view.y = 24 - pos;
+    if (canvasMode === "inf") {
+      var info = infExtentAndOrigin(vert);
+      if (vert) view.y = -info.origin * view.s + 24 - pos;
+      else view.x = -info.origin * view.s + 24 - pos;
+    } else if (vert) view.y = 24 - pos;
     else view.x = 24 - pos;
-    clampView();
+    if (canvasMode !== "inf") clampView();              // 無限モードは範囲固定しない(自由に動ける)
     applyView();
     updateSelUI();
   }
 
   vs.addEventListener("pointerdown", function(e){
-    if (canvasMode === "inf") return;
     e.preventDefault();
     e.stopPropagation();
     dragging = true;
@@ -4785,7 +4860,7 @@ $("#barToggle").onclick = function(){
     try { vs.setPointerCapture(e.pointerId); } catch (err) {}
     var move = function(ev){
       var r = vs.getBoundingClientRect();
-      var vert = (canvasMode === "a4v");
+      var vert = vertNow();
       var ratio = vert
         ? (ev.clientY - r.top - thumb.offsetHeight / 2) / trackLen()
         : (ev.clientX - r.left - thumb.offsetWidth / 2) / trackLen();
@@ -5970,7 +6045,7 @@ function saveDoc() {
     return ok;
   });
   var pg = findPage(currentId);
-  if (pg) { pg.ts = Date.now(); saveIndex(); }
+  if (pg) { bumpPageRev(pg); saveIndex(); }
   scheduleThumb(pid);
   // 節目(5分に1回)で控えを残す。事故があっても戻せるように
   if (!window.__lastVer) window.__lastVer = {};
@@ -6237,7 +6312,7 @@ function updatePageBtn() {
 function addPage() {
   saveDocNow();
   var id = Date.now();
-  pages.push({ id: id, title: "ページ" + (pages.length + 1), ts: Date.now() });
+  pages.push({ id: id, title: "ページ" + (pages.length + 1), ts: Date.now(), rev: 1 });
   loadPage(id);
 }
 /* =========================================================
@@ -6312,7 +6387,7 @@ function duplicatePage(id) {
 
   var makeCopy = function(doc){
     var idx = pages.map(function(p){ return p.id; }).indexOf(id);
-    pages.splice(idx + 1, 0, { id: newId, title: copyTitle, ts: Date.now() });
+    pages.splice(idx + 1, 0, { id: newId, title: copyTitle, ts: Date.now(), rev: 1 });
     var body = doc && doc.json ? { json: doc.json, ts: Date.now() } : { json: "[]", ts: Date.now() };
     return kvSet("page_" + newId, body).then(function(){
       return saveIndex();
@@ -6439,6 +6514,7 @@ function askText(label, def, cb) {
 }
 function setPageFolder(pg, folder) {
   pg.folder = (folder || "").trim();
+  bumpPageRev(pg);
   ensureFolder(pg.folder);
   saveIndex();
   if (cloudUser()) cloudPushIndex().catch(function(){});
@@ -6646,7 +6722,7 @@ function restoreVersion(id, key) {
       });
     }).then(function(){
       var pg = findPage(id);
-      if (pg) { pg.ts = Date.now(); saveIndex(); }
+      if (pg) { bumpPageRev(pg); saveIndex(); }
       if (id === currentId) loadPage(id);
       else renderPageList();
       // ★戻した内容を「新しい版」としてクラウドへ送る(forceで確実に)
@@ -6966,6 +7042,25 @@ var tapDownCard = null, tapUpCard = null;
 /* ★ノート一覧を開いたら、その場でクラウドを見に行く。
    起動時も一覧から始まるので、ここを押さえておけば
    「他の端末で編集したのに古いまま」が起きない。 */
+/* ★ページ一覧(索引)の各エントリに版番号を付ける。
+   ページ内容の同期で「端末の時計(ts)だけで新旧を決めると、
+   時計が進んでいる端末の古い方が勝ってしまう」問題が過去にあったのと
+   同じ理由で、一覧側(タイトル変更・フォルダ移動・並べ替えなど)も
+   時刻だけでなく版番号で比べられるようにする。 */
+function bumpPageRev(pg) {
+  if (!pg) return;
+  pg.ts = Date.now();
+  pg.rev = (pg.rev || 0) + 1;
+}
+/* ★一覧の項目Aの方がBより新しいか。時計(ts)だけでなく版番号(rev)で比べる。
+   両方にrevがある時はrev優先。片方にしか無い古いデータはtsにフォールバック
+   (端末の時計が進んでいるだけで「新しい」と誤判定されるのを防ぐ)。 */
+function indexEntryNewer(A, B) {
+  if (!A) return false;
+  if (!B) return true;
+  if ((A.rev || 0) > 0 || (B.rev || 0) > 0) return (A.rev || 0) > (B.rev || 0);
+  return (A.ts || 0) > (B.ts || 0);
+}
 function pullOnOpenList() {
   // ★編集直後に一覧を開いた時、まだ保存できていない分があると
   //   「手元の方が古い」と誤判定されかねない。先に確定させる。
@@ -7183,6 +7278,10 @@ $("#lockBtn").onclick = function(){
   } else {
     statusEl.textContent = "🔓 編集ロックを解除しました";
   }
+  // ロックの切替そのものは表示範囲を変えないが、念のため取りこぼしなく
+  // 画面を作り直しておく(他の変更と重なっていても安全なように)
+  clampView(); applyView();
+  inkDirty = true; if (typeof wakeRender === "function") wakeRender();
 };
 $("#mnClose").onclick = closeMenu;
 (function(){
@@ -8829,15 +8928,56 @@ function renderLatexInline(latex) {
     return { src: "data:image/svg+xml;base64," + b64, h: (exH * 0.62).toFixed(2) + "em" };
   });
 }
-function convertSelectionToMath() {
+/* 指定した位置から、いちばん近い <td>/<th> を探す(表の外なら null) */
+function nearestCell(node) {
+  if (!editingObj || !editingObj.el) return null;
+  while (node && node.nodeType !== 1) node = node.parentNode;
+  while (node && node !== editingObj.el) {
+    if (node.tagName === "TD" || node.tagName === "TH") return node;
+    node = node.parentNode;
+  }
+  return null;
+}
+/* ★選択の範囲を、実際に組版する対象へ安全に整える。
+   タッチ操作でのセル内選択は、指のハンドルが隣のセルや枠の外へ
+   はみ出しやすく、狙った範囲だけを正確に選ぶのが難しい。
+   ここはWebページ側から直接コントロールできないOS標準の動きなので、
+   「今カーソルがあるセルの中身」を自動的に対象にすることで避ける。
+   ・選択が無い/1点だけ(カーソルのみ)→ カーソルのあるセル全体
+   ・選択が2つのセルにまたがっている(はみ出し失敗) → 始点側のセル全体
+   ・1つのセルの中できちんと選べている → その選択のまま(部分変換も可) */
+function cellSafeRange() {
   var r = selectionInsideEditing();
-  if (!r) return;
+  if (r) {
+    var cellA = nearestCell(r.startContainer);
+    var cellB = nearestCell(r.endContainer);
+    if (cellA && cellA === cellB) return r;             // 1つのセルに収まっている
+  }
+  var sel = window.getSelection();
+  var anchor = (r && r.startContainer) || (sel && sel.anchorNode);
+  var cell = nearestCell(anchor);
+  if (!cell) return r;                                   // 表の外(通常の文章)ならそのまま
+  var full = document.createRange();
+  full.selectNodeContents(cell);
+  return full;
+}
+function convertSelectionToMath() {
+  var inTable = editingObj && isTableObj(editingObj);
+  var r = inTable ? cellSafeRange() : selectionInsideEditing();
+  if (!r) { statusEl.textContent = "式にしたい文字を選んでから押してください"; return; }
   var latex = String(r.toString() || "").trim();
-  if (!latex) return;
+  if (!latex) { statusEl.textContent = "式にしたい文字を選んでから押してください"; return; }
   statusEl.textContent = "組版しています…";
   renderLatexInline(latex).then(function(res){
-    var r2 = selectionInsideEditing();     // 選択が残っていれば使う
+    var r2 = inTable ? null : selectionInsideEditing();   // 表の外だけ、選択が残っていれば使う
     var range = r2 || r;
+    // ★変換1回ごとに控えを残す。これが無いと、数セル変換した後に
+    //   1つ失敗してUndoした時、最初の状態まで一気に戻ってしまう。
+    //   pushUndoの前に、今の編集内容(それまでの変換分も含む)を
+    //   一度objects側に映してから控えないと、毎回「編集開始前」の
+    //   同じ状態しか記録されない。
+    syncEditingObjFromDom();
+    pushUndo();
     try {
       var img = document.createElement("img");
       img.setAttribute("src", res.src);
@@ -10999,7 +11139,7 @@ function cloudPushIndex() {
     var delAll = mergeDeleted(remoteDeleted);
     deletedIds = delAll;
 
-    // ページは id で突き合わせ、新しい方(ts)を採用。片方にしかない物は残す。
+    // ページは id で突き合わせ、新しい方(版番号優先、無ければts)を採用。片方にしかない物は残す。
     var byId = {}, order = [];
     function put(p, fromLocal) {
       if (!p || p.id == null) return;
@@ -11007,7 +11147,7 @@ function cloudPushIndex() {
       if (isDeleted(p.id)) return;                    // 明示的に消したものは戻さない
       var prev = byId[k];
       if (!prev) { byId[k] = p; order.push(k); return; }
-      if ((p.ts || 0) > (prev.ts || 0)) byId[k] = p;  // 新しい方を採用
+      if (indexEntryNewer(p, prev)) byId[k] = p;      // 新しい方を採用
     }
     pages.forEach(function(p){ put(p, true); });      // 自分の並び順を優先
     remotePages.forEach(function(p){ put(p, false); });
@@ -11266,7 +11406,7 @@ function syncAll() {
     // ローカル順を保ちつつ、新しい方を採用
     pages.forEach(function(L){
       var R = remoteById[L.id];
-      if (R && (R.ts || 0) > (L.ts || 0)) {
+      if (R && indexEntryNewer(R, L)) {
         merged.push(R);
         jobs = jobs.then(function(){
           return pullAndStore(L.id).then(function(){
@@ -11275,7 +11415,7 @@ function syncAll() {
         });
       } else {
         merged.push(L);
-        if (!R || (L.ts || 0) > (R.ts || 0))
+        if (!R || indexEntryNewer(L, R))
           jobs = jobs.then(function(){ return cloudPushPage(L.id); });
       }
     });
@@ -11402,7 +11542,7 @@ function applyRemoteIndex(d) {
     if (!p || p.id == null || isDeleted(p.id)) return;
     var k = String(p.id), prev = byId[k];
     if (!prev) { byId[k] = p; order.push(k); return; }
-    if ((p.ts || 0) > (prev.ts || 0)) byId[k] = p;
+    if (indexEntryNewer(p, prev)) byId[k] = p;
   }
   pages.forEach(put);
   remote.forEach(put);
