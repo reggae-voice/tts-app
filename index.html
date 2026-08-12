@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.14">InkNote <small>v20.14</small></div>
+  <div class="brand" title="InkNote v20.17">InkNote <small>v20.17</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1388,6 +1388,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn iq-opt" data-iq="small">容量優先</button>
       <span style="color:var(--ui-dim);font-size:11px">スクショの文字を残すなら高画質</span>
     </div>
+    <div class="st-row"><span class="st-label">整形</span>
+      <button class="stybtn" id="cleanNoiseBtn">🧹 引用タグを取り除く</button>
+      <span style="color:var(--ui-dim);font-size:11px">このページの[span_0]等の跡を今から一括で消す</span>
+    </div>
     <div class="st-row"><span class="st-label">表</span>
       <button class="stybtn" id="tableAddBtn">⊞ 表を作る</button>
       <span style="color:var(--ui-dim);font-size:11px">行×列を指定して作ります</span>
@@ -1488,7 +1492,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.14";
+var APP_VERSION = "20.17";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3118,10 +3122,65 @@ function mapScript(str, map) {
   }
   return out;
 }
+/* ★PDFなどからのコピーで改行が失われ、
+   「\(γ\)磁気回転比 \(G\)傾斜磁場強度 \(δ\)...」のように
+   用語の説明が1行に連なってしまうことがある。
+   \(...\) の間にある文字が「と」「、」のような、ただの接続語なら
+   文中の数式(壊してはいけない)、実際の説明文が入っているなら
+   崩れた用語リストとみなして、そこに改行を入れて1項目ずつに分ける。 */
+var PASTE_CONNECTORS = ["と", "や", "、", "，", ",", "または", "又は", "及び", "および",
+  "かつ", "・", "/", "／", "並びに", "ならびに"];
+function breakDenseInlineMath(s) {
+  var re = /\\\(([\s\S]*?)\\\)|\\\[([\s\S]*?)\\\]/g;
+  var m, last = null, cuts = [];
+  while ((m = re.exec(s))) {
+    if (last !== null) {
+      var gap = s.slice(last, m.index);
+      var trimmed = gap.trim();
+      var isConnector = trimmed !== "" && PASTE_CONNECTORS.indexOf(trimmed) !== -1;
+      // 空白しか無い(直接くっついている)か、接続語以外の中身がある場合に改行
+      if (!isConnector && gap.length <= 40 && !/\n/.test(gap))
+        cuts.push(m.index);
+    }
+    last = m.index + m[0].length;
+  }
+  if (!cuts.length) return s;
+  var out = s;
+  for (var i = cuts.length - 1; i >= 0; i--)
+    out = out.slice(0, cuts[i]) + "\n" + out.slice(cuts[i]);
+  return out;
+}
+/* ★NotebookLM/AIの回答によく混じる、根拠・引用マーカーや確実性タグを
+   取り除く。挟まれている本文は残し、マーカー部分だけを消す。
+   [図1]のような普通の参照は消さないよう、確実性は既知の語だけを対象にする。 */
+function stripCitationNoise(s) {
+  if (!s) return s;
+  s = String(s);
+  // ★消した跡が単語どうしを直接くっつけないよう、いったん空白1つに置き換えてから整える
+  s = s.replace(/[\[［]?\s*span_\d+\s*[\]］]?\s*[\(（]\s*(?:start|end)_span\s*[\)）]/gi, " ");
+  s = s.replace(/[\(（]\s*(?:start|end)_span\s*[\)）]/gi, " ");
+  s = s.replace(/[\[［]\s*(?:start|end)_span\s*[\]］]/gi, " ");
+  s = s.replace(/[\[［]\s*cite[_:\s][^\]］]{0,24}[\]］]/gi, " ");
+  // 確実性・信頼度タグ: 既知の語だけを対象にする([図1]等の参照は残す)
+  var CONF = "certain|probable|uncertain|possible|likely|unlikely|confirmed|unconfirmed" +
+             "|estimated|verified|確実|不確実|推定|確認済み|未確認|可能性が高い|可能性が低い|高確度|低確度";
+  s = s.replace(new RegExp("[\\[（(]\\s*(?:" + CONF + ")\\s*[\\]）)]", "gi"), " ");
+  // 取り除いた跡に残る余分な空白・カンマを行単位で整える
+  s = s.split("\n").map(function(line){
+    return line.replace(/[ \t]{2,}/g, " ")
+               .replace(/^[,，\s]+/, "")
+               .replace(/\s+([,、。])/g, "$1")
+               .replace(/^\s+|\s+$/g, "");
+  }).join("\n");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  return s;
+}
 function cleanPastedText(t) {
   if (!t) return "";
   var s = String(t);
+  s = stripCitationNoise(s);       // 引用マーカー・確実性タグを先に取り除く
   var hasTex = /[\\$]/.test(s);   // LaTeX由来かどうか(\ や $ を含むか)
+  s = breakDenseInlineMath(s);     // 崩れた用語リストを1項目ずつの行に戻す
 
   // 数式の囲みを外す: $$...$$, $...$, \(...\), \[...\]
   s = s.replace(/\$\$([\s\S]*?)\$\$/g, "$1");
@@ -7351,6 +7410,56 @@ $("#mmToggle").onclick = function(){
   $("#mapChip").style.display = showMini ? "" : "none";
   saveSettings();
 };
+/* ★過去に貼り付けて既にノートに残っている引用タグ・確実性タグを、
+   このページの全項目からまとめて取り除く(ボタンで実行、Undo可)。
+   表のセルの中もタグの構造を壊さず、文字の部分だけをきれいにする。 */
+function cleanNoiseInPage() {
+  var changed = 0;
+  var snapshot = serializeScene();      // 何か変わった時だけ控えを残す
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "text") continue;
+    if (o.rich) {
+      var box = document.createElement("div");
+      box.innerHTML = o.rich;
+      var walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, null, false);
+      var any = false, n;
+      while ((n = walker.nextNode())) {
+        var cleaned = stripCitationNoise(n.nodeValue);
+        if (cleaned !== n.nodeValue) { n.nodeValue = cleaned; any = true; }
+      }
+      if (any) {
+        o.rich = sanitizeRich(box.innerHTML);
+        var b2 = document.createElement("div");
+        b2.innerHTML = o.rich;
+        o.text = (b2.innerText || b2.textContent || "").trim();
+        if (o.el) o.el.innerHTML = o.rich;
+        measureObj(o);
+        changed++;
+      }
+    } else {
+      var t2 = stripCitationNoise(o.text || "");
+      if (t2 !== (o.text || "")) {
+        o.text = t2;
+        if (o.el) o.el.textContent = o.text;
+        measureObj(o);
+        changed++;
+      }
+    }
+  }
+  if (changed) {
+    pushSnapshot(snapshot);
+    inkDirty = true;
+    refreshMeasures();
+    scheduleSave();
+    setTimeout(function(){
+      statusEl.textContent = changed + "個の項目から引用タグを取り除きました";
+    }, 40);
+  } else {
+    statusEl.textContent = "取り除く引用タグは見つかりませんでした";
+  }
+}
+$("#cleanNoiseBtn").onclick = function(){ closeMenu(); setTimeout(cleanNoiseInPage, 120); };
 $("#updateApp").onclick = function(){
   // ノート(IndexedDB)には触れず、アプリの配信物だけを取り直す
   statusEl.textContent = "サーバーの最新版を確認中…";
@@ -8965,7 +9074,7 @@ function convertSelectionToMath() {
   var inTable = editingObj && isTableObj(editingObj);
   var r = inTable ? cellSafeRange() : selectionInsideEditing();
   if (!r) { statusEl.textContent = "式にしたい文字を選んでから押してください"; return; }
-  var latex = String(r.toString() || "").trim();
+  var latex = toSimpleLatex(String(r.toString() || "").trim());  // 「1/2」等の簡単な書き方も受け付ける
   if (!latex) { statusEl.textContent = "式にしたい文字を選んでから押してください"; return; }
   statusEl.textContent = "組版しています…";
   renderLatexInline(latex).then(function(res){
@@ -9183,6 +9292,44 @@ function sanitizeLatex(s) {
   return s.trim();
 }
 /* 入力からLaTeXの本体を取り出す($ や \( \) を外す) */
+/* ===== 簡単な書き方をLaTeXに変換する(記法アシスト) =====
+   \frac{1}{2} のような書き方を知らなくても、
+   「1/2」「x^2」のような普段の書き方のまま数式にできるようにする。
+   すでに本格的なLaTeXコマンドが入っている時は、壊さないよう何もしない。 */
+function toSimpleLatex(s) {
+  var t = String(s || "");
+  if (!t.trim()) return t;
+  /* ★「\pi r^2」のように、既存のLaTeXコマンドと簡単な書き方が
+     混ざっていることがある。文字列全体を一度に見て「本格的なLaTeXが
+     混じっているから」と全体を諦めるのではなく、\コマンドの部分だけを
+     一時的によけてから簡単な書き方だけを変換し、後で戻す。 */
+  var saved = [];
+  t = t.replace(/\\[a-zA-Z]+/g, function(m){
+    saved.push(m);
+    return "\u0001" + (saved.length - 1) + "\u0002";
+  });
+
+  // 累乗: x^2 → x^{2}、x^(2+1) → x^{2+1}
+  t = t.replace(/\^\s*\(([^()]+)\)/g, "^{$1}");
+  t = t.replace(/\^\s*([A-Za-z0-9]+)/g, "^{$1}");
+
+  // 分数: 数字/数字、文字/文字、(式)/(式) のような単純な形だけを対象にする
+  t = t.replace(/(\([^()]*\)|[A-Za-z0-9]+)\s*\/\s*(\([^()]*\)|[A-Za-z0-9]+)/g,
+    function(m, a, b){
+      a = a.replace(/^\(|\)$/g, "");
+      b = b.replace(/^\(|\)$/g, "");
+      return "\\frac{" + a + "}{" + b + "}";
+    });
+
+  // よく使う記号の補正(コマンド名の一部と誤爆しないよう、退避した後に行う)
+  t = t.replace(/\*/g, " \\times ");
+  t = t.replace(/~/g, " \\approx ");
+
+  // 退避しておいたコマンドを戻す
+  t = t.replace(/\u0001(\d+)\u0002/g, function(m, i){ return saved[+i]; });
+  t = t.replace(/\s{2,}/g, " ").trim();
+  return t;
+}
 function stripMathDelims(s) {
   s = String(s || "").trim();
   s = s.replace(/^\$\$([\s\S]*)\$\$$/, "$1");
@@ -9234,7 +9381,7 @@ function renderLatexToImage(latex, px) {
 }
 /* 数式を貼る(既存の数式を選んでいれば差し替え) */
 function insertFormula(latex, replaceObj) {
-  latex = stripMathDelims(latex);
+  latex = toSimpleLatex(stripMathDelims(latex));   // 「1/2」「x^2」等の簡単な書き方も受け付ける
   if (!latex) return;
   statusEl.textContent = "数式を組み立てています…";
   renderLatexToImage(latex, 26).then(function(r){
@@ -9308,7 +9455,7 @@ function openFormulaInput() {
     if (sel[0].type === "image" && sel[0].latex) { target = sel[0]; def = sel[0].latex; }
     else if (sel[0].type === "text") def = String(sel[0].text || "");
   }
-  askText("数式(LaTeX)を入力", def, function(v){
+  askText("数式を入力(1/2やx^2のような書き方も可)", def, function(v){
     if (v == null || !String(v).trim()) return;
     // テキストを選んで数式にした場合は、元のテキストを消す
     var src2 = (sel.length === 1 && sel[0].type === "text" && !target) ? sel[0] : null;
