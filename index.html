@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.17">InkNote <small>v20.17</small></div>
+  <div class="brand" title="InkNote v20.21">InkNote <small>v20.21</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1463,6 +1463,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1492,7 +1493,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.17";
+var APP_VERSION = "20.21";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3165,6 +3166,11 @@ function stripCitationNoise(s) {
   var CONF = "certain|probable|uncertain|possible|likely|unlikely|confirmed|unconfirmed" +
              "|estimated|verified|確実|不確実|推定|確認済み|未確認|可能性が高い|可能性が低い|高確度|低確度";
   s = s.replace(new RegExp("[\\[（(]\\s*(?:" + CONF + ")\\s*[\\]）)]", "gi"), " ");
+  /* ★[OBJ] マーカー: コピー元で数式記号(γ、B₀など)が画像として
+     表示されていたものが、文字として抽出できずに残った跡と見られる。
+     ただの空白に消すと「の磁気回転比」のように主語が抜けて文が壊れるため、
+     「記号が抜け落ちている」と分かるように目立つ印に置き換える。 */
+  s = s.replace(/[\[［(（]\s*OBJ\s*[\]］)）]/gi, "〔記号なし〕");
   // 取り除いた跡に残る余分な空白・カンマを行単位で整える
   s = s.split("\n").map(function(line){
     return line.replace(/[ \t]{2,}/g, " ")
@@ -6080,7 +6086,14 @@ var unsyncedEdits = false;
    古い版で塗り潰されてしまう(貼り付けた文字が消える原因)。 */
 var pageRev = 0;
 function scheduleSave() {
-  if (booting || isLoadingPage) return;   // 読込・同期反映の最中は保存しない
+  /* ★syncAll()が裏でクラウドの最新を取り込んでいる最中(syncing)は、
+     自動保存のタイマーを新たに仕掛けない。ここを塞がないと、
+     「起動直後、まだクラウドの最新を取り込み切っていない古い手元データ」
+     を勝手に保存→送信してしまい、取り込もうとしていた最新内容を
+     横から上書きしてしまう(取り込みかけの状態への追い打ち事故)。
+     編集そのものは画面上でそのまま続けられる。取り込みが終わってから
+     改めて編集すれば、その時点の全内容を正しく保存できる。 */
+  if (booting || isLoadingPage || syncing) return;   // 読込・同期反映の最中は保存しない
   dirtySinceSave = true;
   unsyncedEdits = true;
   statusEl.textContent = "保存中…";
@@ -6373,6 +6386,11 @@ function addPage() {
   var id = Date.now();
   pages.push({ id: id, title: "ページ" + (pages.length + 1), ts: Date.now(), rev: 1 });
   loadPage(id);
+  /* ★これが無いと、新しく作ったページの存在そのものが、
+     何かを編集して保存する(3秒後の自動送信)までクラウドに伝わらない。
+     その間に他の端末が同期すると、このページの存在を知らないまま
+     一覧を組み立ててしまう。作った直後に索引だけ先に知らせておく。 */
+  if (cloudUser()) { saveIndex(); cloudPushIndex().catch(function(){}); }
 }
 /* =========================================================
    A4モードのページ挿入/詰め
@@ -11180,6 +11198,13 @@ function contentStamp(json) {
 function cloudPushPage(id, force) {
   var u = cloudUser();
   if (!u) return Promise.resolve();
+  /* ★最終防衛線: syncAll()がクラウドの最新を取り込んでいる最中は、
+     どの経路から呼ばれても「ただの送信」は行わない。
+     呼び出し元それぞれにガードを置いても、経路が増えるたびに
+     入れ忘れが起きるので、ここで一律に止める。
+     force付き(=この端末の未送信の編集を守るための意図的な送信)は、
+     取り込みで消されないために必要なので通す。 */
+  if (syncing && !force) return Promise.resolve();
   var base = pageDocRef(id);
   return kvGet("page_" + id).then(function(payload){
     if (!payload) return;
@@ -11273,7 +11298,10 @@ function cloudDeletePage(id) {
    以前は自分の一覧で丸ごと上書きしていたため、
    その端末がまだ知らない他端末の新しいページが消えてしまっていた。
    (例: PCで何かを保存した瞬間、スマホで作ったページがクラウドから消える) */
-function cloudPushIndex() {
+function cloudPushIndex(force) {
+  /* ★索引も同様。取り込み中に古い一覧を送り返さないようにする
+     (syncAll自身は取り込みを終えたあとに force で呼ぶ)。 */
+  if (syncing && !force) return Promise.resolve();
   var u = cloudUser();
   if (!u) return Promise.resolve();
   var ref = fdb().collection("users").doc(u.uid).collection("meta").doc("index");
@@ -11335,6 +11363,14 @@ function scheduleCloudPush(id) {
 /* たまっている分をすぐ送る(画面を離れる時など) */
 function flushCloudPush() {
   if (!cloudUser() || pendingPushId == null) return Promise.resolve();
+  /* ★syncAll()が裏でクラウドの最新を取り込んでいる最中は、
+     3秒前に仕掛けた保留中の送信(=取り込み前の古い中身かもしれない)を
+     ここで確定させない。破棄はせず、取り込みが終わるまで先送りする。 */
+  if (syncing) {
+    clearTimeout(cloudTimer);
+    cloudTimer = setTimeout(flushCloudPush, 1500);
+    return Promise.resolve();
+  }
   var id = pendingPushId;
   pendingPushId = null;
   clearTimeout(cloudTimer);
@@ -11375,15 +11411,22 @@ function pullIfStale(minMs) {
       setTimeout(flushCloudPush, 120);
       setTimeout(flushCloudPush, 600);
     } else {
-      // ★戻ってきた時に未送信の編集が残っていたら、取り込みより先に送る
-      if (unsyncedEdits && cloudUser() && currentId != null) {
-        statusEl.textContent = "編集を送っています…";
-        setTimeout(function(){ cloudPushPage(currentId, true).catch(function(){}); }, 100);
-      }
-      // 購読が切れていれば張り直す(復帰後に届かなくなるのを防ぐ)
+      /* ★戻ってきた時の順番が大事。
+         「未送信の編集を送りきる」→ 完全に終わってから →「取り込む」
+         の順にしないと、送信の途中で取り込みが始まり、
+         送ろうとしていた編集が取り込みに上書きされてしまう。 */
       if (cloudUser() && !realtimeActive()) setTimeout(startRealtime, 300);
       lastPullAt = 0;
-      setTimeout(function(){ pullIfStale(0); }, 400);
+      if (unsyncedEdits && cloudUser() && currentId != null) {
+        statusEl.textContent = "編集を送っています…";
+        setTimeout(function(){
+          Promise.resolve(cloudPushPage(currentId, true))
+            .catch(function(){})
+            .then(function(){ pullIfStale(0); });   // 送りきってから取り込む
+        }, 100);
+      } else {
+        setTimeout(function(){ pullIfStale(0); }, 400);
+      }
     }
   });
   window.addEventListener("pagehide", function(){
@@ -11543,28 +11586,32 @@ function syncAll() {
     remotePages.forEach(function(p){ remoteById[p.id] = p; });
     pages.forEach(function(p){ localById[p.id] = p; });
     var jobs = Promise.resolve();
-    var pulledCurrent = false;
+    var pulledCurrent = false;   // (互換のため残置。中身の同期はcloudPushPage(currentId)に一本化した)
     var merged = [];
     // 他端末で削除されたページを、この端末からも消す
     deletedIds.forEach(function(d){
       kvDel("page_" + d.id);
       cloudDeletePage(d.id);
     });
-    // ローカル順を保ちつつ、新しい方を採用
+    /* ★一覧(タイトル・フォルダ)の新旧と、ページの中身(本文)の新旧は
+       別の版番号で管理されている、まったく別の話。
+       以前はここで「一覧のどちらが新しいか」の結果を使って本文まで
+       送り直す/取り込み直すという配線になっていたため、
+       タイトルなどの一覧側の変化をきっかけに、無関係な本文が
+       意図せず上書き・取得し直される事故が起きていた。
+       ここでは一覧(タイトル・フォルダ・並び)の統合だけを行い、
+       本文の同期には一切踏み込まない
+       (本文はページを開いた時・保存した時・購読で別途安全に同期される)。 */
     pages.forEach(function(L){
       var R = remoteById[L.id];
-      if (R && indexEntryNewer(R, L)) {
-        merged.push(R);
-        jobs = jobs.then(function(){
-          return pullAndStore(L.id).then(function(){
-            if (L.id === currentId) pulledCurrent = true;
-          });
-        });
-      } else {
-        merged.push(L);
-        if (!R || indexEntryNewer(L, R))
-          jobs = jobs.then(function(){ return cloudPushPage(L.id); });
-      }
+      if (R && indexEntryNewer(R, L)) merged.push(R);
+      else merged.push(L);
+    });
+    // 自分がまだ一度もクラウドに存在を知らせていない新しいページだけ、
+    // 中身も一緒に届けておく(索引だけ先に送っても本文が無いと開けないため)
+    pages.forEach(function(L){
+      if (!remoteById[L.id])
+        jobs = jobs.then(function(){ return cloudPushPage(L.id, true); });  // 新規なので競合しない
     });
     // クラウドにしかないページを取り込む
     remotePages.forEach(function(R){
@@ -11577,26 +11624,24 @@ function syncAll() {
       pages = merged;
       return saveIndex();
     }).then(function(){
-      return cloudPushIndex();
+      return cloudPushIndex(true);   // 統合し終えた一覧を送る(自分の取り込み結果なのでforce)
     }).then(function(){
       if (currentId == null || !findPage(currentId)) {
         if (pages.length) loadPage(pages[0].id);   // クラウドから復元した場合
         else { renderPageList(); updatePageBtn(); }
-      } else if (pulledCurrent) {
-        // ★同期の最中に書き足していたら、読み直して消してしまわない。
-        //   手元の内容を優先し、そのままクラウドへ送り直す。
-        if (dirtySinceSave) {
-          keptLocalOnSync = true;      // 後で同期完了の表示に上書きされないよう覚えておく
-          saveDocNow();
-          renderPageList();
-          updatePageBtn();
-        } else {
-          loadPage(currentId);       // 現在ページが更新されたら読み直し
-        }
-      } else {
-        renderPageList();
-        updatePageBtn();
+        return;
       }
+      renderPageList();
+      updatePageBtn();
+      /* ★今開いているページの「中身」は、一覧の同期とは別に、
+         内容の版番号(rev)だけを見て安全に照合する。
+         ただし今はまだ syncing=true の最中なので、取り込みが
+         完全に終わってから(syncing解除後に)実行する。 */
+      var cid = currentId;
+      setTimeout(function(){
+        if (cloudUser() && cid === currentId) cloudPushPage(cid).catch(function(){});
+      }, 300);
+    }).then(function(){
       setSyncStatus("同期済み " + new Date().toTimeString().slice(0, 5));
       if (keptLocalOnSync) {
         keptLocalOnSync = false;
