@@ -54,7 +54,12 @@
   }
   .obj-text th,.obj-text td{
     border:1px solid rgba(60,60,60,.45);
-    padding:4px 6px;vertical-align:top;word-break:break-word;
+    padding:4px 6px;vertical-align:middle;word-break:break-word;
+  }
+  /* 選択範囲を数式に変えた画像。行の高さより大きくならないようにして
+     セルの上にはみ出さないようにする */
+  .obj-text img[data-latex]{
+    max-height:1.2em;vertical-align:-0.2em;display:inline-block;
   }
   .obj-text th{background:rgba(120,120,120,.16);font-weight:700;text-align:left}
   /* 図やコードのように、文字の位置を揃えたいテキスト */
@@ -959,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.7">InkNote <small>v20.7</small></div>
+  <div class="brand" title="InkNote v20.10">InkNote <small>v20.10</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1454,7 +1459,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1484,7 +1488,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.7";
+var APP_VERSION = "20.10";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2277,10 +2281,13 @@ function updateSelUI() {
     return;
   }
   var b = selBBox();
-  // 幅ハンドルは単一テキスト選択時のみ / 回転ハンドルは単一図形選択時のみ
+  // 幅ハンドル: テキストだけを選んでいる時(1つでも複数でも)。回転ハンドルは単一図形選択時のみ
   var selLocked = (sel.length === 1 && sel[0].locked);
-  selWHandle.style.display =
-    (!selLocked && sel.length === 1 && sel[0].type === "text") ? "block" : "none";
+  var allTextSel = sel.length > 0 && !selLocked;
+  for (var wi = 0; wi < sel.length; wi++)
+    if (sel[wi].type !== "text" || sel[wi].locked) { allTextSel = false; break; }
+  selWHandle.style.display = allTextSel ? "block" : "none";
+  selWHandle.title = sel.length > 1 ? "選んだ" + sel.length + "個の幅をまとめて変える" : "幅を変える";
   selRHandle.style.display =
     (!selLocked && sel.length === 1 && sel[0].type === "shape") ? "block" : "none";
   // 拡大縮小ハンドル: テキスト以外(画像・図形・手書き線)の単一選択で表示。
@@ -2813,8 +2820,10 @@ function sanitizeRich(html) {
         n.setAttribute("src", src2);
         if (lx) n.setAttribute("data-latex", lx);
         if (h2) n.setAttribute("data-h", h2);
+        // ★確定のたびにここを通るので、CSS(.obj-text img[data-latex])と
+        //   食い違わないよう同じ値で揃える(セルの外にはみ出さないため)
         n.setAttribute("style", "height:" + (h2 || "1.1em") +
-          ";vertical-align:middle;display:inline-block");
+          ";max-height:1.2em;vertical-align:-0.2em;display:inline-block");
         continue;
       }
       // 属性は色まわりだけ残す
@@ -2842,6 +2851,17 @@ function sanitizeRich(html) {
 function hasRich(o) { return !!(o && o.rich && /<[a-z]/i.test(o.rich)); }
 
 /* 自動で伸びるテキストの、伸びてよい幅の上限 */
+/* 貼り付け・表・図を置く時の初期の幅。
+   以前は画面幅基準(min 560px)で狭く、長文が縦長になり手作業で
+   ⇔ハンドルを毎回広げる必要があった。A4縦の紙面(用紙モードの時)や
+   画面の広さに合わせて、最初から読みやすい段落幅で置く。 */
+function defaultPasteWidth() {
+  var pageW = (canvasMode === "a4v") ? (A4W - 80)             // 用紙の左右余白ぶんを引く
+            : (canvasMode === "a4h") ? (A4H - 80)
+            : 680;                                            // 無限キャンバスは既定680px
+  var screenCap = Math.max(320, innerWidth - 40);              // 画面よりはみ出さない上限
+  return Math.max(360, Math.min(pageW, screenCap, 720));
+}
 function autoTextMaxW(o) {
   if (canvasMode === "a4v") return Math.max(160, A4W - 40 - ((o.x % A4W) || 0));
   if (canvasMode === "a4h") return Math.max(160, A4H - 40);
@@ -2941,7 +2961,38 @@ function startTextEdit(o, pt) {
   el.addEventListener("blur", onTextBlur);
   el.addEventListener("input", onTextInput);
   el.addEventListener("paste", onTextPaste);
+  el.addEventListener("copy", onTextCopyOrCut);
+  el.addEventListener("cut", onTextCopyOrCut);
   syncEmptyClass(o);
+}
+/* ===== コピー・切り取り時、選択に数式の画像が入っていたら文字として渡す =====
+   端末標準のコピーは<img>を貼り付け先で正しく扱えないことが多く、
+   別のセルへ移せなくなる。選択範囲に数式画像があれば、その場所を
+   data-latex(元の式)の文字に置き換えたものをクリップボードへ渡す。
+   これなら他のセルに貼った時、その場で読める式として届く。 */
+function onTextCopyOrCut(e) {
+  var s = window.getSelection();
+  if (!s || !s.rangeCount || s.isCollapsed) return;
+  var r = s.getRangeAt(0);
+  var frag = r.cloneContents();
+  var imgs = frag.querySelectorAll ? frag.querySelectorAll("img[data-latex]") : [];
+  if (!imgs.length) return;                 // 画像が無ければ端末標準の動きに任せる
+  var box = document.createElement("div");
+  box.appendChild(frag);
+  var list = box.querySelectorAll("img[data-latex]");
+  for (var i = 0; i < list.length; i++) {
+    var lx = list[i].getAttribute("data-latex") || "";
+    list[i].parentNode.replaceChild(document.createTextNode("$" + lx + "$"), list[i]);
+  }
+  var text = box.innerText || box.textContent || "";
+  if (e.clipboardData) {
+    e.clipboardData.setData("text/plain", text);
+    e.preventDefault();                      // 既定のコピーを止め、上の文字だけを渡す
+    if (e.type === "cut") {
+      r.deleteContents();
+      if (editingObj) { measureObj(editingObj); syncEmptyClass(editingObj); scheduleSave(); }
+    }
+  }
 }
 /* 貼り付け時: LaTeX/Markdownを読める文字に直してから挿入する */
 function onTextPaste(e) {
@@ -3773,49 +3824,60 @@ selRHandle.addEventListener("pointerdown", function(e){
 
 /* テキストの幅変更: 文字が折り返し直され、段落の形を整えられる */
 selWHandle.addEventListener("pointerdown", function(e){
-  if (sel.length !== 1 || sel[0].type !== "text" || pinch) return;
+  if (!sel.length || pinch) return;
+  for (var chk = 0; chk < sel.length; chk++) if (sel[chk].type !== "text") return;
   e.preventDefault();
   e.stopPropagation();
-  var o = sel[0];
+  var targets = sel.slice();
   /* ★「入力に合わせて自動で伸びる」がついたままだと、CSSの
      width:auto が指(handle)で決めた幅を強制的に上書きしてしまい、
      つまんで広げても見た目が一切変わらない(次に開いた時も元の幅に戻る)。
      指で幅を決めた = ユーザーが「この幅で固定したい」という明確な意思。
-     ドラッグを始めた時点で自動追従を外し、決めた幅を活かす。 */
-  var hadAutoW = !!o.autoW;
-  if (hadAutoW) {
-    o.autoW = false;
-    o.el.classList.remove("autow");
-    o.el.style.maxWidth = "";
+     ドラッグを始めた時点で自動追従を外し、決めた幅を活かす。
+     ★複数選んでいる時は、全員の幅を同じ量だけ動かして「まとめて」変える。 */
+  var had = [], w0 = [];
+  for (var i0 = 0; i0 < targets.length; i0++) {
+    var t0 = targets[i0];
+    had[i0] = !!t0.autoW;
+    if (had[i0]) { t0.autoW = false; t0.el.classList.remove("autow"); t0.el.style.maxWidth = ""; }
+    w0[i0] = t0.w;
   }
-  var w0 = o.w;
   var startX = e.clientX;
   var snapshot = serializeScene();
   drag(e, {
     move: function(ev, dxs, dys, moved){
       if (pinch) return;
       if (moved) hideCtxWhileDrag = true;
-      var nw = w0 + (ev.clientX - startX) / view.s;
-      o.w = Math.max(60, Math.min(4000, nw));
-      o.el.style.width = o.w + "px";
+      var dx = (ev.clientX - startX) / view.s;
+      for (var i = 0; i < targets.length; i++) {
+        var t = targets[i];
+        t.w = Math.max(60, Math.min(4000, w0[i] + dx));
+        t.el.style.width = t.w + "px";
+      }
       updateSelUI();
     },
     up: function(ev, moved){
       hideCtxWhileDrag = false;
+      var anyAuto = had.indexOf(true) !== -1;
       if (moved) {
         pushSnapshot(snapshot);
-        measureObj(o);
-        clampToSheet(o);
+        for (var j = 0; j < targets.length; j++) { measureObj(targets[j]); clampToSheet(targets[j]); }
         scheduleSave();
-        if (hadAutoW) setTimeout(function(){
-          statusEl.textContent = "この幅で固定しました(伸縮に戻すには Aa の「入力に合わせて伸ばす」)";
+        if (anyAuto) setTimeout(function(){
+          statusEl.textContent = targets.length > 1
+            ? (targets.length + "個の幅をまとめて固定しました")
+            : "この幅で固定しました(伸縮に戻すには Aa の「入力に合わせて伸ばす」)";
         }, 40);
-      } else if (hadAutoW) {
+      } else {
         // つまんだだけで動かさなかった時は、元の自動追従に戻す
-        o.autoW = true;
-        o.el.classList.add("autow");
-        o.el.style.width = "auto";
-        o.el.style.maxWidth = autoTextMaxW(o) + "px";
+        for (var k = 0; k < targets.length; k++) {
+          if (!had[k]) continue;
+          var tk = targets[k];
+          tk.autoW = true;
+          tk.el.classList.add("autow");
+          tk.el.style.width = "auto";
+          tk.el.style.maxWidth = autoTextMaxW(tk) + "px";
+        }
       }
       updateSelUI();
     }
@@ -8781,8 +8843,10 @@ function convertSelectionToMath() {
       img.setAttribute("src", res.src);
       img.setAttribute("data-latex", latex);
       img.setAttribute("data-h", res.h);
+      // ★行の高さを超えないようにして、セルの外(上下)へはみ出さないようにする
       img.style.height = res.h;
-      img.style.verticalAlign = "middle";
+      img.style.maxHeight = "1.2em";
+      img.style.verticalAlign = "-0.2em";
       img.style.display = "inline-block";
       range.deleteContents();
       range.insertNode(img);
@@ -9344,7 +9408,7 @@ function makeEmptyTable(rows, cols) {
 /* 表をノートに置く */
 function insertTable(html, w) {
   var cw = toWorld(innerWidth / 2, innerHeight / 2);
-  var width = w || Math.min(560, Math.max(320, innerWidth - 80));
+  var width = w || defaultPasteWidth();
   var o = { id: idSeq++, type: "text", x: cw.x - width / 2, y: cw.y, w: width,
             text: "", rich: sanitizeRich(html), fontSize: 18,
             color: (THEMES[themeName] || THEMES.cream).pen };
@@ -9583,7 +9647,7 @@ function insertRichHtml(html) {
   if (!parts.some(function(p){ return p.t === "table"; })) return false;
 
   pushUndo();
-  var W = Math.min(560, Math.max(320, innerWidth - 80));
+  var W = defaultPasteWidth();
   var start = toWorld(innerWidth / 2, innerHeight / 2);
   var y = start.y, left = start.x - W / 2, made = [], nT = 0;
   var chain = Promise.resolve();
@@ -9628,7 +9692,7 @@ function insertRichPaste(raw) {
   var paras = splitArtBlocks(String(raw || ""));
   if (paras.some(function(p){ return p.t === "art"; })) {
     pushUndo();
-    var Wp = Math.min(560, Math.max(320, innerWidth - 80));
+    var Wp = defaultPasteWidth();
     var startP = toWorld(innerWidth / 2, innerHeight / 2);
     var yp = startP.y, leftP = startP.x - Wp / 2, madeP = [], nPre = 0;
     var chainP = Promise.resolve();
@@ -9685,7 +9749,7 @@ function insertRichPaste(raw) {
   /* ★先に表を切り出す。表は文章と混ぜずに、そのまま表として置く */
   var tblParts = splitTableBlocks(String(raw || ""));
   if (tblParts.some(function(p){ return p.t === "table"; })) {
-    var W0 = Math.min(560, Math.max(320, innerWidth - 80));
+    var W0 = defaultPasteWidth();
     var start0 = toWorld(innerWidth / 2, innerHeight / 2);
     var y0 = start0.y, left0 = start0.x - W0 / 2, made0 = [];
     var chain0 = Promise.resolve();
@@ -9803,7 +9867,11 @@ function insertRichPaste(raw) {
 function insertTextAtCenter(txt) {
   txt = cleanPastedText(txt);      // LaTeX/Markdownを整形してから配置
   var cwp = toWorld(innerWidth / 2, innerHeight / 2);
-  var o = { id: idSeq++, type: "text", x: cwp.x - 130, y: cwp.y, w: 260,
+  /* ★数式・表・図を含まない、いちばん多い「普通の長文」の貼り付けが
+     ここを通る。以前は幅260px固定で、これが「毎回⇔で広げる手間」の
+     大半を占めていた。 */
+  var pw = defaultPasteWidth();
+  var o = { id: idSeq++, type: "text", x: cwp.x - pw / 2, y: cwp.y, w: pw,
             text: txt, fontSize: 22, color: (THEMES[themeName] || THEMES.cream).pen };
   pushUndo();
   objects.push(o);
@@ -10121,6 +10189,29 @@ function clipPaste() {
 function clipHas() { return !!(appClip && appClip.items && appClip.items.length); }
 
 /* 等幅(図・コード向け) と ふつうの文字 を切り替える */
+/* 選んだ複数のテキストの幅をまとめて揃える。
+   "max"なら選択中でいちばん広いものに合わせ、数値ならその幅にする。 */
+function equalizeTextWidths(target) {
+  if (sel.length < 2) return;
+  var texts = sel.filter(function(x){ return x.type === "text"; });
+  if (texts.length < 2) return;
+  var w = (target === "max")
+    ? Math.max.apply(null, texts.map(function(x){ return x.w; }))
+    : target;
+  pushUndo();
+  texts.forEach(function(o){
+    o.autoW = false;
+    if (o.el) { o.el.classList.remove("autow"); o.el.style.maxWidth = ""; }
+    o.w = w;
+    if (o.el) o.el.style.width = w + "px";
+    measureObj(o);
+    clampToSheet(o);
+  });
+  inkDirty = true;
+  updateSelUI();
+  scheduleSave();
+  statusEl.textContent = texts.length + "個の幅を " + Math.round(w) + "px に揃えました";
+}
 function toggleMono(o) {
   if (!o || o.type !== "text") return;
   pushUndo();
@@ -10221,6 +10312,13 @@ function openMoreSheet() {
 
   // --- 並べる・まとめる ---
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
+  // ★複数のテキストを選んでいる時、幅をまとめて揃える
+  if (sel.length > 1 && sel.every(function(x){ return x.type === "text"; })) {
+    items.push({ label: "⇔ 幅をそろえる(いちばん広いものに合わせる)",
+                 fn: function(){ equalizeTextWidths("max"); } });
+    items.push({ label: "⇔ 読みやすい幅(" + defaultPasteWidth() + "px)に広げる",
+                 fn: function(){ equalizeTextWidths(defaultPasteWidth()); } });
+  }
   if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
   if (ctxVisible("ctxAnchor"))
     items.push({ label: (one && one.anch) ? ("🔖 目次「" + one.anch + "」を編集/外す")
