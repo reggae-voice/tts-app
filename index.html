@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.33">InkNote <small>v20.33</small></div>
+  <div class="brand" title="InkNote v20.34">InkNote <small>v20.34</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1392,6 +1392,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="cleanNoiseBtn">🧹 引用タグを取り除く</button>
       <span style="color:var(--ui-dim);font-size:11px">このページの[span_0]等の跡を今から一括で消す</span>
     </div>
+    <div class="st-row"><span class="st-label">整形</span>
+      <button class="stybtn" id="stripBackslashBtn">🧹 \ を一括で消す</button>
+      <span style="color:var(--ui-dim);font-size:11px">式($…$等)や\frac等は残し、崩れて残った\だけ消す</span>
+    </div>
     <div class="st-row"><span class="st-label">表</span>
       <button class="stybtn" id="tableAddBtn">⊞ 表を作る</button>
       <span style="color:var(--ui-dim);font-size:11px">行×列を指定して作ります</span>
@@ -1493,7 +1497,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.33";
+var APP_VERSION = "20.34";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -7621,6 +7625,76 @@ function cleanNoiseInPage() {
   }
 }
 $("#cleanNoiseBtn").onclick = function(){ closeMenu(); setTimeout(cleanNoiseInPage, 120); };
+/* ★崩れた貼り付け(例: "\2×3²=18\")などで文中に残った生の "\" を一括除去する。
+   ただし自動組版が見ている範囲は丸ごと保護してから処理することで、
+   $…$ / $$…$$ / \(…\) / \[…\] の式や、\frac 等の囲みなし数式行を壊さない。
+   既に画像化済みの数式(img[data-latex])はテキストノードではないため
+   ツリーウォーカーの対象にならず、そもそも触れない。 */
+function stripStrayBackslashes(s) {
+  s = String(s || "");
+  var saved = [];
+  function protect(seg) { saved.push(seg); return "\uE005" + (saved.length - 1) + "\uE006"; }
+  // 1) $$…$$ / \[…\] / \(…\) / $…$ をまるごと保護(中の\は自動組版に必要)
+  s = s.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^\$\n]+?\$/g, protect);
+  // 2) 囲みなしの式の行(\frac 等)も行ごと保護
+  var lines = s.split("\n");
+  for (var i = 0; i < lines.length; i++) {
+    if (isBareFormulaLine(lines[i])) lines[i] = protect(lines[i]);
+  }
+  s = lines.join("\n");
+  // 3) 残った生の \ はすべて崩れた跡・ノイズとみなして削除
+  s = s.replace(/\\/g, "");
+  // 4) 保護した式を戻す
+  s = s.replace(/\uE005(\d+)\uE006/g, function(m, i) { return saved[+i]; });
+  return s;
+}
+function stripStrayBackslashesInPage() {
+  var changed = 0;
+  var snapshot = serializeScene();
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "text") continue;
+    if (o.rich) {
+      var box = document.createElement("div");
+      box.innerHTML = o.rich;
+      var walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, null, false);
+      var any = false, n;
+      while ((n = walker.nextNode())) {
+        var cleaned = stripStrayBackslashes(n.nodeValue);
+        if (cleaned !== n.nodeValue) { n.nodeValue = cleaned; any = true; }
+      }
+      if (any) {
+        o.rich = sanitizeRich(box.innerHTML);
+        var b2 = document.createElement("div");
+        b2.innerHTML = o.rich;
+        o.text = (b2.innerText || b2.textContent || "").trim();
+        if (o.el) o.el.innerHTML = o.rich;
+        measureObj(o);
+        changed++;
+      }
+    } else {
+      var t2 = stripStrayBackslashes(o.text || "");
+      if (t2 !== (o.text || "")) {
+        o.text = t2;
+        if (o.el) o.el.textContent = o.text;
+        measureObj(o);
+        changed++;
+      }
+    }
+  }
+  if (changed) {
+    pushSnapshot(snapshot);
+    inkDirty = true;
+    refreshMeasures();
+    scheduleSave();
+    setTimeout(function(){
+      statusEl.textContent = changed + "個の項目から \\ を取り除きました";
+    }, 40);
+  } else {
+    statusEl.textContent = "取り除く \\ は見つかりませんでした";
+  }
+}
+$("#stripBackslashBtn").onclick = function(){ closeMenu(); setTimeout(stripStrayBackslashesInPage, 120); };
 $("#updateApp").onclick = function(){
   // ノート(IndexedDB)には触れず、アプリの配信物だけを取り直す
   statusEl.textContent = "サーバーの最新版を確認中…";
