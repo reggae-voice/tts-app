@@ -541,6 +541,7 @@
     padding:5px 6px;box-shadow:0 8px 24px rgba(10,12,16,.45);
     -webkit-user-select:none;user-select:none;
     max-width:calc(100vw - 16px);            /* 画面からはみ出さない */
+    flex-wrap:wrap;                          /* 収まらない時は2段に折り返す */
   }
   #richBar.show{display:flex}
   #richBar button{
@@ -549,6 +550,7 @@
     font-size:13px;font-weight:800;padding:0 4px;
   }
   #richBar #rbUnder{text-decoration:underline}
+  #richBar #rbFsDown,#richBar #rbFsUp{font-size:11px;padding:0 2px}
   /* 文字色は「A」の字そのものに色を付けて示す(マーカーと見分けるため) */
   #richBar .rb-col{
     width:26px;min-width:26px;height:26px;border-radius:7px;
@@ -964,7 +966,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.36">InkNote <small>v20.36</small></div>
+  <div class="brand" title="InkNote v20.39">InkNote <small>v20.39</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1145,6 +1147,9 @@ window.onerror = function(msg, src, line){
 <div id="richBar">
   <button id="rbBold" title="太字">B</button>
   <button id="rbUnder" title="下線">U</button>
+  <span class="rb-sep"></span>
+  <button id="rbFsDown" title="文字を小さく">A⁻</button>
+  <button id="rbFsUp" title="文字を大きく">A⁺</button>
   <span class="rb-sep"></span>
   <button class="rb-col" data-c="#1C1E22" title="文字を黒に" style="color:#1C1E22">A</button>
   <button class="rb-col" data-c="#D6453C" title="文字を赤に" style="color:#D6453C">A</button>
@@ -1497,7 +1502,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.36";
+var APP_VERSION = "20.39";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2856,7 +2861,7 @@ function isDarkColor(hex) {
 /* ===== 文章の一部だけを装飾する =====
    一部を太字にしたり色を変えたりできるよう、テキストは
    「読める文字(o.text)」と「装飾つきの中身(o.rich)」の2つで持つ。
-   o.rich は安全のため、太字・斜体・下線・色・マーカーだけを通す。 */
+   o.rich は安全のため、太字・斜体・下線・色・マーカー・文字サイズだけを通す。 */
 var RICH_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, BR:1, SPAN:1, DIV:1, P:1, FONT:1,
                   TABLE:1, THEAD:1, TBODY:1, TFOOT:1, TR:1, TD:1, TH:1, IMG:1 };
 function sanitizeRich(html) {
@@ -2898,6 +2903,9 @@ function sanitizeRich(html) {
       var bold = n.style ? (n.style.fontWeight || "") : "";
       // ★下線も属性を消す前に読み取る(後だと空になる)
       var dec = n.style ? (n.style.textDecoration || n.style.textDecorationLine || "") : "";
+      // ★文字サイズも消す前に読み取る。px指定だけを許可し、範囲も
+      //   念のため制限しておく(壊れた値がそのまま残らないように)
+      var fsz = n.style ? (n.style.fontSize || "") : "";
       if (n.tagName === "U") dec = dec || "underline";
       if (n.tagName === "FONT" && n.getAttribute("color")) col = n.getAttribute("color");
       var attrs = Array.prototype.slice.call(n.attributes || []);
@@ -2906,6 +2914,10 @@ function sanitizeRich(html) {
       if (bg && bg !== "transparent") keep += "background-color:" + bg + ";";
       if (bold) keep += "font-weight:" + bold + ";";
       if (dec && dec !== "none") keep += "text-decoration:" + dec + ";";
+      if (/^[\d.]+px$/.test(fsz)) {
+        var fszNum = Math.max(8, Math.min(120, parseFloat(fsz)));
+        keep += "font-size:" + fszNum + "px;";
+      }
       if (keep) n.setAttribute("style", keep);
       walk(n);
     }
@@ -5213,6 +5225,108 @@ function copyCanvasToClipboard(c) {
   }, "image/png");
 }
 
+/* ---------- 投げ縄カッター: テキストBOXを行の境目で分ける ----------
+   囲み(主に「長方形で切る」)の上端/下端が通った位置で、行ごと2つの
+   BOXに分ける。1行の途中(折り返しただけの場所)では割れない。
+   Enterで改行した行、または<br>の直後を「行の境目」として扱う。
+   表(<table>)は中では割らず、まるごと1行として扱う。 */
+function textLineGroups(el) {
+  var groups = [];
+  var cur = [];
+  function flush(){ if (cur.length) { groups.push(cur); cur = []; } }
+  var kids = Array.prototype.slice.call(el.childNodes);
+  for (var i = 0; i < kids.length; i++) {
+    var n = kids[i];
+    if (n.nodeType === 1 && /^(DIV|P|TABLE)$/.test(n.tagName)) {
+      flush();
+      groups.push([n]);
+    } else if (n.nodeType === 1 && n.tagName === "BR") {
+      cur.push(n);
+      flush();
+    } else {
+      cur.push(n);
+    }
+  }
+  flush();
+  return groups;
+}
+/* その行(複数ノードのこともある)が画面上のどこに描かれているかを
+   world座標(投げ縄のpathと同じ座標系)で求める */
+function groupRectWorld(nodes) {
+  try {
+    var rg = document.createRange();
+    rg.setStartBefore(nodes[0]);
+    rg.setEndAfter(nodes[nodes.length - 1]);
+    var r = rg.getBoundingClientRect();
+    var p1 = toWorld(r.left, r.top), p2 = toWorld(r.right, r.bottom);
+    return { x: p1.x, y: p1.y, w: p2.x - p1.x, h: p2.y - p1.y };
+  } catch (e) { return null; }
+}
+function groupToHtml(nodes) {
+  var box = document.createElement("div");
+  for (var i = 0; i < nodes.length; i++) box.appendChild(nodes[i].cloneNode(true));
+  return box.innerHTML;
+}
+function groupToText(nodes) {
+  var box = document.createElement("div");
+  box.style.cssText = "position:fixed;left:-9999px;top:-9999px;visibility:hidden";
+  for (var i = 0; i < nodes.length; i++) box.appendChild(nodes[i].cloneNode(true));
+  document.body.appendChild(box);
+  var t = (box.innerText != null ? box.innerText : box.textContent) || "";
+  document.body.removeChild(box);
+  return t.replace(/\n$/, "");
+}
+function splitTextObjectByPath(o, path) {
+  if (!o.el) return null;
+  var groups = textLineGroups(o.el);
+  if (groups.length < 2) return null;   // 改行が無い1行だけのBOXは割れない
+  var infos = [];
+  for (var i = 0; i < groups.length; i++) {
+    var rc = groupRectWorld(groups[i]);
+    if (!rc) return null;
+    infos.push({ nodes: groups[i], rect: rc,
+                 inside: pointInPoly(rc.x + rc.w / 2, rc.y + rc.h / 2, path) });
+  }
+  var firstSide = infos[0].inside, allSame = true;
+  for (var j = 1; j < infos.length; j++) if (infos[j].inside !== firstSide) allSame = false;
+  if (allSame) return null;   // 境界をまたいでいない(全行が内側 or 全行が外側)
+  // 連続する同じ側の行をひとまとめにする(手書き線の分割と同じ考え方)
+  var runs = [], cur = null;
+  for (var k = 0; k < infos.length; k++) {
+    if (!cur || cur.inside !== infos[k].inside) { cur = { inside: infos[k].inside, items: [] }; runs.push(cur); }
+    cur.items.push(infos[k]);
+  }
+  var pieces = [], insidePieces = [];
+  var baseW = objBBox(o).w;
+  for (var m = 0; m < runs.length; m++) {
+    var run = runs[m];
+    var allNodes = [], top = Infinity, bottom = -Infinity;
+    for (var n = 0; n < run.items.length; n++) {
+      allNodes = allNodes.concat(run.items[n].nodes);
+      top = Math.min(top, run.items[n].rect.y);
+      bottom = Math.max(bottom, run.items[n].rect.y + run.items[n].rect.h);
+    }
+    var text = groupToText(allNodes);
+    if (!text.trim()) continue;    // 空行だけの断片は作らない
+    // ★元のobjectを丸ごと複製して、置き換えるのはx/y/w/h/text/richだけ
+    //   (複製機能と同じやり方。フォントや色などの見た目を1つも取りこぼさない)
+    var copy = JSON.parse(JSON.stringify(o, function(key, v){
+      return (key === "el" || key === "img" || key.charAt(0) === "_") ? undefined : v;
+    }));
+    copy.id = idSeq++;
+    copy.anch = null;              // 目次の印は複製しない
+    copy.y = top;
+    copy.w = baseW;
+    copy.h = Math.max(20, bottom - top);
+    copy.text = text;
+    var html = sanitizeRich(groupToHtml(allNodes));
+    copy.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(html) ? html : null;
+    pieces.push(copy);
+    if (run.inside) insidePieces.push(copy);
+  }
+  if (!pieces.length) return null;
+  return { pieces: pieces, insidePieces: insidePieces };
+}
 /* ---------- 投げ縄カッター: 囲んだ境界で線を分割 ---------- */
 /* ===== 画像を投げ縄の形で切り分ける =====
    囲んだ内側だけの画像と、そこをくり抜いた残りの画像の2つに分ける。
@@ -5287,8 +5401,26 @@ function performLassoCut(path) {
     if (pp.y > py2) py2 = pp.y;
   }
   var cutImages = 0;
+  var cutTexts = 0;
   for (var i = objects.length - 1; i >= 0; i--) {
     var o = objects[i];
+
+    // ---- テキストBOXを行の境目で分ける ----
+    if (o.type === "text") {
+      var tb = objBBox(o);
+      if (tb.x > px2 || tb.y > py2 || tb.x + tb.w < px1 || tb.y + tb.h < py1) continue;
+      var res = null;
+      try { res = splitTextObjectByPath(o, path); } catch (e) { res = null; }
+      if (!res) continue;
+      if (sel.indexOf(o) !== -1) setSelection(sel.filter(function(x){ return x !== o; }));
+      if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+      Array.prototype.splice.apply(objects, [i, 1].concat(res.pieces));
+      for (var pI = 0; pI < res.pieces.length; pI++) { makeTextEl(res.pieces[pI]); measureObj(res.pieces[pI]); }
+      insidePieces = insidePieces.concat(res.insidePieces);
+      cutTexts++;
+      changed = true;
+      continue;
+    }
 
     // ---- 画像を投げ縄の形で切り分ける ----
     if (o.type === "image") {
@@ -5355,6 +5487,8 @@ function performLassoCut(path) {
     setSelection(insidePieces);
     var msg = cutImages
       ? ("✂ 画像を切り分けました(切り出した " + cutImages + " 枚を選択中)")
+      : cutTexts
+      ? ("✂ テキストBOXを分けました(" + insidePieces.length + " 個を選択中)")
       : ("✂ 分割しました(内側 " + insidePieces.length + " 本を選択中)");
     setTimeout(function(){ statusEl.textContent = msg; }, 40);
   } else {
@@ -5875,11 +6009,11 @@ $("#penAutoBtn").onclick = function(){
 syncDynUI();
 var LS_HINT = {
   select: "選択: 囲んだものを掴む(移動・削除・複製)",
-  rect:   "長方形で切る: 斜めになぞった範囲を四角く切り取ります",
+  rect:   "長方形で切る: 斜めになぞった範囲を四角く切り取ります(文字BOXは行の境目で分離)",
   dup:    "複製: 囲んだものをこのノート内に複製(そのまま動かせます)",
   shot:   "他アプリへ: 囲んだ範囲を画像でコピー(このノートには貼れません)",
   save:   "保存: 囲んだ範囲をPNG画像として端末に保存",
-  cut:    "カッター: 囲んだ形で手書き線や画像を切り分ける(内側が選択されます)"
+  cut:    "カッター: 囲んだ形で手書き線・画像・文字BOX(行の境目)を切り分ける(内側が選択されます)"
 };
 (function(){
   var ls = document.querySelectorAll(".ls-mode");
@@ -9249,7 +9383,15 @@ function updateRichBar() {
 document.addEventListener("selectionchange", function(){
   // 選び終わるのを少し待つ(指でなぞっている最中はちらつくため)
   clearTimeout(window.__rbTimer);
-  window.__rbTimer = setTimeout(updateRichBar, 180);
+  window.__rbTimer = setTimeout(function(){
+    updateRichBar();
+    /* ★選択の開始・終了そのものはここでしか検知できない
+       (positionEditHandleはドラッグやキーボード開閉の時にしか
+       呼ばれておらず、選択しただけでは呼ばれず移動グリップが
+       残ったままになっていた)ので、ここでもグリップの表示を
+       選択状態に合わせて更新する。 */
+    if (editingObj) positionEditHandle();
+  }, 180);
 });
 /* キーボードが開いたり閉じたりしたら位置を取り直す */
 if (window.visualViewport) {
@@ -9511,6 +9653,29 @@ function bindRichBar() {
     var on = selectionHas("textDecoration");
     applyRich({ textDecoration: on ? "none" : "underline" });
   });
+  /* ★文字サイズの拡大/縮小。
+     em/%のような相対単位で入れ子にすると、既にサイズ変更済みの範囲の
+     一部だけをさらに選んで押した時に、親の倍率×自分の倍率で二重に
+     掛かって想定以上に大きく(小さく)なってしまう。
+     そのためgetComputedStyleで「今、実際に見えている大きさ(px)」を
+     読み取り、常にpx(絶対値)で新しいサイズを指定することで、
+     祖先に何em/%が付いていても影響されないようにしている。 */
+  function currentFontSizePx() {
+    var r = selectionInsideEditing();
+    if (!r) return 16;
+    var node = r.startContainer;
+    if (node.nodeType === 3) node = node.parentNode;
+    try { return parseFloat(getComputedStyle(node).fontSize) || 16; }
+    catch (e) { return 16; }
+  }
+  function changeFontSize(mult) {
+    var r = selectionInsideEditing();
+    if (!r) { statusEl.textContent = "サイズを変えたい文字を選んでから押してください"; return; }
+    var next = Math.round(Math.max(10, Math.min(96, currentFontSizePx() * mult)));
+    applyRich({ fontSize: next + "px" });
+  }
+  bindTap($("#rbFsDown"), function(){ changeFontSize(1 / 1.15); });
+  bindTap($("#rbFsUp"), function(){ changeFontSize(1.15); });
   // ★文字そのものの色(背景ではない)
   var cols = b.querySelectorAll(".rb-col");
   for (var i = 0; i < cols.length; i++)
