@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.26">InkNote <small>v20.26</small></div>
+  <div class="brand" title="InkNote v20.28">InkNote <small>v20.28</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1463,7 +1463,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1493,7 +1492,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.26";
+var APP_VERSION = "20.28";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -9513,12 +9512,24 @@ function toSimpleLatex(s) {
     return "\u0001" + (saved.length - 1) + "\u0002";
   });
 
+  /* ★「Wb/m²」のように、Unicodeの上付き文字(²³¹等)がそのまま
+     使われていることがある。これを先に ^{2} の形に直しておかないと、
+     直後の分数変換で「m」までしか拾えず、「²」だけが分数の外に
+     取り残されて (Wb/m)² のような誤った式になってしまう。 */
+  var SUPMAP = { "⁰":"0","¹":"1","²":"2","³":"3","⁴":"4","⁵":"5",
+                 "⁶":"6","⁷":"7","⁸":"8","⁹":"9","⁻":"-","⁺":"+" };
+  t = t.replace(/([A-Za-z0-9\)\}])([⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]+)/g, function(m, base, sup){
+    var digits = sup.replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻⁺]/g, function(c){ return SUPMAP[c]; });
+    return base + "^{" + digits + "}";
+  });
+
   // 累乗: x^2 → x^{2}、x^(2+1) → x^{2+1}
   t = t.replace(/\^\s*\(([^()]+)\)/g, "^{$1}");
   t = t.replace(/\^\s*([A-Za-z0-9]+)/g, "^{$1}");
 
-  // 分数: 数字/数字、文字/文字、(式)/(式) のような単純な形だけを対象にする
-  t = t.replace(/(\([^()]*\)|[A-Za-z0-9]+)\s*\/\s*(\([^()]*\)|[A-Za-z0-9]+)/g,
+  // 分数: 数字/数字、文字/文字(^{}付きも含む)、(式)/(式) のような単純な形だけを対象にする
+  var TOKEN = "[A-Za-z0-9]+(?:\\^\\{[^{}]*\\})?";
+  t = t.replace(new RegExp("(\\([^()]*\\)|" + TOKEN + ")\\s*\\/\\s*(\\([^()]*\\)|" + TOKEN + ")", "g"),
     function(m, a, b){
       a = a.replace(/^\(|\)$/g, "");
       b = b.replace(/^\(|\)$/g, "");
@@ -9578,7 +9589,7 @@ function renderLatexToImage(latex, px) {
   });
 }
 /* 数式を貼る(既存の数式を選んでいれば差し替え) */
-function insertFormula(latex, replaceObj) {
+function insertFormula(latex, replaceObj, anchor) {
   latex = toSimpleLatex(stripMathDelims(latex));   // 「1/2」「x^2」等の簡単な書き方も受け付ける
   if (!latex) return;
   statusEl.textContent = "数式を組み立てています…";
@@ -9597,8 +9608,14 @@ function insertFormula(latex, replaceObj) {
       }
       setSelection([replaceObj]);
     } else {
-      var cw = toWorld(innerWidth / 2, innerHeight / 2);
-      var o = { id: idSeq++, type: "image", x: cw.x - r.w / 2, y: cw.y - r.h / 2,
+      /* ★元がテキストBOXだった場合は、その場所(左上)へそのまま置く。
+         指定が無い時だけ、これまでどおり画面の中央に新規作成する。
+         これが無いと「文章はそのまま数式に変換したい」のに、
+         画面中央へ飛んで元の場所とズレて見える事故になる。 */
+      var x, y;
+      if (anchor) { x = anchor.x; y = anchor.y; }
+      else { var cw = toWorld(innerWidth / 2, innerHeight / 2); x = cw.x - r.w / 2; y = cw.y - r.h / 2; }
+      var o = { id: idSeq++, type: "image", x: x, y: y,
                 w: r.w, h: r.h, _mw: r.w, _mh: r.h, src: r.src, latex: latex };
       objects.push(o);
       makeImageEl(o);
@@ -9657,7 +9674,7 @@ function openFormulaInput() {
     if (v == null || !String(v).trim()) return;
     // テキストを選んで数式にした場合は、元のテキストを消す
     var src2 = (sel.length === 1 && sel[0].type === "text" && !target) ? sel[0] : null;
-    insertFormula(v, target);
+    insertFormula(v, target, src2 ? { x: src2.x, y: src2.y } : null);
     if (src2) {
       var i = objects.indexOf(src2);
       if (i !== -1) {
