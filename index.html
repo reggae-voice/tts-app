@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.24">InkNote <small>v20.24</small></div>
+  <div class="brand" title="InkNote v20.26">InkNote <small>v20.26</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1463,6 +1463,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1492,7 +1493,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.24";
+var APP_VERSION = "20.26";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3040,10 +3041,16 @@ function startTextEdit(o, pt) {
    別のセルへ移せなくなる。選択範囲に数式画像があれば、その場所を
    data-latex(元の式)の文字に置き換えたものをクリップボードへ渡す。
    これなら他のセルに貼った時、その場で読める式として届く。 */
-function onTextTouchStart() {
+/* ★指(タッチ)の時だけ反応させる。pointerTypeを見ずに反応していたため、
+   マウスやトラックパッドで文字をクリックしただけでも「選択中」扱いになり、
+   直後の他の操作(∑ボタン等)が反応しづらくなることがあった。
+   これはiPadに限らずWindows/Macのデスクトップでも起きる問題だった。 */
+function onTextTouchStart(e) {
+  if (e && e.pointerType && e.pointerType !== "touch") return;
   textSelecting = true;
 }
-function onTextTouchEnd() {
+function onTextTouchEnd(e) {
+  if (e && e.pointerType && e.pointerType !== "touch") return;
   // 指を離した直後もハンドル操作が続くことがあるので、少し余韻を持たせる
   setTimeout(function(){ textSelecting = false; }, 400);
 }
@@ -3256,6 +3263,21 @@ function fixBrokenTexDelims(s) {
   // 「\gamma\」のように既知のコマンド名の直後に閉じ損ないの \ が残る形
   t = t.replace(/(\\[a-zA-Z]+)\\(?![a-zA-Z])/g, "$1");
   return t;
+}
+/* ★整形の結果、読める文字(漢字・かな・英数字)が不自然に大きく
+   減っていないかを確認する安全網。記号の置き換えで多少減るのは
+   想定内だが、大きく減っていたら何かを壊した疑いがあるので、
+   安全のため元の文章をそのまま使う(「文章はそのまま、中の式だけ
+   組版する」のはずが中身が消えてしまう事故を防ぐため)。 */
+function meaningfulCharCount(s) {
+  var m = String(s || "").match(/[A-Za-z0-9\u3040-\u30FF\u4E00-\u9FFF]/g);
+  return m ? m.length : 0;
+}
+function safeCleanText(raw) {
+  var cleaned = cleanPastedText(raw);
+  var before = meaningfulCharCount(raw), after = meaningfulCharCount(cleaned);
+  if (before > 0 && after < before - 3 && after < before * 0.85) return raw;
+  return cleaned;
 }
 function cleanPastedText(t) {
   if (!t) return "";
@@ -9353,8 +9375,16 @@ function selectionHas(prop, val) {
 function bindRichBar() {
   var b = rbEl();
   if (!b) return;
-  // バーを押した時に文字の選択が外れないようにする
-  b.addEventListener("pointerdown", function(ev){ ev.preventDefault(); });
+  /* ★バーを押した時に文字の選択が外れないようにする。
+     ★これがv20.23より前から無条件に存在しており、マウス/トラックパッド
+     環境でもpreventDefaultしていた。単体では致命傷にならないが、
+     後から追加した横取り処理と合わせて挙動が読みにくくなっていたため、
+     ここもtouch/pen限定にして統一する(マウスでは選択は勝手に外れないため
+     そもそも不要な処理でもある)。 */
+  b.addEventListener("pointerdown", function(ev){
+    if (ev.pointerType === "mouse") return;
+    ev.preventDefault();
+  });
   $("#rbBold").onclick = function(){
     var on = selectionHas("fontWeight");
     applyRich({ fontWeight: on ? "400" : "700" });
@@ -9381,12 +9411,17 @@ function bindRichBar() {
   /* ★リッチバーの上で指を下ろした時点で、OS標準メニューや
      ステージ側のジェスチャーにイベントを渡さない。
      渡してしまうと、押したつもりがOSのメニュー操作として扱われ、
-     ボタンが反応しないように見える。 */
+     ボタンが反応しないように見える。
+     ★ただしマウス/トラックパッド(pointerType:"mouse")では、
+     この横取りはそもそも不要(iPadOS標準メニューは存在しない)で、
+     余計なpreventDefaultがクリックの挙動を邪魔する恐れがあるため、
+     指(touch)またはペンの時だけ行う。 */
   (function(){
     var b = rbEl();
     if (!b) return;
-    ["pointerdown", "touchstart", "mousedown"].forEach(function(ev){
+    ["pointerdown", "touchstart"].forEach(function(ev){
       b.addEventListener(ev, function(e){
+        if (e.pointerType === "mouse") return;   // マウス/トラックパッドは素通し
         e.stopPropagation();
         e.preventDefault();     // 選択が解除されるのも防ぐ(選択したまま操作できる)
       }, { passive: false });
@@ -10064,7 +10099,7 @@ function insertRichPasteInner(raw, left, top, W, done) {
           y += Math.max(40, objBBox(po2).h) + 14;
           return;
         }
-        var txt = cleanPastedText(p.s);
+        var txt = safeCleanText(p.s);
         if (!txt.trim()) return;
         var o = { id: idSeq++, type: "text", x: left, y: y, w: W, text: txt, fontSize: 20,
                   color: (THEMES[themeName] || THEMES.cream).pen };
@@ -10315,7 +10350,7 @@ function insertRichPaste(raw) {
   });
 }
 function insertTextAtCenter(txt) {
-  txt = cleanPastedText(txt);      // LaTeX/Markdownを整形してから配置
+  txt = safeCleanText(txt);        // LaTeX/Markdownを整形してから配置(内容消失の安全網つき)
   var cwp = toWorld(innerWidth / 2, innerHeight / 2);
   /* ★数式・表・図を含まない、いちばん多い「普通の長文」の貼り付けが
      ここを通る。以前は幅260px固定で、これが「毎回⇔で広げる手間」の
