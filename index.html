@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.34">InkNote <small>v20.34</small></div>
+  <div class="brand" title="InkNote v20.35">InkNote <small>v20.35</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1497,7 +1497,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.34";
+var APP_VERSION = "20.35";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -9484,9 +9484,16 @@ function bindTap(el, fn) {
 function bindRichBar() {
   var b = rbEl();
   if (!b) return;
-  // バーの上を押した時に文字の選択が外れないようにする(タッチ/ペンのみ)
+  /* バーの上を押した時に文字の選択が外れないようにする。
+     ★button要素は既定でフォーカスを奪えるため、mousedownの既定動作を
+     許したままだと、押した瞬間にテキストボックス側の選択(Selection)が
+     消えてしまい、押しても何も起きないように見える。
+     これはタッチ/ペンだけでなくマウスでも同じ理屈で起きるため、
+     以前あった「マウスは対象外」という分岐は誤りだった。
+     ★preventDefault(mousedown)はフォーカス移動を止めるだけで、
+     マウスのclickイベント自体は普通に発火し続けるので、
+     bindTapのclick経路(マウス用)には影響しない。 */
   b.addEventListener("pointerdown", function(ev){
-    if (ev.pointerType === "mouse") return;
     ev.preventDefault();
   });
   bindTap($("#rbBold"), function(){
