@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.35">InkNote <small>v20.35</small></div>
+  <div class="brand" title="InkNote v20.36">InkNote <small>v20.36</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1497,7 +1497,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.35";
+var APP_VERSION = "20.36";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3408,6 +3408,13 @@ function blurKeyboard() {
 /* 編集中テキストの移動グリップ: キーボードを開いたままドラッグで移動できる */
 function positionEditHandle() {
   if (!editingObj) { editHandle.classList.remove("show"); return; }
+  /* ★文字を選んでいる最中は、このグリップを隠す。
+     BOXが画面幅いっぱいの時は「文字に被せない」置き場所が無く、
+     画面左端(選択範囲のすぐそば)に出るしかなくなり、OS標準の
+     選択ハンドル(特に選択範囲の先頭側)を掴もうとした指を
+     このグリップが横取りしてしまい、前側を選べなくなっていた。
+     選択が終わってカーソルだけに戻れば、また普通に表示する。 */
+  if (isSelectingText()) { editHandle.classList.remove("show"); return; }
   var vv = window.visualViewport;
   var vvTop = vv ? vv.offsetTop : 0;
   var visH = vv ? vv.height : innerHeight;
