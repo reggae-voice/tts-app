@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.22">InkNote <small>v20.22</small></div>
+  <div class="brand" title="InkNote v20.24">InkNote <small>v20.24</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1492,7 +1492,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.22";
+var APP_VERSION = "20.24";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2459,15 +2459,32 @@ function serializeScene() {
     return (k === "el" || k === "img" || k.charAt(0) === "_") ? undefined : v;
   });
 }
+/* ★そのテキストBOXが「本当に空っぽ」かどうか。
+   文字が無くても、表・数式の画像・装飾が入っていれば中身はある。
+   ここを文字だけで判定していたため、セル内の文字をすべて数式に
+   変換したBOX(画像だけになり文字が無くなる)が、確定時や読み込み時に
+   「空っぽ」とみなされて勝手に消えていた(版の履歴が8個→7個に減る原因)。 */
+function isTrulyEmptyText(o) {
+  if (!o || o.type !== "text") return false;
+  if (o.text && String(o.text).trim() !== "") return false;   // 文字がある
+  var r = o.rich ? String(o.rich) : "";
+  if (/<(table|img|td|th|tr)\b/i.test(r)) return false;        // 表・画像がある
+  // 装飾タグしか無くても、中に文字があるなら中身あり
+  if (r) {
+    var box = document.createElement("div");
+    box.innerHTML = r;
+    if ((box.innerText || box.textContent || "").trim() !== "") return false;
+  }
+  return true;
+}
 function rebuildScene(json) {
   // DOM側を全消去して作り直す
   var olds = world.querySelectorAll(".obj");
   for (var i = 0; i < olds.length; i++) olds[i].parentNode.removeChild(olds[i]);
   objects = JSON.parse(json);
   // 過去に溜まった「空のテキストBOX」をここで一掃する
-  objects = objects.filter(function(o){
-    return !(o.type === "text" && (!o.text || !String(o.text).trim()));
-  });
+  // (表・数式画像・装飾が入っているものは中身ありとして必ず残す)
+  objects = objects.filter(function(o){ return !isTrulyEmptyText(o); });
   for (var j = 0; j < objects.length; j++) {
     var o = objects[j];
     if (o.type === "text") makeTextEl(o);
@@ -2694,6 +2711,16 @@ var touchPts = {};   // pointerId -> {x,y}
 var pinch = null;
 document.addEventListener("pointerdown", function(e){
   if (e.pointerType !== "touch") return;
+  /* ★文字を編集している最中に、そのテキストの上や選択ハンドル、
+     装飾バーを触った指はピンチの数に入れない。
+     iPadは選択ハンドルを操作する時に指を2本と数えることがあり、
+     これをピンチと誤認すると、範囲を広げようとした瞬間に
+     画面がズームしてしまい選択できなくなる。 */
+  if (editingObj && e.target) {
+    var inEditing = (editingObj.el && editingObj.el.contains(e.target));
+    var inRichBar = (rbEl() && rbEl().contains(e.target));
+    if (inEditing || inRichBar) return;
+  }
   touchPts[e.pointerId] = { x: e.clientX, y: e.clientY };
   var ids = Object.keys(touchPts);
   if (ids.length === 2) {
@@ -2705,6 +2732,7 @@ document.addEventListener("pointerdown", function(e){
       cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2,
       v0: { x: view.x, y: view.y, s: view.s }
     };
+    armPinchWatchdog();
   }
 }, true);
 document.addEventListener("pointermove", function(e){
@@ -2725,12 +2753,32 @@ document.addEventListener("pointermove", function(e){
   updateSelUI();
 }, true);
 function releaseTouch(e){
-  if (e.pointerType !== "touch") return;
-  delete touchPts[e.pointerId];
+  if (e && e.pointerType && e.pointerType !== "touch") return;
+  if (e && e.pointerId != null) delete touchPts[e.pointerId];
   if (Object.keys(touchPts).length < 2) pinch = null;
 }
 document.addEventListener("pointerup", releaseTouch, true);
 document.addEventListener("pointercancel", releaseTouch, true);
+/* ★保険: 指を離した通知そのものが届かない場合がある
+   (iPadは選択の虫めがねが出ている間、その指のイベント配信を
+   途中で止めてしまうことがある)。その場合ズームしたまま
+   固まって見え、指を何度離しても直らない事故になる。
+   pointerout/leave/lostpointercapture でも合わせて片付け、
+   それでも取りこぼした時のために、一定時間で強制的に
+   ピンチ状態そのものを諦めて元に戻す安全弁を設ける。 */
+["pointerout", "pointerleave", "lostpointercapture"].forEach(function(evName){
+  document.addEventListener(evName, releaseTouch, true);
+});
+var pinchWatchdog = null;
+function armPinchWatchdog() {
+  clearTimeout(pinchWatchdog);
+  pinchWatchdog = setTimeout(function(){
+    if (pinch) { pinch = null; touchPts = {}; }   // 固まったまま戻せない状態を解消する
+  }, 4000);
+}
+document.addEventListener("visibilitychange", function(){
+  if (document.visibilityState === "hidden") { pinch = null; touchPts = {}; }
+});
 
 /* ---------- Androidの引っ張って更新などブラウザ既定動作を全停止 ---------- */
 document.addEventListener("touchmove", function(e){
@@ -2956,6 +3004,11 @@ function createTextAt(w) {
    省略時は末尾へ(新規作成・Ｔボタン・✎から開いた場合) */
 function startTextEdit(o, pt) {
   if (editingObj && editingObj !== o) commitText();
+  /* ★編集を始める瞬間は状態の切れ目なので、直前の操作から
+     ピンチの情報が残っていたら(万一終了イベントを取り損ねていても)
+     ここで必ず空にしておく。これを入れないと、編集を始めるたびに
+     「前回のズームの残骸」を引きずってしまう場合がある。 */
+  pinch = null; touchPts = {};
   editingObj = o;
   document.body.classList.add("editing-mode");   // キーボードと重なるUIを隠す
   var el = o.el;
@@ -3192,10 +3245,23 @@ function stripCitationNoise(s) {
   s = s.replace(/\n{3,}/g, "\n\n");
   return s;
 }
+/* ★PDFやAIの回答からのコピーで「\T\」「\G_x\」「\v\」のように、
+   本来 \(...\) で囲まれていた数式の囲みが壊れ、変数名の前後に
+   バックスラッシュだけが取り残されることがある。
+   そのままだと画面に \ が出たままになり、組版してもエラーになる。 */
+function fixBrokenTexDelims(s) {
+  var t = String(s || "");
+  // 「\変数\」の形(前後をバックスラッシュで挟まれた短い変数名)を素の文字に戻す
+  t = t.replace(/\\([A-Za-z][A-Za-z0-9]{0,2}(?:_\{?[A-Za-z0-9]+\}?)?)\\(?![A-Za-z])/g, "$1");
+  // 「\gamma\」のように既知のコマンド名の直後に閉じ損ないの \ が残る形
+  t = t.replace(/(\\[a-zA-Z]+)\\(?![a-zA-Z])/g, "$1");
+  return t;
+}
 function cleanPastedText(t) {
   if (!t) return "";
   var s = String(t);
   s = stripCitationNoise(s);       // 引用マーカー・確実性タグを先に取り除く
+  s = fixBrokenTexDelims(s);       // 壊れた数式の囲みの残骸を直す
   var hasTex = /[\\$]/.test(s);   // LaTeX由来かどうか(\ や $ を含むか)
   s = breakDenseInlineMath(s);     // 崩れた用語リストを1項目ずつの行に戻す
 
@@ -3488,7 +3554,8 @@ function commitText() {
   syncEmptyClass(o);
   // ★空のまま確定したBOXは削除する。
   //   見えない空BOXが溜まると、タップを奪って誤選択・誤移動の原因になる。
-  if (o.text.trim() === "") {
+  //   ただし表・数式の画像・装飾が入っていれば、文字が無くても消さない。
+  if (isTrulyEmptyText(o)) {
     var oi = objects.indexOf(o);
     if (oi !== -1) objects.splice(oi, 1);
     if (el.parentNode) el.parentNode.removeChild(el);
@@ -9022,7 +9089,12 @@ function showRichBarFor(range) {
     /* ★選んだ文字の「上」に出すのが基本。
        ただし、すぐ上には端末標準の「切り取り/コピー/貼り付け」が
        出るので、その高さぶん(約56px)よけて更に上に出す。 */
-    var OS_MENU = 56;
+    /* ★iPadOSの「カット/コピー/ペースト」メニューは、Androidのものより
+       背が高く、選択範囲の上に大きく張り出す。56pxでは重なってしまい、
+       こちらのボタンを押してもOS側が優先されて反応しないため、
+       iPadでは十分に余裕を取る。 */
+    var isIpad = /iPad|Macintosh/.test(navigator.userAgent) && "ontouchend" in document;
+    var OS_MENU = (isIpad || /iPhone|iPod/.test(navigator.userAgent)) ? 108 : 56;
     y = rect.top - bh - OS_MENU;
     if (y < topLimit) {
       // 上に入らない時だけ下へ回す
@@ -9078,14 +9150,9 @@ if (window.visualViewport) {
 function renderLatexInline(latex) {
   return loadMathJax().then(function(){
     var tex = sanitizeLatex(latex);
-    var node = window.MathJax.tex2svg(tex, { display: false });
-    if (node.querySelector && node.querySelector("[data-mjx-error], mjx-merror")) {
-      var plain = tex.replace(/\\text\s*\{([^{}]*)\}/g, "$1")
-                     .replace(/\\mathrm\s*\{([^{}]*)\}/g, "$1");
-      var retry = window.MathJax.tex2svg(plain, { display: false });
-      if (retry.querySelector && !retry.querySelector("[data-mjx-error], mjx-merror")) node = retry;
-    }
-    var svg = node.querySelector("svg");
+    // 赤いエラー表示を画面に出さないよう、段階的に組み方を変えて試す
+    var node = tex2svgSafe(tex, false);
+    var svg = node && node.querySelector("svg");
     if (!svg) throw new Error("render failed");
     var exH = parseFloat(svg.getAttribute("height")) || 2;    // ex単位の高さ
     var xml = new XMLSerializer().serializeToString(svg);
@@ -9311,6 +9378,20 @@ function bindRichBar() {
     });
   $("#rbClear").onclick = function(){ applyRich(null, true); };
   $("#rbMath").onclick = function(){ convertSelectionToMath(); };
+  /* ★リッチバーの上で指を下ろした時点で、OS標準メニューや
+     ステージ側のジェスチャーにイベントを渡さない。
+     渡してしまうと、押したつもりがOSのメニュー操作として扱われ、
+     ボタンが反応しないように見える。 */
+  (function(){
+    var b = rbEl();
+    if (!b) return;
+    ["pointerdown", "touchstart", "mousedown"].forEach(function(ev){
+      b.addEventListener(ev, function(e){
+        e.stopPropagation();
+        e.preventDefault();     // 選択が解除されるのも防ぐ(選択したまま操作できる)
+      }, { passive: false });
+    });
+  })();
 }
 bindRichBar();
 
@@ -9349,6 +9430,37 @@ function sanitizeLatex(s) {
   return s.trim();
 }
 /* 入力からLaTeXの本体を取り出す($ や \( \) を外す) */
+/* ★組版が失敗した時に、赤いエラー表示のまま画面に出さないための段取り。
+   ①そのまま → ②装飾を外す → ③壊れた囲みを直す → ④記号を素の文字に
+   の順に試し、どれも駄目なら「文字のまま」を返す(赤字は絶対に出さない)。 */
+function hasMjxError(node) {
+  return !!(node && node.querySelector && node.querySelector("[data-mjx-error], mjx-merror"));
+}
+function tex2svgSafe(tex, display) {
+  var tries = [
+    tex,
+    String(tex).replace(/\\text\s*\{([^{}]*)\}/g, "$1").replace(/\\mathrm\s*\{([^{}]*)\}/g, "$1"),
+    fixBrokenTexDelims(String(tex)),
+    String(tex).replace(/\\[a-zA-Z]+/g, function(m){ return m.slice(1); })   // コマンド名を素の文字に
+  ];
+  for (var i = 0; i < tries.length; i++) {
+    var t = tries[i];
+    if (!t || !String(t).trim()) continue;
+    try {
+      var node = window.MathJax.tex2svg(t, { display: !!display });
+      if (!hasMjxError(node)) return node;
+    } catch (e) {}
+  }
+  /* どうしても組めない時は、文字だけを普通に並べたものを作る。
+     これなら少なくとも内容は読めるし、赤いエラー表示にはならない。 */
+  try {
+    var plain = String(tex).replace(/[\\{}$]/g, " ").replace(/\s{2,}/g, " ").trim();
+    var n2 = window.MathJax.tex2svg("\\text{" + plain + "}", { display: !!display });
+    if (!hasMjxError(n2)) return n2;
+  } catch (e2) {}
+  return null;      // 呼び出し元が「組版できませんでした」と扱う
+}
+
 /* ===== 簡単な書き方をLaTeXに変換する(記法アシスト) =====
    \frac{1}{2} のような書き方を知らなくても、
    「1/2」「x^2」のような普段の書き方のまま数式にできるようにする。
@@ -9399,15 +9511,9 @@ function stripMathDelims(s) {
 function renderLatexToImage(latex, px) {
   return loadMathJax().then(function(){
     var tex = sanitizeLatex(latex);
-    var node = window.MathJax.tex2svg(tex, { display: true });
-    // うまく組めなかった時(赤いエラー表示など)は、装飾を外してもう一度試す
-    if (node.querySelector && node.querySelector("[data-mjx-error], mjx-merror")) {
-      var plain = tex.replace(/\\text\s*\{([^{}]*)\}/g, "$1")
-                     .replace(/\\mathrm\s*\{([^{}]*)\}/g, "$1");
-      var retry = window.MathJax.tex2svg(plain, { display: true });
-      if (retry.querySelector && !retry.querySelector("[data-mjx-error], mjx-merror")) node = retry;
-    }
-    var svg = node.querySelector("svg");
+    // 赤いエラー表示を画面に出さないよう、段階的に組み方を変えて試す
+    var node = tex2svgSafe(tex, true);
+    var svg = node && node.querySelector("svg");
     if (!svg) throw new Error("render failed");
     // 文字色をノートのペン色に合わせる
     var pen = (THEMES[themeName] || THEMES.cream).pen;
