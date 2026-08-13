@@ -964,7 +964,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.28">InkNote <small>v20.28</small></div>
+  <div class="brand" title="InkNote v20.33">InkNote <small>v20.33</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1486,13 +1486,14 @@ var fingerBlockedCount = 0;    // 指で描こうとして弾かれた回数
 var activeStroke = null;
 var lassoPath = null;
 var editingObj = null;
+var editSessionSnapshot = null;   // 編集セッション開始前の状態(Undo保護用)
 var undoStack = [], redoStack = [];
 var idSeq = 1;
 var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.28";
+var APP_VERSION = "20.33";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3009,6 +3010,11 @@ function startTextEdit(o, pt) {
      ここで必ず空にしておく。これを入れないと、編集を始めるたびに
      「前回のズームの残骸」を引きずってしまう場合がある。 */
   pinch = null; touchPts = {};
+  /* ★編集セッション全体をUndoで戻せるよう、始める前の状態を控えておく。
+     これが無いと、タイプ・カット・貼り付けなど「数式変換以外」の
+     編集は一切Undoの記録が残らず、カットして確定した後にUndoを押しても
+     戻せないという不具合になっていた。 */
+  editSessionSnapshot = serializeScene();
   editingObj = o;
   document.body.classList.add("editing-mode");   // キーボードと重なるUIを隠す
   var el = o.el;
@@ -3548,6 +3554,7 @@ function commitText() {
   el.removeEventListener("pointerdown", onTextTouchStart);
   el.removeEventListener("pointerup", onTextTouchEnd);
   el.removeEventListener("pointercancel", onTextTouchEnd);
+  var textBefore = o.text, richBefore = o.rich;
   var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
   o.text = raw.replace(/\n$/, "");
   // 装飾が付いていれば残す(無ければ普通の文字に戻す)
@@ -3557,6 +3564,15 @@ function commitText() {
   //   編集して確定するたびに表の枠が消えてただの文章になっていた。
   o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
            ? cleaned : null;
+  /* ★このセッションで実際に中身が変わっていれば、始める前の状態を
+     Undo履歴に積む(数式変換を個別に何度もした場合は、既にそちらで
+     細かく積まれているので、ここでは「セッション開始前」の1件だけ)。 */
+  // undefined(未設定)とnull(装飾なし)は同じ「無し」として比べる
+  if (editSessionSnapshot &&
+      (o.text !== textBefore || (o.rich || null) !== (richBefore || null))) {
+    pushSnapshot(editSessionSnapshot);
+  }
+  editSessionSnapshot = null;
   // ★キーボードを閉じるのは contenteditable を外す「前」に行う。
   //   属性を外した後だと要素がフォーカス対象でなくなり、blurが効かず
   //   iPadなどでキーボードが出たまま残ってしまう。
@@ -9371,42 +9387,57 @@ function selectionHas(prop, val) {
   if (!val) return true;
   return v.replace(/\s/g, "").toLowerCase() === String(val).replace(/\s/g, "").toLowerCase();
 }
+/* ★タッチでボタンを押した時、選択が外れないよう先にpreventDefaultすると
+   「タッチ由来のclickイベントがブラウザから発火しなくなる」仕様があり、
+   .onclickだけに頼るとボタンが一切反応しなくなってしまう
+   (これが原因でリッチバーの太字・色・∑など全ボタンが無反応だった)。
+   タッチ/ペンはpointerupで直接処理し、マウスだけ従来どおりclickに任せる
+   (mouseはpreventDefaultしないのでclickが普通に発火する。両方で
+   実行してしまわないよう、タッチで処理した直後はclick側を1回だけ無視する)。 */
+function bindTap(el, fn) {
+  var skipNextClick = false;
+  el.addEventListener("pointerup", function(e){
+    if (e.pointerType === "mouse") return;
+    skipNextClick = true;
+    fn.call(el);
+    setTimeout(function(){ skipNextClick = false; }, 0);
+  });
+  el.addEventListener("click", function(){
+    if (skipNextClick) return;
+    fn.call(el);
+  });
+}
 function bindRichBar() {
   var b = rbEl();
   if (!b) return;
-  /* ★バーを押した時に文字の選択が外れないようにする。
-     ★これがv20.23より前から無条件に存在しており、マウス/トラックパッド
-     環境でもpreventDefaultしていた。単体では致命傷にならないが、
-     後から追加した横取り処理と合わせて挙動が読みにくくなっていたため、
-     ここもtouch/pen限定にして統一する(マウスでは選択は勝手に外れないため
-     そもそも不要な処理でもある)。 */
+  // バーの上を押した時に文字の選択が外れないようにする(タッチ/ペンのみ)
   b.addEventListener("pointerdown", function(ev){
     if (ev.pointerType === "mouse") return;
     ev.preventDefault();
   });
-  $("#rbBold").onclick = function(){
+  bindTap($("#rbBold"), function(){
     var on = selectionHas("fontWeight");
     applyRich({ fontWeight: on ? "400" : "700" });
-  };
-  $("#rbUnder").onclick = function(){
+  });
+  bindTap($("#rbUnder"), function(){
     var on = selectionHas("textDecoration");
     applyRich({ textDecoration: on ? "none" : "underline" });
-  };
+  });
   // ★文字そのものの色(背景ではない)
   var cols = b.querySelectorAll(".rb-col");
   for (var i = 0; i < cols.length; i++)
-    cols[i].addEventListener("click", function(){
+    bindTap(cols[i], function(){
       applyRich({ color: this.getAttribute("data-c") });
     });
   // ★マーカー(背景の色)
   var mks = b.querySelectorAll(".rb-mark");
   for (var j = 0; j < mks.length; j++)
-    mks[j].addEventListener("click", function(){
+    bindTap(mks[j], function(){
       var m = this.getAttribute("data-m");
       applyRich({ backgroundColor: selectionHas("backgroundColor", m) ? "transparent" : m });
     });
-  $("#rbClear").onclick = function(){ applyRich(null, true); };
-  $("#rbMath").onclick = function(){ convertSelectionToMath(); };
+  bindTap($("#rbClear"), function(){ applyRich(null, true); });
+  bindTap($("#rbMath"), function(){ convertSelectionToMath(); });
   /* ★リッチバーの上で指を下ろした時点で、OS標準メニューや
      ステージ側のジェスチャーにイベントを渡さない。
      渡してしまうと、押したつもりがOSのメニュー操作として扱われ、
@@ -9421,8 +9452,11 @@ function bindRichBar() {
     ["pointerdown", "touchstart"].forEach(function(ev){
       b.addEventListener(ev, function(e){
         if (e.pointerType === "mouse") return;   // マウス/トラックパッドは素通し
+        // ★ボタン本体の上ならstopPropagationのみに留め、preventDefaultはしない
+        //   (clickが発火しなくなりボタンが反応しなくなるため)
+        var onButton = e.target && e.target.closest && e.target.closest("button");
         e.stopPropagation();
-        e.preventDefault();     // 選択が解除されるのも防ぐ(選択したまま操作できる)
+        if (!onButton) e.preventDefault();
       }, { passive: false });
     });
   })();
@@ -9468,7 +9502,21 @@ function sanitizeLatex(s) {
    ①そのまま → ②装飾を外す → ③壊れた囲みを直す → ④記号を素の文字に
    の順に試し、どれも駄目なら「文字のまま」を返す(赤字は絶対に出さない)。 */
 function hasMjxError(node) {
-  return !!(node && node.querySelector && node.querySelector("[data-mjx-error], mjx-merror"));
+  if (!node || !node.querySelector) return false;
+  /* ★MathJaxのバージョンや出力形式によってエラーの印が違うことがあるため、
+     知っている印を幅広く確認する。ここで見逃すと、エラー表示がそのまま
+     画面に出てしまう(赤字が漏れる)ので、多少過敏なくらいでよい。 */
+  if (node.querySelector("[data-mjx-error], mjx-merror, .mjx-error, merror, [data-mml-node='merror']"))
+    return true;
+  // 赤色で描かれている部分がある場合も、エラー表示の可能性が高いとみなす
+  var els = node.querySelectorAll("[fill], [style]");
+  for (var i = 0; i < els.length; i++) {
+    var fill = els[i].getAttribute("fill") || "";
+    var style = els[i].getAttribute("style") || "";
+    if (/^(red|#f00\b|#ff0000|rgb\(\s*255\s*,\s*0\s*,\s*0\s*\))$/i.test(fill.trim())) return true;
+    if (/color\s*:\s*(red|#f00\b|#ff0000)/i.test(style)) return true;
+  }
+  return false;
 }
 function tex2svgSafe(tex, display) {
   var tries = [
@@ -9499,9 +9547,36 @@ function tex2svgSafe(tex, display) {
    \frac{1}{2} のような書き方を知らなくても、
    「1/2」「x^2」のような普段の書き方のまま数式にできるようにする。
    すでに本格的なLaTeXコマンドが入っている時は、壊さないよう何もしない。 */
+/* ★NotebookLM等からのコピーで \(...\) の括弧だけが失われ、
+   「\2 × 3 = 6\」のように "\" だけが数式の前後に残ることがある。
+   これまでは短い変数名(\T\等)しか対象にしていなかったため、
+   数字・演算子を含む式全体では \ が残ったままエラー表示になっていた。
+   中身が数式らしい(日本語のかな漢字を含まない)場合だけ、
+   前後の \ をまとめて外す。 */
+function stripLostFormulaDelims(s) {
+  var t = String(s || "");
+  // 既にちゃんとした $$...$$ / \[...\] / \(...\) / $...$ は先によけておき、
+  // その中の \frac 等のコマンドを誤って壊れた区切りと誤認しないようにする
+  var saved = [];
+  t = t.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^\$\n]+?\$/g, function(m){
+    saved.push(m);
+    return "\uE001" + (saved.length - 1) + "\uE002";
+  });
+  t = t.replace(/\\([^\\\n]{1,80})\\(?![a-zA-Z])/g, function(m, body){
+    var b = body.trim();
+    if (!b) return m;
+    if (/[ぁ-んァ-ヶ一-龠]/.test(b)) return m;              // 日本語を含む→普通の文章
+    if (/^[A-Za-z][A-Za-z0-9]{0,2}$/.test(b)) return m;      // 短い変数名は別の処理に任せる
+    if (!/[0-9=+\-×÷^_/²³¹]/.test(b)) return m;             // 数式らしい記号が無ければ触らない
+    return b;
+  });
+  t = t.replace(/\uE001(\d+)\uE002/g, function(m, i){ return saved[+i]; });
+  return t;
+}
 function toSimpleLatex(s) {
   var t = String(s || "");
   if (!t.trim()) return t;
+  t = stripLostFormulaDelims(t);
   /* ★「\pi r^2」のように、既存のLaTeXコマンドと簡単な書き方が
      混ざっていることがある。文字列全体を一度に見て「本格的なLaTeXが
      混じっているから」と全体を諦めるのではなく、\コマンドの部分だけを
@@ -10034,7 +10109,40 @@ function openTableInput() {
    図として組み、上から順に並べる。写真のような見た目を保つのが狙い。 */
 
 /* 数式の区切り($...$, $$...$$, \(...\), \[...\])で切り分ける */
+/* ★NotebookLM等からのコピーで \(...\) の括弧が失われ、
+   「\2 × 3 = 6\」のように "\" だけが前後に残ることがある。
+   中身が数式らしい場合だけ \( \) を補い、貼り付け時に自動で
+   数式画像として組版されるようにする(文中の変数名だけの短い
+   \T\ 等は fixBrokenTexDelims の方で素の文字に整形される)。 */
+function restoreLostMathDelims(s) {
+  var t = String(s || "");
+  /* ★「\(\frac{1}{2}\)」のように、既にちゃんと囲まれている本物の式の
+     中にも \frac のような命令(バックスラッシュ)が入っている。
+     これを見分けずに処理すると、本物の式の中の \ まで
+     「失われた区切り」と誤認して壊してしまう。
+     先に本物の $$...$$ / \[...\] / \(...\) / $...$ をよけておいてから、
+     残った部分(=それ以外の生のテキスト)だけを対象にする。 */
+  var saved = [];
+  t = t.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^\$\n]+?\$/g, function(m){
+    saved.push(m);
+    return "\uE001" + (saved.length - 1) + "\uE002";
+  });
+  t = t.replace(/\\([^\\\n]{1,80})\\(?![a-zA-Z])/g, function(m, body){
+    var b = body.trim();
+    if (!b) return m;
+    if (/[ぁ-んァ-ヶ一-龠]/.test(b)) return m;
+    if (/^[A-Za-z][A-Za-z0-9]{0,2}$/.test(b)) return m;   // 短い変数名は既存の処理に任せる
+    if (!/[0-9=+\-×÷^_/²³¹]/.test(b)) return m;
+    // ★復元した式だと後で分かるよう、目印(制御文字)を先頭に付けておく。
+    //   これが無いと「組版が要らない簡単な式」として文章に溶けて戻され、
+    //   自動組版のためにわざわざ復元した意味が無くなってしまう。
+    return "\\(\uE000" + b + "\\)";
+  });
+  t = t.replace(/\uE001(\d+)\uE002/g, function(m, i){ return saved[+i]; });
+  return t;
+}
 function splitMathBlocks(s) {
+  s = restoreLostMathDelims(String(s || ""));
   var out = [];
   var re = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^\$\n]+?)\$/g;
   var pos = 0, m;
@@ -10099,7 +10207,9 @@ function insertRichPasteInner(raw, left, top, W, done) {
       }
       return;
     }
-    if (!needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }
+    var restored = b.s.charAt(0) === "\uE000";   // 壊れた囲みから復元した式には目印がある
+    if (restored) b.s = b.s.slice(1);
+    if (!restored && !needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }
     flush();
     parts.push({ t: "math", s: b.s });
   });
@@ -10291,10 +10401,16 @@ function insertRichPaste(raw) {
     });
     return;
   }
+  /* ★NotebookLM等で \(...\) の括弧が失われ「\2×3=6\」のように
+     "\" だけが残っている式は、\frac 等の高度な記法を含まないため
+     needsTypeset だけでは「組版不要」と判定され、簡易貼り付け経路
+     (数式の自動復元を行わない)に流れてしまっていた。
+     壊れた囲みを実際に復元できた場合は、単純な式でも組版経路に乗せる。 */
+  var hadLostDelims = restoreLostMathDelims(String(raw || "")) !== String(raw || "");
   var blocks = splitMathBlocks(String(raw || ""));
   // 組版が必要な式が無ければ、これまでどおり1つのテキストとして置く
   var hasMath = blocks.some(function(b){ return b.t === "math" && needsTypeset(b.s); });
-  if (!hasMath) { insertTextAtCenter(raw); return; }
+  if (!hasMath && !hadLostDelims) { insertTextAtCenter(raw); return; }
 
   // 文章と式のかたまりに整理する(組版不要の式は文章に溶かす)
   var parts = [], buf = "";
@@ -10305,7 +10421,9 @@ function insertRichPaste(raw) {
   }
   blocks.forEach(function(b){
     if (b.t === "text") { buf += b.s; return; }
-    if (!needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }   // 後で文字整形される
+    var restored = b.s.charAt(0) === "\uE000";   // 壊れた囲みから復元した式には目印がある
+    if (restored) b.s = b.s.slice(1);
+    if (!restored && !needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }   // 後で文字整形される
     flush();
     parts.push({ t: "math", s: b.s });
   });
