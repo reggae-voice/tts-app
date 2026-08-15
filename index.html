@@ -755,7 +755,16 @@
   .pp-row{display:flex;align-items:center;gap:6px;padding:11px 10px;border-radius:12px;color:var(--ui-text);font-size:14px}
   .pp-row.current{background:var(--accent-soft)}
   .pp-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
-  /* ===== カード表示(Keep風の2列グリッド) ===== */
+  /* ===== カード表示(Keep風の2列グリッド) =====
+     ★サムネ枠の高さは、以前はCSSの aspect-ratio だけで揃えていたが、
+     端末やWebViewのバージョンによって効き方にばらつきが出ることがあり、
+     結果としてカードごとに高さがずれることがあった。
+     CSS Gridは「行」単位でセルの高さを揃える(同じ行の隣の枠が長いと、
+     短いカードの下に空白ができる)ため、高さがずれるとその境目が
+     どこなのか分かりにくくなり、選択の枠(青い囲み)が2枚分あるように
+     見えてしまっていた。
+     padding-topで枠の高さを作る昔ながらのやり方(★aspect-ratioより
+     互換性が高く、確実に効く)に変え、枠の高さのばらつき自体を無くした。 */
   #ppList.grid{
     display:grid;
     /* 幅に応じて列数が増える。minの2つ目を min(184px,100%) にして、
@@ -773,7 +782,9 @@
     border:1px solid var(--ui-line);
     display:flex;flex-direction:column;
   }
-  .pp-card.current{outline:2px solid var(--accent)}
+  /* ★境目をはっきりさせるため、枠線を太くしオフセットも付けて
+     隣のカードと絶対に接しないようにする(以前は2pxで隣接しがちだった) */
+  .pp-card.current{outline:3px solid var(--accent);outline-offset:2px}
   .pp-card.holding{transform:scale(.97);transition:transform .12s ease}
   /* 端末標準の「画像をコピー/ダウンロード…」メニューを出さない
      (サムネが<img>なので、長押しでブラウザ側が反応してしまう) */
@@ -783,12 +794,16 @@
     -webkit-user-drag:none;
   }
   img.pp-thumb{pointer-events:none}      /* 画像自体を長押しの対象にしない */
+  /* ★サムネ枠(.pp-card-media)自身の高さをpadding-topで4:3に固定し、
+     サムネ(画像/プレースホルダ)はその中いっぱいに絶対配置で敷き詰める。
+     こうすると画像の実寸やaspect-ratioの対応状況に関係なく、
+     どのカードも必ず同じ高さになる。 */
+  .pp-card-media::before{ content:""; display:block; padding-top:75%; }  /* 4:3 = 3/4 */
   .pp-thumb{
-    width:100%;max-width:100%;aspect-ratio:4/3;object-fit:cover;display:block;
+    position:absolute; left:0; top:0; width:100%; height:100%;
+    object-fit:cover; display:block;
     background:#F4EFE2;border:none;
-    flex:0 0 auto;                 /* サムネは固定高さ。伸びてタイトルを押し出さない */
   }
-  img.pp-thumb{height:auto}        /* 画像の固有寸法ではなくセル幅に合わせる */
   /* サムネ枠は縮まない(重ねた帯ごと保持される) */
   .pp-card-media{flex:0 0 auto}
   div.pp-thumb{
@@ -966,7 +981,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.39">InkNote <small>v20.39</small></div>
+  <div class="brand" title="InkNote v20.40">InkNote <small>v20.40</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1502,7 +1517,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.39";
+var APP_VERSION = "20.40";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
