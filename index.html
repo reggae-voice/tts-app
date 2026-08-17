@@ -770,7 +770,7 @@
     /* 幅に応じて列数が増える。minの2つ目を min(184px,100%) にして、
        画像の固有幅がトラックを押し広げて1列に溢れるのを防ぐ */
     grid-template-columns:repeat(auto-fill, minmax(min(158px, 100%), 1fr));
-    gap:10px;align-content:start;align-items:start;padding:2px;
+    gap:14px;align-content:start;align-items:start;padding:2px;
   }
   /* grid/flexの子が固有幅で膨らまないよう、カードと中身に最小幅0を効かせる */
   .pp-card{min-width:0}
@@ -782,9 +782,13 @@
     border:1px solid var(--ui-line);
     display:flex;flex-direction:column;
   }
-  /* ★境目をはっきりさせるため、枠線を太くしオフセットも付けて
-     隣のカードと絶対に接しないようにする(以前は2pxで隣接しがちだった) */
-  .pp-card.current{outline:3px solid var(--accent);outline-offset:2px}
+  /* ★選択中の枠を outline + outline-offset で外側に足していたが、
+     このoffset分がグリッドの隙間(10px)側に食い込み、すぐ下の
+     カードと接近しすぎて、まるで2枚を一緒に囲っているように
+     見えてしまっていた(ユーザーの写真で確認)。
+     box-shadowのinset(内側)に変えれば、カード自身の枠の「内側」
+     にしか描かれないため、隣のカードに向かって一切はみ出さない。 */
+  .pp-card.current{box-shadow:inset 0 0 0 3px var(--accent)}
   .pp-card.holding{transform:scale(.97);transition:transform .12s ease}
   /* 端末標準の「画像をコピー/ダウンロード…」メニューを出さない
      (サムネが<img>なので、長押しでブラウザ側が反応してしまう) */
@@ -981,7 +985,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.40">InkNote <small>v20.40</small></div>
+  <div class="brand" title="InkNote v20.44">InkNote <small>v20.44</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1424,6 +1428,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="mathAddBtn">∑ 数式を追加</button>
       <span style="color:var(--ui-dim);font-size:11px">分数・指数をきれいに組んで貼る</span>
     </div>
+    <div class="st-row"><span class="st-label">数式</span>
+      <button class="toggle" id="autoCellMathToggle"></button>
+      <span style="color:var(--ui-dim);font-size:11px">表を貼った時、セルの中の式も自動で組む(大きい表は少し待ちます)</span>
+    </div>
     <div class="st-row"><span class="st-label">目次</span>
       <button class="stybtn" id="tocOpenBtn">🔖 目次を開く</button>
       <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
@@ -1517,7 +1525,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.40";
+var APP_VERSION = "20.44";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1527,6 +1535,13 @@ var printWhite = true;        // 印刷・PDFは白背景にする(インク節�
 try {
   var _pw = localStorage.getItem("inknote_print_white");
   if (_pw !== null) printWhite = (_pw === "1");
+} catch (e) {}
+/* 表を貼り付けた時、セルの中の $$…$$ 等の式を自動で組版するか。
+   既定ON。表が大きいと組版に時間がかかるため、切れるようにしてある。 */
+var autoCellMath = true;
+try {
+  var _acm = localStorage.getItem("inknote_auto_cell_math");
+  if (_acm !== null) autoCellMath = (_acm === "1");
 } catch (e) {}
 var outWhite = false;         // 出力用canvasを描画中か(色の読み替えに使う)
 
@@ -2312,6 +2327,8 @@ function updateSelUI() {
   var b = selBBox();
   // 幅ハンドル: テキストだけを選んでいる時(1つでも複数でも)。回転ハンドルは単一図形選択時のみ
   var selLocked = (sel.length === 1 && sel[0].locked);
+  var anyLocked = false;
+  for (var lk = 0; lk < sel.length; lk++) if (sel[lk].locked) { anyLocked = true; break; }
   var allTextSel = sel.length > 0 && !selLocked;
   for (var wi = 0; wi < sel.length; wi++)
     if (sel[wi].type !== "text" || sel[wi].locked) { allTextSel = false; break; }
@@ -2321,8 +2338,16 @@ function updateSelUI() {
     (!selLocked && sel.length === 1 && sel[0].type === "shape") ? "block" : "none";
   // 拡大縮小ハンドル: テキスト以外(画像・図形・手書き線)の単一選択で表示。
   // テキストは幅を⇔で変えるので対象外。画面右下角に固定して常に掴める。
-  var showSizeHandle = (!selLocked && sel.length === 1 && sel[0].type !== "text");
+  // ★数式混じりの貼り付け(文章+組版した数式の画像)のように、文字と
+  //   画像が混ざって選ばれている時は、⇔(文字だけ用)が出せない代わりに
+  //   こちらの拡大縮小ハンドルでまとめて大きさを変えられるようにする。
+  //   resizeObject自体はtext/image/shape/strokeすべてに元から対応済み。
+  var showSizeHandle = !anyLocked && (
+    (sel.length === 1 && sel[0].type !== "text") ||
+    (sel.length > 1 && !allTextSel)
+  );
   selHandle.style.display = showSizeHandle ? "block" : "none";
+  selHandle.title = sel.length > 1 ? "選んだ" + sel.length + "個の大きさをまとめて変える" : "大きさを変える";
   selBox.style.display = "block";
   selBox.classList.toggle("locked", sel.length === 1 && sel[0].locked);
   selBox.style.left = b.x + "px";
@@ -7325,6 +7350,15 @@ $("#printWhiteToggle").onclick = function(){
     : "印刷・PDFも画面と同じ紙色で出します";
 };
 $("#printWhiteToggle").classList.toggle("on", printWhite);
+$("#autoCellMathToggle").onclick = function(){
+  autoCellMath = !autoCellMath;
+  this.classList.toggle("on", autoCellMath);
+  try { localStorage.setItem("inknote_auto_cell_math", autoCellMath ? "1" : "0"); } catch (e) {}
+  statusEl.textContent = autoCellMath
+    ? "表を貼った時、セルの中の式も自動で組みます"
+    : "表を貼った時、セルの中の式はそのままにします(∑で個別に変換できます)";
+};
+$("#autoCellMathToggle").classList.toggle("on", autoCellMath);
 $("#homeToggle").onclick = function(){
   openListOnStart = !openListOnStart;
   this.classList.toggle("on", openListOnStart);
@@ -9844,6 +9878,17 @@ function stripLostFormulaDelims(s) {
 function toSimpleLatex(s) {
   var t = String(s || "");
   if (!t.trim()) return t;
+  /* ★表のセルなどをまとめて選ぶと、$$...$$ のような区切り記号ごと
+     選択に入ってしまうことがある。区切りは「ここからここまでが式」
+     という印であって式の中身ではないのに、そのまま組版すると
+     区切り記号自体が絵文字のように描画されて残ってしまう
+     (見た目に「$$」が残る不具合の原因)。
+     選択した文字列の最初と最後がちょうどこの区切りで揃っている時だけ、
+     区切りを剥がして中身だけを式として扱う。 */
+  var wrapped = t.trim();
+  var wm = wrapped.match(/^\$\$([\s\S]*)\$\$$/) || wrapped.match(/^\\\[([\s\S]*)\\\]$/) ||
+           wrapped.match(/^\\\(([\s\S]*)\\\)$/) || wrapped.match(/^\$([^\$]*)\$$/);
+  if (wm && wm[1].trim()) t = wm[1].trim();
   t = stripLostFormulaDelims(t);
   /* ★「\pi r^2」のように、既存のLaTeXコマンドと簡単な書き方が
      混ざっていることがある。文字列全体を一度に見て「本格的なLaTeXが
@@ -10271,6 +10316,139 @@ function insertTable(html, w) {
   return o;
 }
 /* この項目が表かどうか */
+/* ★表のセルの中の式を、その場で1つずつ画像に差し替える。
+   ============================================================
+   ここは「表を作り直さない」ことが絶対条件。
+   typesetInPlace(文章全体を組版し直す経路)は o.text(読める文字だけ)
+   から中身を作り直すため、表を通すと構造ごと失われる(v20.5の
+   「表を選んで∑を押すと表が消える」バグの原因)。だから表は今も
+   あちらの経路からは除外してある。
+   こちらは convertSelectionToMath と同じ考え方で、
+   ★テキストノードだけを対象にRangeで差し替える。
+   innerHTMLを組み立て直さないので、
+   ・セル・行・列の構造
+   ・既に変換済みの数式画像(img[data-latex])
+   ・セルに付いている色や太字
+   のどれも壊さない。
+   ============================================================ */
+function cellTextNodes(root) {
+  var out = [];
+  var w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null, false);
+  var n;
+  while ((n = w.nextNode())) out.push(n);
+  return out;
+}
+/* テキストノード1つの中にある式を、後ろから順に画像へ置き換える。
+   ★後ろから処理するのは、前を先に置き換えると後ろの文字位置が
+   ずれてしまうため(オフセットが無効になる)。
+   ★位置は正規表現の一致位置から直接取る。splitMathBlocksは区切りを
+   外した中身しか返さないため、そこから元の位置を逆算しようとすると
+   区切りの種類($$ か \( か)で長さが変わり、ずれる。 */
+var CELL_MATH_RE = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^\$\n]+?)\$/g;
+function typesetMathInTextNode(node) {
+  var raw = node.nodeValue || "";
+  if (!raw || raw.indexOf("$") === -1) return Promise.resolve(0);
+  var spans = [], m;
+  CELL_MATH_RE.lastIndex = 0;
+  while ((m = CELL_MATH_RE.exec(raw)) !== null) {
+    var body = (m[1] != null) ? m[1] : (m[2] != null) ? m[2] : (m[3] != null) ? m[3] : m[4];
+    body = String(body || "").trim();
+    if (!body) continue;
+    spans.push({ start: m.index, end: m.index + m[0].length, latex: body });
+  }
+  if (!spans.length) return Promise.resolve(0);
+  var done = 0;
+  var chain = Promise.resolve();
+  // 後ろから順に
+  for (var k = spans.length - 1; k >= 0; k--) {
+    (function(sp){
+      chain = chain.then(function(){
+        var latex = toSimpleLatex(sp.latex);
+        if (!latex) return;
+        return renderLatexInline(latex).then(function(res){
+          var img = document.createElement("img");
+          img.setAttribute("src", res.src);
+          img.setAttribute("data-latex", latex);
+          img.setAttribute("data-h", res.h);
+          // セルの行の高さを超えないように(convertSelectionToMathと同じ値)
+          img.style.height = res.h;
+          img.style.maxHeight = "1.2em";
+          img.style.verticalAlign = "-0.2em";
+          img.style.display = "inline-block";
+          var r = document.createRange();
+          r.setStart(node, sp.start);
+          r.setEnd(node, sp.end);
+          r.deleteContents();
+          r.insertNode(img);
+          done++;
+        }).catch(function(){ /* 1つ失敗しても他は続ける */ });
+      });
+    })(spans[k]);
+  }
+  return chain.then(function(){ return done; });
+}
+/* 表オブジェクト1つの、全セルの式を組版する */
+function typesetTableCellMath(o) {
+  if (!o || !o.rich) return Promise.resolve(0);
+  var box = document.createElement("div");
+  box.innerHTML = o.rich;
+  var cells = box.querySelectorAll("td,th");
+  if (!cells.length) return Promise.resolve(0);
+  var total = 0;
+  var chain = Promise.resolve();
+  for (var c = 0; c < cells.length; c++) {
+    (function(cell){
+      chain = chain.then(function(){
+        var nodes = cellTextNodes(cell);
+        var sub = Promise.resolve();
+        for (var t = 0; t < nodes.length; t++) {
+          (function(nd){
+            sub = sub.then(function(){
+              return typesetMathInTextNode(nd).then(function(n){ total += n; });
+            });
+          })(nodes[t]);
+        }
+        return sub;
+      });
+    })(cells[c]);
+  }
+  return chain.then(function(){
+    if (!total) return 0;
+    o.rich = sanitizeRich(box.innerHTML);
+    var b2 = document.createElement("div");
+    b2.innerHTML = o.rich;
+    o.text = (b2.innerText || b2.textContent || "").trim();
+    if (o.el) o.el.innerHTML = o.rich;
+    measureObj(o);
+    return total;
+  });
+}
+/* 貼り付けで作った物のうち、表だけを対象に自動で式を組版する。
+   設定OFF・表なし・式なしの時は何もしない(貼り付け結果に触らない)。 */
+function autoTypesetTablesIn(made) {
+  if (!autoCellMath) return Promise.resolve(0);
+  var tables = [];
+  for (var i = 0; i < made.length; i++)
+    if (made[i] && made[i].type === "text" && isTableObj(made[i])) tables.push(made[i]);
+  if (!tables.length) return Promise.resolve(0);
+  var total = 0;
+  var chain = Promise.resolve();
+  tables.forEach(function(o){
+    chain = chain.then(function(){
+      return typesetTableCellMath(o).then(function(n){ total += n; });
+    });
+  });
+  return chain.then(function(){
+    if (total) {
+      inkDirty = true;
+      refreshMeasures();
+      for (var j = 0; j < made.length; j++) clampToSheet(made[j]);
+      updateSelUI();
+      scheduleSave();
+    }
+    return total;
+  }).catch(function(){ return total; });
+}
 function isTableObj(o) {
   return !!(o && o.type === "text" && o.rich && /<table\b/i.test(o.rich));
 }
@@ -10561,6 +10739,15 @@ function insertRichHtml(html) {
     setTimeout(function(){
       statusEl.textContent = "貼り付けました(表 " + nT + "個)";
     }, 40);
+    // ★表の中の式を自動で組版する(表の構造は作り直さない)
+    if (autoCellMath) {
+      statusEl.textContent = "表の中の式を組版しています…";
+      autoTypesetTablesIn(made).then(function(n){
+        statusEl.textContent = n
+          ? ("貼り付けました(表 " + nT + "個 / 式 " + n + "個を組版)")
+          : ("貼り付けました(表 " + nT + "個)");
+      });
+    }
   });
   return true;
 }
@@ -10666,6 +10853,15 @@ function insertRichPaste(raw) {
       setTimeout(function(){
         statusEl.textContent = "貼り付けました(表 " + nT + "個)";
       }, 40);
+      // ★表の中の式を自動で組版する(表の構造は作り直さない)
+      if (autoCellMath) {
+        statusEl.textContent = "表の中の式を組版しています…";
+        autoTypesetTablesIn(made0).then(function(n){
+          statusEl.textContent = n
+            ? ("貼り付けました(表 " + nT + "個 / 式 " + n + "個を組版)")
+            : ("貼り付けました(表 " + nT + "個)");
+        });
+      }
     });
     return;
   }
@@ -11230,10 +11426,26 @@ $("#ctxMath").onclick = function(e){
   var one = (sel.length === 1 && sel[0].type === "text") ? sel[0] : null;
   /* ★表を選んでいる時にtypesetInPlaceを使うと、表のHTMLごと
      捨てて読める文字だけから文章を作り直してしまい、表が消える。
-     表の中の式は、ダブルタップしてセルの中の文字を選び、
-     出てくるバーの∑で個別に組版してもらう。 */
+     そこで表専用に、構造を壊さない経路(typesetTableCellMath)を出す。
+     こちらはセルの中のテキストノードだけをRangeで差し替えるので、
+     セル・行・列や既に変換済みの数式画像を壊さない。 */
   if (one && isTableObj(one)) {
-    statusEl.textContent = "表の中の式は、セルの文字をダブルタップして選び、出てくる∑で組版できます";
+    showSheet("この表の式をどうしますか", [
+      { label: "∑ セルの中の式をまとめて組版する", fn: function(){
+          statusEl.textContent = "表の中の式を組版しています…";
+          pushUndo();
+          typesetTableCellMath(one).then(function(n){
+            if (n) {
+              inkDirty = true; refreshMeasures(); clampToSheet(one);
+              updateSelUI(); scheduleSave();
+              statusEl.textContent = "式 " + n + "個を組版しました";
+            } else {
+              statusEl.textContent = "組版できる式($$…$$ 等)は見つかりませんでした";
+            }
+          }).catch(function(){ statusEl.textContent = "組版できませんでした"; });
+        } },
+      { label: "キャンセル", cancel: true }
+    ]);
     return;
   }
   if (one && /\n/.test(String(one.text || ""))) {
