@@ -855,7 +855,14 @@
     /* 下half を暗くして、明るいサムネでも白文字が読めるようにする */
     background:linear-gradient(to top,
       rgba(8,10,14,.88) 0%, rgba(8,10,14,.72) 45%, rgba(8,10,14,0) 100%);
-    pointer-events:none;                 /* カード全体のタップを妨げない */
+    /* ★以前は pointer-events:none にしていた。こうすると帯そのものは
+       タップを受け取らず、ブラウザがその位置の「下にある要素」を探しに行く。
+       そのため題名や⋮のあたりを押すと、すぐ下のカードが選ばれてしまう
+       ことがあった(⋮は自前のハンドラを持つので正しく動き、
+       同じ場所を普通に押すと違うページが開く、というちぐはぐな状態)。
+       帯は自分のカードの一部なので、ここでタップを受け取り、
+       そのままカードのクリック処理へ伝わるようにする。 */
+    pointer-events:auto;
   }
   .pp-card-texts{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
   .pp-card-title{
@@ -1034,7 +1041,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.66">InkNote <small>v20.66</small></div>
+  <div class="brand" title="InkNote v20.67">InkNote <small>v20.67</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1597,7 +1604,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.66";
+var APP_VERSION = "20.67";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -7618,8 +7625,11 @@ function renderPageList() {
         menu.addEventListener("click", function(ev){ ev.stopPropagation(); pageMenu(pg); });
         over.appendChild(texts);
         over.appendChild(menu);
+        /* ★帯はサムネ枠の中に入れる。カード直下に置くと、カードの高さと
+           サムネの高さがずれた時に帯が枠の外へ出て、隣のカードに
+           かぶってしまう。枠の中なら必ずサムネの下端に収まる。 */
+        media.appendChild(over);
         card.appendChild(media);
-        card.appendChild(over);        // カードの下端に固定(サムネの高さに左右されない)
         /* 長押しで名前を変更。
            ★押している最中にダイアログを開くと、指を離した操作が背面のスクリムに
              届いてすぐ閉じてしまう(キーボードが出てすぐ消える原因)。
