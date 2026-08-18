@@ -1013,7 +1013,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.47">InkNote <small>v20.47</small></div>
+  <div class="brand" title="InkNote v20.48">InkNote <small>v20.48</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1529,10 +1529,10 @@ window.onerror = function(msg, src, line){
    未設定(空)のままでもアプリは通常どおり動作します。
 ========================================================= */
 var FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  appId: ""
+  apiKey: "AIzaSyDoUHoEfw3CYgJDfTGgVAnuL28YnEY0PIU",
+  authDomain: "inknote-e2994.firebaseapp.com",
+  projectId: "inknote-e2994",
+  appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
 /* =========================================================
@@ -1565,7 +1565,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.47";
+var APP_VERSION = "20.48";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -10796,6 +10796,49 @@ function cellTextNodes(root) {
    外した中身しか返さないため、そこから元の位置を逆算しようとすると
    区切りの種類($$ か \( か)で長さが変わり、ずれる。 */
 var CELL_MATH_RE = /\$\$([\s\S]*?)\$\$|\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)|\$([^\$\n]+?)\$/g;
+/* テキストノードの中の指定範囲(spans)を、後ろから順に数式画像へ差し替える。
+   ★後ろから処理するのは、前を先に置き換えると後ろの文字位置がずれるため。
+   onFail は差し替えに失敗した時の代わりの文字列を返す(省略時は何もしない)。 */
+function replaceMathSpansInNode(node, spans, onFail) {
+  if (!spans.length) return Promise.resolve(0);
+  var done = 0;
+  var chain = Promise.resolve();
+  for (var k = spans.length - 1; k >= 0; k--) {
+    (function(sp){
+      chain = chain.then(function(){
+        function putText(t) {
+          var r = document.createRange();
+          r.setStart(node, sp.start); r.setEnd(node, sp.end);
+          r.deleteContents();
+          r.insertNode(document.createTextNode(t));
+        }
+        var latex = toSimpleLatex(sp.latex);
+        if (!latex) { if (onFail) putText(onFail(sp)); return; }
+        return renderLatexInline(latex).then(function(res){
+          var img = document.createElement("img");
+          img.setAttribute("src", res.src);
+          img.setAttribute("data-latex", latex);
+          img.setAttribute("data-h", res.h);
+          // 行の高さを超えないように(convertSelectionToMathと同じ値)
+          img.style.height = res.h;
+          img.style.maxHeight = "1.2em";
+          img.style.verticalAlign = "-0.2em";
+          img.style.display = "inline-block";
+          var r = document.createRange();
+          r.setStart(node, sp.start);
+          r.setEnd(node, sp.end);
+          r.deleteContents();
+          r.insertNode(img);
+          done++;
+        }).catch(function(){
+          // 1つ失敗しても他は続ける。目印が残らないよう文字に戻す
+          if (onFail) { try { putText(onFail(sp)); } catch (e) {} }
+        });
+      });
+    })(spans[k]);
+  }
+  return chain.then(function(){ return done; });
+}
 function typesetMathInTextNode(node) {
   var raw = node.nodeValue || "";
   if (!raw || raw.indexOf("$") === -1) return Promise.resolve(0);
@@ -10807,36 +10850,43 @@ function typesetMathInTextNode(node) {
     if (!body) continue;
     spans.push({ start: m.index, end: m.index + m[0].length, latex: body });
   }
-  if (!spans.length) return Promise.resolve(0);
-  var done = 0;
+  return replaceMathSpansInNode(node, spans, null);
+}
+/* ★貼り付け時に文中へ埋めた「行内数式の目印」を画像へ差し替える。
+   $ を直接探さないのは、本文にたまたま出てくる $ (金額など)を
+   式と誤認しないようにするため。目印は貼り付け処理が自分で付けたものだけ。 */
+var INLINE_MARK_RE = /\uE001([\s\S]*?)\uE002/g;
+function typesetInlineMarks(o) {
+  if (!o || !o.el) return Promise.resolve(0);
+  var nodes = [];
+  var w = document.createTreeWalker(o.el, NodeFilter.SHOW_TEXT, null, false);
+  var n;
+  while ((n = w.nextNode())) if ((n.nodeValue || "").indexOf("\uE001") !== -1) nodes.push(n);
+  if (!nodes.length) return Promise.resolve(0);
+  var total = 0;
   var chain = Promise.resolve();
-  // 後ろから順に
-  for (var k = spans.length - 1; k >= 0; k--) {
-    (function(sp){
-      chain = chain.then(function(){
-        var latex = toSimpleLatex(sp.latex);
-        if (!latex) return;
-        return renderLatexInline(latex).then(function(res){
-          var img = document.createElement("img");
-          img.setAttribute("src", res.src);
-          img.setAttribute("data-latex", latex);
-          img.setAttribute("data-h", res.h);
-          // セルの行の高さを超えないように(convertSelectionToMathと同じ値)
-          img.style.height = res.h;
-          img.style.maxHeight = "1.2em";
-          img.style.verticalAlign = "-0.2em";
-          img.style.display = "inline-block";
-          var r = document.createRange();
-          r.setStart(node, sp.start);
-          r.setEnd(node, sp.end);
-          r.deleteContents();
-          r.insertNode(img);
-          done++;
-        }).catch(function(){ /* 1つ失敗しても他は続ける */ });
-      });
-    })(spans[k]);
-  }
-  return chain.then(function(){ return done; });
+  nodes.forEach(function(nd){
+    chain = chain.then(function(){
+      var raw = nd.nodeValue || "";
+      var spans = [], m;
+      INLINE_MARK_RE.lastIndex = 0;
+      while ((m = INLINE_MARK_RE.exec(raw)) !== null)
+        spans.push({ start: m.index, end: m.index + m[0].length, latex: m[1] });
+      return replaceMathSpansInNode(nd, spans, function(sp){
+        return "$" + sp.latex + "$";      // 組版できなければ元の書き方に戻す
+      }).then(function(c){ total += c; });
+    });
+  });
+  return chain.then(function(){
+    // 目印が1つも残っていないことを保証してから、objects側へ書き戻す
+    o.rich = sanitizeRich(o.el.innerHTML.replace(/[\uE001\uE002]/g, ""));
+    var b = document.createElement("div");
+    b.innerHTML = o.rich;
+    o.text = (b.innerText || b.textContent || "").trim();
+    o.el.innerHTML = o.rich;
+    measureObj(o);
+    return total;
+  });
 }
 /* 表オブジェクト1つの、全セルの式を組版する */
 function typesetTableCellMath(o) {
@@ -11053,6 +11103,91 @@ function splitMathBlocks(s) {
   if (pos < s.length) out.push({ t: "text", s: s.slice(pos) });
   return out;
 }
+/* =========================================================
+   インライン数式($…$)を「文字のまま」表せるか試す
+   ---------------------------------------------------------
+   $T_1$ や $\gamma$ のような単純な式まで画像にしてしまうと、
+   あとから編集も検索もできなくなる。Unicodeで書ける範囲は
+   文字のまま置き、書けないものだけ画像に回す。
+   ★完全に変換できた時だけ文字列を返し、1文字でも表せない
+   ものが残ったら null を返す(中途半端な変換をしない)。
+========================================================= */
+var TEX_UNI = {
+  alpha:"α", beta:"β", gamma:"γ", delta:"δ", epsilon:"ε", varepsilon:"ε",
+  zeta:"ζ", eta:"η", theta:"θ", vartheta:"ϑ", iota:"ι", kappa:"κ",
+  lambda:"λ", mu:"μ", nu:"ν", xi:"ξ", pi:"π", rho:"ρ", sigma:"σ",
+  tau:"τ", upsilon:"υ", phi:"φ", varphi:"φ", chi:"χ", psi:"ψ", omega:"ω",
+  Gamma:"Γ", Delta:"Δ", Theta:"Θ", Lambda:"Λ", Xi:"Ξ", Pi:"Π",
+  Sigma:"Σ", Upsilon:"Υ", Phi:"Φ", Psi:"Ψ", Omega:"Ω",
+  times:"×", cdot:"·", div:"÷", pm:"±", mp:"∓",
+  approx:"≈", simeq:"≃", sim:"〜", equiv:"≡", neq:"≠", ne:"≠",
+  leq:"≤", le:"≤", geq:"≥", ge:"≥", ll:"≪", gg:"≫",
+  propto:"∝", infty:"∞", partial:"∂", nabla:"∇",
+  rightarrow:"→", to:"→", leftarrow:"←", leftrightarrow:"↔",
+  Rightarrow:"⇒", Leftarrow:"⇐",
+  circ:"°", degree:"°", prime:"′", ldots:"…", dots:"…", cdots:"…",
+  perp:"⊥", parallel:"∥", angle:"∠", in:"∈", subset:"⊂",
+  quad:" ", qquad:"  ", ",":" ", ";":" ", " ":" "
+};
+var SUB_UNI = {
+  "0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉",
+  "+":"₊","-":"₋","=":"₌","(":"₍",")":"₎",
+  a:"ₐ", e:"ₑ", h:"ₕ", i:"ᵢ", j:"ⱼ", k:"ₖ", l:"ₗ", m:"ₘ", n:"ₙ",
+  o:"ₒ", p:"ₚ", r:"ᵣ", s:"ₛ", t:"ₜ", u:"ᵤ", v:"ᵥ", x:"ₓ"
+};
+var SUP_UNI = {
+  "0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹",
+  "+":"⁺","-":"⁻","=":"⁼","(":"⁽",")":"⁾", n:"ⁿ", i:"ⁱ",
+  /* T2* は業界の書き方そのものなので、上付きにせず素の * のまま置く */
+  "*":"*"
+};
+function latexToUnicode(src) {
+  var s = String(src || "").trim();
+  if (!s) return null;
+  if (/\\(d|t)?frac|\\sqrt|\\sum|\\int|\\prod|\\lim|\\binom|\\begin|\\over|\\left|\\matrix|\\substack/.test(s))
+    return null;                                   // 組版が要るものは対象外
+  /* ★度記号は「それ自体が上付き」なので、^\circ の上付き指定を先に外す。
+     そうしないと ° を上付きにしようとして表せず、90° まで画像送りになる。 */
+  s = s.replace(/\^\s*\{?\s*\\circ\s*\}?/g, "\\circ");
+  /* ★\text{...} の展開とコマンド置換は「1回の走査」でまとめて行う。
+     先に \text{...} だけ展開すると、\circ\text{C} が \circC という
+     繋がった1語になり、未知のコマンドと誤判定されてしまう
+     (25°C のような頻出表記がすべて画像送りになっていた)。 */
+  var bad = false;
+  s = s.replace(
+    /\\(?:text|mathrm|mathbf|mathit|operatorname)\s*\{([^{}]*)\}|\\([A-Za-z]+)|\\([%&#$,;\s])/g,
+    function(m, inner, cmd, esc){
+      if (inner != null) return inner;             // \text{…} は中身をそのまま
+      if (esc != null) return /\s/.test(esc) ? " " : esc;
+      var v = TEX_UNI[cmd];
+      if (v == null) { bad = true; return m; }
+      return v;
+    });
+  if (bad) return null;
+  // 添字・上付き({}付きと1文字の両方)
+  function mapRun(run, table) {
+    var out = "";
+    for (var i = 0; i < run.length; i++) {
+      var ch = table[run.charAt(i)];
+      if (ch == null) return null;
+      out += ch;
+    }
+    return out;
+  }
+  var failed = false;
+  s = s.replace(/([_^])\{([^{}]*)\}|([_^])(\S)/g, function(m, b1, body, b2, one){
+    var kind = b1 || b2;
+    var run = (body != null) ? body : one;
+    var r = mapRun(String(run), kind === "_" ? SUB_UNI : SUP_UNI);
+    if (r == null) { failed = true; return m; }
+    return r;
+  });
+  if (failed) return null;
+  s = s.replace(/[{}]/g, "");                      // 残った装飾用の波括弧を外す
+  // ここまでで残ってよいのは、ふつうの文字・数字・記号だけ
+  if (/[\\_^]/.test(s)) return null;
+  return s.replace(/\s{2,}/g, " ");
+}
 /* 組版しないと崩れる式か(分数・根号・総和・行列など) */
 function needsTypeset(latex) {
   return /\\(d|t)?frac|\\sqrt|\\sum|\\int|\\prod|\\lim|\\binom|\\begin\{|\\over|\\substack|\\left|\\matrix/.test(latex);
@@ -11086,6 +11221,10 @@ function splitBareFormulaLines(text) {
 }
 
 /* 表以外の部分を、指定した位置から縦に並べて置く(表と混在した貼り付け用) */
+function escapeHtml(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
 function insertRichPasteInner(raw, left, top, W, done) {
   var blocks = splitMathBlocks(String(raw || ""));
   var parts = [], buf = "";
@@ -11106,12 +11245,27 @@ function insertRichPasteInner(raw, left, top, W, done) {
     }
     var restored = b.s.charAt(0) === "\uE000";   // 壊れた囲みから復元した式には目印がある
     if (restored) b.s = b.s.slice(1);
+    /* ★ここが「文中の式」と「独立行の式」の分かれ道。
+       splitMathBlocksは $$…$$ / \[…\] を display:true として区別しているのに、
+       以前はそれを完全に無視して needsTypeset(\fracを含むか)だけで判定していた。
+       そのため $T_1$ のような単純な式は生の「$T_1$」という文字のまま残り、
+       $\frac{…}$ のような式は独立ブロックにされて文が分断されていた。
+       文中の式は文中に置く。 */
+    if (!b.display) {
+      // まずUnicodeで書けるか試す(T₁ γ 90°C など)。書ければ文字のまま=編集も検索もできる
+      var uni = restored ? null : latexToUnicode(b.s);
+      if (uni != null) { buf += uni; return; }
+      // 書けないものだけ、行内に画像として埋める目印を置く
+      buf += "\uE001" + b.s + "\uE002";
+      return;
+    }
     if (!restored && !needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }
     flush();
     parts.push({ t: "math", s: b.s });
   });
   flush();
   var made = [], y = top;
+  var inlineJobs = [];
   var chain = Promise.resolve();
   parts.forEach(function(p){
     chain = chain.then(function(){
@@ -11127,7 +11281,13 @@ function insertRichPasteInner(raw, left, top, W, done) {
         if (!txt.trim()) return;
         var o = { id: idSeq++, type: "text", x: left, y: y, w: W, text: txt, fontSize: 20,
                   color: (THEMES[themeName] || THEMES.cream).pen };
+        /* ★行内数式の目印がある段落は、文字ではなくHTMLとして組み立てる。
+           そうしないと画像を文中に差し込めない。目印はこの後の
+           typesetInlineMarksで必ず画像か $式$ に置き換わるので残らない。 */
+        var hasInline = txt.indexOf("\uE001") !== -1;
+        if (hasInline) o.rich = escapeHtml(txt);
         objects.push(o); makeTextEl(o); made.push(o); measureObj(o);
+        if (hasInline) inlineJobs.push(o);
         y += Math.max(28, objBBox(o).h) + 12;
         return;
       }
@@ -11145,7 +11305,26 @@ function insertRichPasteInner(raw, left, top, W, done) {
       });
     });
   });
-  chain.then(function(){ done(made, y); });
+  chain.then(function(){
+    /* 行内数式の目印を実際の画像へ差し替えてから完了を知らせる。
+       高さが変わるので、置き換え後に下のものを並べ直す。 */
+    if (!inlineJobs.length) { done(made, y); return; }
+    var c2 = Promise.resolve();
+    inlineJobs.forEach(function(o){
+      c2 = c2.then(function(){ return typesetInlineMarks(o).catch(function(){}); });
+    });
+    c2.then(function(){
+      // 目印を画像に変えたぶん行の高さが変わるので、上から積み直す
+      var yy = top;
+      for (var i = 0; i < made.length; i++) {
+        var m = made[i];
+        m.y = yy;
+        if (m.el) m.el.style.top = m.y + "px";
+        yy += Math.max(m.type === "image" ? 0 : 28, objBBox(m).h) + (m.type === "image" ? 16 : 12);
+      }
+      done(made, yy);
+    });
+  });
 }
 
 /* 貼り付けを「文章」と「組版する式」に振り分けて、縦に並べて置く */
