@@ -370,20 +370,16 @@
   .toggle.on::after{left:21px}
 
   /* ===== ズーム表示(ツールバーの上・右寄せ) ===== */
-  /* ===== 目次ボタン(無限モードのみ・左上) =====
-     テーマ列を「大見出し」、単元を「小見出し」として一覧するための入口。 */
-  #tocChip{
-    position:fixed;left:14px;
-    top:calc(env(safe-area-inset-top) + 84px);
-    z-index:24;display:none;
-    background:rgba(32,36,43,.9);color:#cfd3da;
-    font-size:11.5px;font-weight:700;
-    padding:7px 12px;border-radius:999px;
-    border:1px solid var(--ui-line);cursor:pointer;
-    box-shadow:0 6px 18px rgba(10,12,16,.4);
+  /* ===== 目次ボタン(マップの中・無限モードのみ) =====
+     画面の左上を占領しないよう、マップを開いた時だけ出る場所へ移した。 */
+  #miniTocBtn{
+    display:none;border:1px solid var(--ui-line);
+    background:rgba(255,255,255,.08);color:#ffd98a;
+    font-size:12px;font-weight:700;white-space:nowrap;
+    padding:6px 11px;border-radius:999px;cursor:pointer;
   }
-  #tocChip.show{display:block}
-  body.editing-mode #tocChip{display:none !important}
+  #miniTocBtn.show{display:inline-block}
+  #miniTocBtn:active{background:rgba(255,255,255,.18)}
   /* 目次の中の「テーマ」行 */
   .toc-th{
     display:flex;align-items:center;gap:8px;
@@ -535,7 +531,7 @@
   }
   #miniZoom.show{display:flex}
   #mzLabel{color:#cfd3da;font-size:12px;font-weight:600;min-width:54px;text-align:right}
-  #mzSlider{width:min(60vw, 300px);touch-action:auto;accent-color:var(--accent)}
+  #mzSlider{width:min(44vw, 230px);touch-action:auto;accent-color:var(--accent)}
   /* ===== 貼り付けの受け皿(iPadで自動読み取りが拒否された時) ===== */
   #pasteCatch{
     position:fixed;inset:0;z-index:70;display:none;
@@ -1038,7 +1034,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.63">InkNote <small>v20.63</small></div>
+  <div class="brand" title="InkNote v20.66">InkNote <small>v20.66</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1188,7 +1184,6 @@ window.onerror = function(msg, src, line){
 
 <button id="zoomChip">100%</button>
 <button id="fitChip">⛶ 20%</button>
-<button id="tocChip">📑 目次</button>
 
 <button id="posChip">☆ 位置</button><button id="pasteChip">📋 貼り付け</button>
 <button id="mapChip">🗺 マップ</button>
@@ -1213,6 +1208,7 @@ window.onerror = function(msg, src, line){
 </div>
 <canvas id="minimap"></canvas>
 <div id="miniZoom">
+  <button id="miniTocBtn" title="目次を開く">📑 目次</button>
   <input type="range" id="mzSlider" min="0" max="1000" value="500">
   <span id="mzLabel">100%</span>
 </div>
@@ -1235,6 +1231,8 @@ window.onerror = function(msg, src, line){
   <button id="rbMath" title="選んだ部分を数式に組版">∑</button>
   <span class="rb-sep"></span>
   <button id="rbHead" title="選んだ文字を見出しにして目次へ">🔖</button>
+  <span class="rb-sep"></span>
+  <button id="rbSplitCol" title="ここで分けて、後半を右隣の列へ送る">⇥</button>
   <span class="rb-sep"></span>
   <button id="rbClear" title="装飾を消す">✕</button>
 </div>
@@ -1599,7 +1597,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.63";
+var APP_VERSION = "20.66";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5516,22 +5514,18 @@ function caretOffsetAt(clientX, clientY) {
   }
   return null;
 }
-function splitTextObjectAtWorldY(o, worldY) {
-  if (!o.el) return null;
-  var b = objBBox(o);
-  if (worldY <= b.y + 6 || worldY >= b.y + b.h - 6) return null;  // 端すぎる
-  var cx = (b.x + 8) * view.s + view.x;
-  var cy = worldY * view.s + view.y;
-  var cp = caretOffsetAt(cx, cy);
-  if (!cp || !o.el.contains(cp.node)) return null;
+/* カーソル位置(node/offset)でテキストBOXを2つに割り、
+   中身だけを作って返す(位置や大きさは呼び出し側で決める)。 */
+function splitPiecesAtCaret(o, node, off) {
+  if (!o.el || !node || !o.el.contains(node)) return null;
   var html = [];
   try {
     var r1 = document.createRange();
     r1.setStart(o.el, 0);
-    r1.setEnd(cp.node, cp.off);
+    r1.setEnd(node, off);
     var d1 = document.createElement("div"); d1.appendChild(r1.cloneContents());
     var r2 = document.createRange();
-    r2.setStart(cp.node, cp.off);
+    r2.setStart(node, off);
     r2.setEnd(o.el, o.el.childNodes.length);
     var d2 = document.createElement("div"); d2.appendChild(r2.cloneContents());
     html = [d1.innerHTML, d2.innerHTML];
@@ -5556,11 +5550,52 @@ function splitTextObjectAtWorldY(o, worldY) {
               ? rich : null;
     pieces.push(copy);
   }
+  return pieces;
+}
+function splitTextObjectAtWorldY(o, worldY) {
+  if (!o.el) return null;
+  var b = objBBox(o);
+  if (worldY <= b.y + 6 || worldY >= b.y + b.h - 6) return null;  // 端すぎる
+  var cx = (b.x + 8) * view.s + view.x;
+  var cy = worldY * view.s + view.y;
+  var cp = caretOffsetAt(cx, cy);
+  if (!cp) return null;
+  var pieces = splitPiecesAtCaret(o, cp.node, cp.off);
+  if (!pieces) return null;
   pieces[0].y = b.y;
   pieces[1].y = worldY;
   pieces[0].h = Math.max(20, worldY - b.y);
   pieces[1].h = Math.max(20, b.y + b.h - worldY);
   return pieces;
+}
+/* ★カーソルのある所で切って、後半を右隣の列へ送る。
+   「右に送る」が箱まるごとしか動かせず、長い1本の文章を
+   途中で分けられなかったのを解消する。 */
+function splitHereAndSendRight() {
+  var o = editingObj;
+  var r = selectionInsideEditing();
+  if (!o || !r) { statusEl.textContent = "分けたい所をタップしてから押してください"; return; }
+  var node = r.startContainer, off = r.startOffset;
+  var b = objBBox(o);
+  var pieces = splitPiecesAtCaret(o, node, off);
+  if (!pieces) { statusEl.textContent = "そこでは分けられません(文章の途中を指してください)"; return; }
+  var idx = objects.indexOf(o);
+  if (idx < 0) return;
+  pushUndo();
+  commitText();                       // 編集を確定してから入れ替える
+  if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+  objects.splice(idx, 1, pieces[0], pieces[1]);
+  pieces[0].x = b.x; pieces[0].y = b.y;
+  makeTextEl(pieces[0]); measureObj(pieces[0]);
+  pieces[1].x = b.x;
+  pieces[1].y = pieces[0].y + Math.max(20, objBBox(pieces[0]).h) + 12;
+  makeTextEl(pieces[1]); measureObj(pieces[1]);
+  inkDirty = true;
+  refreshMeasures();
+  setSelection([]);
+  // 後半とその下にあるものを、まとめて右隣の列へ
+  moveDownwardToNextColumn(pieces[1]);
+  statusEl.textContent = "ここで分けて、後半を右隣の列へ送りました";
 }
 function splitTextObjectByPath(o, path) {
   if (!o.el) return null;
@@ -8964,18 +8999,29 @@ function askAnchorName(o, lv) {
 /* 指定範囲を画面内に持ってくる。
    A4モードは用紙の外へスクロールできないため、届かない時は
    縮小して視野を広げ、それでも無理なら正直に知らせる。 */
-function bringIntoView(b) {
+/* topAlign=true なら、中央ではなく「上端を画面の少し下」に合わせる。
+   ★中央合わせだと、背の高い項目と低い項目で見え方の高さが変わり、
+   目次から1→2→3と辿った時に毎回違う位置に飛んだように見える。
+   上端を揃えると、どの項目へ飛んでも同じ高さから読み始められる。 */
+var JUMP_TOP = 118;          // 上のボタン列に隠れない位置
+function bringIntoView(b, topAlign) {
   function centerAt(s) {
     view.s = s;
     view.x = innerWidth / 2 - (b.x + b.w / 2) * s;
-    view.y = innerHeight / 2 - (b.y + b.h / 2) * s;
+    view.y = topAlign ? (JUMP_TOP - b.y * s)
+                      : (innerHeight / 2 - (b.y + b.h / 2) * s);
     clampView();
     applyView();
   }
   function onScreen() {
     var cx = (b.x + b.w / 2) * view.s + view.x;
+    if (cx <= 20 || cx >= innerWidth - 20) return false;
+    if (topAlign) {
+      var ty = b.y * view.s + view.y;          // 上端が見えていればよい
+      return ty > 60 && ty < innerHeight - 140;
+    }
     var cy = (b.y + b.h / 2) * view.s + view.y;
-    return cx > 20 && cx < innerWidth - 20 && cy > 90 && cy < innerHeight - 110;
+    return cy > 90 && cy < innerHeight - 110;
   }
   var s0 = view.s;
   centerAt(s0);
@@ -9263,7 +9309,7 @@ function jumpTheme(dir) {
     statusEl.textContent = (dir < 0 ? "最初" : "最後") + "のテーマです";
     return;
   }
-  bringIntoView(l[n].b);
+  bringIntoView(l[n].b, true);
   updateColBar();
   statusEl.textContent = "テーマ「" + l[n].name + "」へ移動しました";
 }
@@ -9292,7 +9338,7 @@ function jumpUnit(dir) {
     for (var n2 = units.length - 1; n2 >= 0; n2--) if (units[n2].y < cy - 8) { target = units[n2]; break; }
   }
   if (!target) { statusEl.textContent = (dir > 0 ? "この列の最後" : "この列の最初") + "です"; return; }
-  bringIntoView(target.b);
+  bringIntoView(target.b, true);
   statusEl.textContent = "「" + target.name + "」へ移動しました";
 }
 /* テーマ移動バーの表示更新。無限モードでテーマ見出しがある時だけ出す */
@@ -9301,7 +9347,7 @@ function updateColBar() {
   /* ★テーマ移動バーはユーザーの要望で廃止(左上の目次ボタンと役割が重なり、
      画面上部を塞いでいたため)。移動は目次パネルから行う。
      PCのAlt+矢印による移動は残してある。 */
-  var chip = document.getElementById("tocChip");
+  var chip = document.getElementById("miniTocBtn");
   if (chip) chip.classList.toggle("show", canvasMode === "inf");
 }
 /* ★「ここから下を、次の列の先頭へ送る」
@@ -9312,6 +9358,8 @@ function updateColBar() {
    これを上から順に繰り返せば、1本の長い流れが横並びのテーマ列になる。 */
 function moveDownwardToNextColumn(o) {
   if (!o) return;
+  /* ★この操作は「箱ごと」動かす。1つの長い箱の途中で分けたい時は
+     文字を選んでリッチバーの ⇥ を使う(そちらが切ってから送る)。 */
   var b0 = objBBox(o);
   var l = themeAnchors();
   var i = themeIndexAtX(l, b0.x);
@@ -9337,6 +9385,11 @@ function moveDownwardToNextColumn(o) {
     moving.push(ok);
   }
   if (!moving.length) { statusEl.textContent = "送るものがありません"; return; }
+  if (moving.length === 1 && moving[0] === o && o.type === "text") {
+    /* 選んだ箱1つしか動かない = 長い1本を分けたかった場合が多い。
+       黙って箱ごと動かすと「何も起きていない」ように見えるので伝える。 */
+    statusEl.textContent = "この箱だけを右へ送ります(途中で分けたい時は文字を選んで ⇥ )";
+  }
   pushUndo();
   var dx = COL_W + COL_GAP;
   var dy = topY - b0.y;              // 送り先では列の先頭の高さに揃える
@@ -9457,8 +9510,12 @@ function fitColumnWidth() {
 }
 /* 目次からその場所へ飛ぶ */
 function jumpToAnchor(obj) {
-  var ok = bringIntoView(objBBox(obj));
-  setSelection([obj]);
+  /* ★目次からの移動は「見に行くだけ」。
+     以前は選択状態にしていたため、着いた先でいきなり編集できる状態になり、
+     意図せず動かしたり書き換えたりしてしまう危険があった。
+     上端揃えで飛ぶので、どの見出しへ行っても同じ高さから読み始められる。 */
+  var ok = bringIntoView(objBBox(obj), true);
+  setSelection([]);
   updateSelUI();
   statusEl.textContent = ok
     ? ("「" + obj.anch + "」へ移動しました")
@@ -10832,6 +10889,7 @@ function bindRichBar() {
       { label: "キャンセル", cancel: true }
     ]);
   });
+  bindTap($("#rbSplitCol"), function(){ splitHereAndSendRight(); });
   function setAnchorFromText(o, name, lv) {
     pushUndo();
     o.anch = name;
@@ -12460,7 +12518,10 @@ function renderTocPanel() {
 function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
 function closeToc() { $("#tocPanel").classList.remove("show"); }
 $("#tocClose").onclick = closeToc;
-$("#tocChip").onclick = function(){ openToc(); };
+$("#miniTocBtn").onclick = function(){
+  collapseMini();                       // マップを閉じてから目次を出す
+  setTimeout(openToc, 120);
+};
 /* テーマ列のひな形を作る。名前をカンマか改行で区切って入力してもらう。
    ★既にあるものは消さない。空いている右側に足していく。 */
 /* ★「今画面に出ている列に名前をつける」。
