@@ -370,31 +370,31 @@
   .toggle.on::after{left:21px}
 
   /* ===== ズーム表示(ツールバーの上・右寄せ) ===== */
-  /* ===== テーマ列の移動バー(無限モードでテーマ見出しがある時だけ出る) =====
-     「今どの列にいるか」の表示も兼ねる。無限モードは用紙の枠が無く、
-     現在地が分からなくなりやすいため。 */
-  #colBar{
-    position:fixed;left:50%;transform:translateX(-50%);
+  /* ===== 目次ボタン(無限モードのみ・左上) =====
+     テーマ列を「大見出し」、単元を「小見出し」として一覧するための入口。 */
+  #tocChip{
+    position:fixed;left:14px;
     top:calc(env(safe-area-inset-top) + 84px);
-    z-index:24;display:none;align-items:center;gap:3px;
-    background:rgba(32,36,43,.9);border:1px solid var(--ui-line);
-    border-radius:999px;padding:4px 6px;
+    z-index:24;display:none;
+    background:rgba(32,36,43,.9);color:#cfd3da;
+    font-size:11.5px;font-weight:700;
+    padding:7px 12px;border-radius:999px;
+    border:1px solid var(--ui-line);cursor:pointer;
     box-shadow:0 6px 18px rgba(10,12,16,.4);
-    max-width:calc(100vw - 24px);
   }
-  #colBar.show{display:flex}
-  #colBar button{
-    border:none;background:transparent;color:#cfd3da;
-    font-size:12px;font-weight:700;cursor:pointer;
-    padding:5px 8px;border-radius:999px;min-width:28px;
+  #tocChip.show{display:block}
+  body.editing-mode #tocChip{display:none !important}
+  /* 目次の中の「テーマ」行 */
+  .toc-th{
+    display:flex;align-items:center;gap:8px;
+    padding:9px 10px;margin-top:6px;cursor:pointer;
+    background:rgba(76,111,255,.10);
+    border-left:3px solid var(--accent);
+    border-radius:6px;
   }
-  #colBar button:active{background:rgba(255,255,255,.12)}
-  #colName{
-    max-width:44vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    color:#ffd98a !important;
-  }
-  .cb-sep{width:1px;height:16px;background:var(--ui-line);margin:0 2px}
-  body.editing-mode #colBar{display:none !important}
+  .toc-th .toc-name{font-weight:800;color:var(--ui-text)}
+  .toc-th .toc-cnt{color:var(--ui-dim);font-size:11px;margin-left:auto}
+  .toc-empty{color:var(--ui-dim);font-size:11px;padding:6px 0 6px 24px}
   #zoomChip,#fitChip,#posChip{
     position:fixed;right:14px;
     background:rgba(32,36,43,.85);color:#cfd3da;font-size:11.5px;font-weight:600;
@@ -1038,7 +1038,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.53">InkNote <small>v20.53</small></div>
+  <div class="brand" title="InkNote v20.58">InkNote <small>v20.58</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1188,14 +1188,8 @@ window.onerror = function(msg, src, line){
 
 <button id="zoomChip">100%</button>
 <button id="fitChip">⛶ 20%</button>
-<div id="colBar">
-  <button id="colPrev" title="前のテーマへ">◀</button>
-  <button id="colName" title="目次を開く">テーマ</button>
-  <button id="colNext" title="次のテーマへ">▶</button>
-  <span class="cb-sep"></span>
-  <button id="colUp" title="この列の前の単元へ">▲</button>
-  <button id="colDown" title="この列の次の単元へ">▼</button>
-</div>
+<button id="tocChip">📑 目次</button>
+
 <button id="posChip">☆ 位置</button><button id="pasteChip">📋 貼り付け</button>
 <button id="mapChip">🗺 マップ</button>
 <button id="topChip" style="display:none">⤒ 先頭</button>
@@ -1239,6 +1233,8 @@ window.onerror = function(msg, src, line){
   <button class="rb-mark" data-m="#B6E3FF" title="青のマーカー" style="background:#B6E3FF"></button>
   <span class="rb-sep"></span>
   <button id="rbMath" title="選んだ部分を数式に組版">∑</button>
+  <span class="rb-sep"></span>
+  <button id="rbHead" title="選んだ文字を見出しにして目次へ">🔖</button>
   <span class="rb-sep"></span>
   <button id="rbClear" title="装飾を消す">✕</button>
 </div>
@@ -1509,9 +1505,9 @@ window.onerror = function(msg, src, line){
       <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
     </div>
     <div class="st-row"><span class="st-label">テーマ列</span>
-      <button class="stybtn" id="colMakeBtn">🧱 テーマ列を作る</button>
+      <button class="stybtn" id="colMakeBtn">📑 この列に名前をつける</button>
       <button class="stybtn" id="colWidthBtn">↔ 列の幅</button>
-      <span style="color:var(--ui-dim);font-size:11px">無限キャンバス用。横にテーマ、縦に単元で書く</span>
+      <span style="color:var(--ui-dim);font-size:11px">無限キャンバス用。見たい列を画面に出してから押す</span>
     </div>
     <div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
@@ -1602,7 +1598,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.53";
+var APP_VERSION = "20.58";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5504,10 +5500,90 @@ function groupToText(nodes) {
   document.body.removeChild(box);
   return t.replace(/\n$/, "");
 }
+/* ★折り返しただけの長い段落(改行が無い)を、切った線の位置で2つに分ける。
+   貼り付けた長文には改行が入っていないことが多く、行の境目でしか
+   割れない従来のやり方では「途中で切りたい」に応えられなかった。
+   画面座標から文字位置を割り出して、そこでDOMごと切り分ける。 */
+function caretOffsetAt(clientX, clientY) {
+  if (document.caretRangeFromPoint) {
+    var r = document.caretRangeFromPoint(clientX, clientY);
+    if (r) return { node: r.startContainer, off: r.startOffset };
+  }
+  if (document.caretPositionFromPoint) {
+    var p = document.caretPositionFromPoint(clientX, clientY);
+    if (p) return { node: p.offsetNode, off: p.offset };
+  }
+  return null;
+}
+function splitTextObjectAtWorldY(o, worldY) {
+  if (!o.el) return null;
+  var b = objBBox(o);
+  if (worldY <= b.y + 6 || worldY >= b.y + b.h - 6) return null;  // 端すぎる
+  var cx = (b.x + 8) * view.s + view.x;
+  var cy = worldY * view.s + view.y;
+  var cp = caretOffsetAt(cx, cy);
+  if (!cp || !o.el.contains(cp.node)) return null;
+  var html = [];
+  try {
+    var r1 = document.createRange();
+    r1.setStart(o.el, 0);
+    r1.setEnd(cp.node, cp.off);
+    var d1 = document.createElement("div"); d1.appendChild(r1.cloneContents());
+    var r2 = document.createRange();
+    r2.setStart(cp.node, cp.off);
+    r2.setEnd(o.el, o.el.childNodes.length);
+    var d2 = document.createElement("div"); d2.appendChild(r2.cloneContents());
+    html = [d1.innerHTML, d2.innerHTML];
+  } catch (e) { return null; }
+  var pieces = [];
+  for (var i = 0; i < 2; i++) {
+    var box = document.createElement("div");
+    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;visibility:hidden";
+    box.innerHTML = html[i];
+    document.body.appendChild(box);
+    var txt = ((box.innerText != null ? box.innerText : box.textContent) || "").replace(/\s+$/, "");
+    document.body.removeChild(box);
+    if (!txt.trim()) return null;               // 片方が空になる切り方はしない
+    var copy = JSON.parse(JSON.stringify(o, function(k, v){
+      return (k === "el" || k === "img" || k.charAt(0) === "_") ? undefined : v;
+    }));
+    copy.id = idSeq++;
+    copy.anch = null;
+    copy.text = txt;
+    var rich = sanitizeRich(html[i]);
+    copy.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img|h1|h2|h3|ul|ol|li)\b/i.test(rich)
+              ? rich : null;
+    pieces.push(copy);
+  }
+  pieces[0].y = b.y;
+  pieces[1].y = worldY;
+  pieces[0].h = Math.max(20, worldY - b.y);
+  pieces[1].h = Math.max(20, b.y + b.h - worldY);
+  return pieces;
+}
 function splitTextObjectByPath(o, path) {
   if (!o.el) return null;
   var groups = textLineGroups(o.el);
-  if (groups.length < 2) return null;   // 改行が無い1行だけのBOXは割れない
+  if (groups.length < 2) {
+    /* 改行が無い段落は、切った枠の上辺・下辺のうち
+       BOXの内側を通っている線の位置で2つに割る */
+    var pb = objBBox(o);
+    var ys = [];
+    for (var p0 = 0; p0 < path.length; p0++) ys.push(path[p0].y);
+    var top = Math.min.apply(null, ys), bot = Math.max.apply(null, ys);
+    var cutY = null;
+    if (top > pb.y + 6 && top < pb.y + pb.h - 6) cutY = top;
+    else if (bot > pb.y + 6 && bot < pb.y + pb.h - 6) cutY = bot;
+    if (cutY == null) return null;
+    var two = splitTextObjectAtWorldY(o, cutY);
+    if (!two) return null;
+    var ins = [];
+    for (var q = 0; q < two.length; q++) {
+      var mid = two[q].y + two[q].h / 2;
+      if (mid >= top && mid <= bot) ins.push(two[q]);
+    }
+    return { pieces: two, insidePieces: ins.length ? ins : [two[1]] };
+  }
   var infos = [];
   for (var i = 0; i < groups.length; i++) {
     var rc = groupRectWorld(groups[i]);
@@ -5763,6 +5839,21 @@ function finishLasso() {
   if (lassoMode === "dup") { performLassoDup(path); return; }
   if (lassoMode === "shot") { performLassoShot(path, "clipboard"); return; }
   if (lassoMode === "save") { performLassoShot(path, "file"); return; }
+  /* ★大きなBOXが選べない問題への対処。
+     以前は「BOXの中心が囲みの中にあるか」だけで判定していたため、
+     貼り付けた長文のように縦に長いBOXは、全体をぐるっと囲まない限り
+     中心に届かず、いつまでも選べなかった(何の反応も出ないので
+     壊れているように見えていた)。
+     囲みの大半がそのBOXの上に乗っているなら、それを狙って囲んだと
+     みなして選ぶ。 */
+  var lx1 = Infinity, ly1 = Infinity, lx2 = -Infinity, ly2 = -Infinity;
+  for (var lp = 0; lp < path.length; lp++) {
+    if (path[lp].x < lx1) lx1 = path[lp].x;
+    if (path[lp].y < ly1) ly1 = path[lp].y;
+    if (path[lp].x > lx2) lx2 = path[lp].x;
+    if (path[lp].y > ly2) ly2 = path[lp].y;
+  }
+  var lassoArea = Math.max(1, (lx2 - lx1) * (ly2 - ly1));
   var picked = objects.filter(function(o){
     if (o.type === "stroke") {
       var n = 0;
@@ -5771,11 +5862,19 @@ function finishLasso() {
       return n >= o.points.length * 0.5;
     }
     var b = objBBox(o);
-    return pointInPoly(b.x + b.w / 2, b.y + b.h / 2, path);
+    if (pointInPoly(b.x + b.w / 2, b.y + b.h / 2, path)) return true;
+    var ix1 = Math.max(b.x, lx1), iy1 = Math.max(b.y, ly1);
+    var ix2 = Math.min(b.x + b.w, lx2), iy2 = Math.min(b.y + b.h, ly2);
+    if (ix2 <= ix1 || iy2 <= iy1) return false;
+    return ((ix2 - ix1) * (iy2 - iy1)) >= lassoArea * 0.6;
   });
   if (picked.length) {
     switchTool("select");
     setSelection(picked);
+    statusEl.textContent = picked.length + "個を選びました";
+  } else {
+    // ★黙って終わらない。反応が無いと「壊れている」と感じるため
+    statusEl.textContent = "囲んだ中に何もありませんでした(もう少し大きく囲んでください)";
   }
 }
 
@@ -9164,16 +9263,69 @@ function jumpUnit(dir) {
 /* テーマ移動バーの表示更新。無限モードでテーマ見出しがある時だけ出す */
 window.updateColBar = updateColBar;
 function updateColBar() {
-  var bar = document.getElementById("colBar");
-  if (!bar) return;
+  /* ★テーマ移動バーはユーザーの要望で廃止(左上の目次ボタンと役割が重なり、
+     画面上部を塞いでいたため)。移動は目次パネルから行う。
+     PCのAlt+矢印による移動は残してある。 */
+  var chip = document.getElementById("tocChip");
+  if (chip) chip.classList.toggle("show", canvasMode === "inf");
+}
+/* ★「ここから下を、次の列の先頭へ送る」
+   ---------------------------------------------------------
+   長い1本の縦並びを、上から テーマ1 / テーマ2 / テーマ3 と切り分けていく
+   ための操作。選んだものより下(同じ列にあるもの)をまとめて右隣の列へ移し、
+   移した先では列の先頭の高さに揃える。
+   これを上から順に繰り返せば、1本の長い流れが横並びのテーマ列になる。 */
+function moveDownwardToNextColumn(o) {
+  if (!o) return;
+  var b0 = objBBox(o);
   var l = themeAnchors();
-  if (canvasMode !== "inf" || !l.length) { bar.classList.remove("show"); return; }
-  bar.classList.add("show");
-  var i = currentThemeIndex(l);
-  var nm = document.getElementById("colName");
-  if (nm) nm.textContent = (i >= 0)
-    ? ((i + 1) + "/" + l.length + " " + l[i].name)
-    : ("テーマ " + l.length + "件");
+  var i = themeIndexAtX(l, b0.x);
+  // 今の列の帯。テーマ見出しがまだ無ければ、このBOXの位置を列の基準にする
+  var colX = (i >= 0) ? l[i].x : b0.x;
+  var lo = colX - COL_GAP / 2, hi = colX + COL_W + COL_GAP / 2;
+  // 列の先頭の高さ(そこへ揃えて送る)
+  var topY = Infinity;
+  for (var t = 0; t < objects.length; t++) {
+    var ob = objBBox(objects[t]);
+    if (ob.x < lo || ob.x >= hi) continue;
+    if (ob.y < topY) topY = ob.y;
+  }
+  if (!isFinite(topY)) topY = b0.y;
+  // 送るのは「この列にあって、選んだものと同じ高さ以降」のもの
+  var moving = [];
+  for (var k = 0; k < objects.length; k++) {
+    var ok = objects[k];
+    if (ok.locked) continue;
+    var ob2 = objBBox(ok);
+    if (ob2.x < lo || ob2.x >= hi) continue;
+    if (ob2.y < b0.y - 2) continue;
+    moving.push(ok);
+  }
+  if (!moving.length) { statusEl.textContent = "送るものがありません"; return; }
+  pushUndo();
+  var dx = COL_W + COL_GAP;
+  var dy = topY - b0.y;              // 送り先では列の先頭の高さに揃える
+  for (var m = 0; m < moving.length; m++) moveObjBy(moving[m], dx, dy);
+  inkDirty = true;
+  refreshMeasures();
+  setSelection([]);
+  scheduleSave();
+  renderTocPanel();
+  updateColBar();
+  bringIntoView(objBBox(o));
+  statusEl.textContent = moving.length + "個を右隣の列の先頭へ送りました";
+}
+/* オブジェクトを平行移動する(種類ごとに持ち方が違うのでここで吸収) */
+function moveObjBy(o, dx, dy) {
+  if (o.type === "stroke") {
+    for (var i = 0; i < o.points.length; i++) { o.points[i].x += dx; o.points[i].y += dy; }
+    if (o._orig) for (var j = 0; j < o._orig.length; j++) { o._orig[j].x += dx; o._orig[j].y += dy; }
+  } else if (o.type === "shape") {
+    o.x1 += dx; o.y1 += dy; o.x2 += dx; o.y2 += dy;
+  } else {
+    o.x += dx; o.y += dy;
+    if (o.el) { o.el.style.left = o.x + "px"; o.el.style.top = o.y + "px"; }
+  }
 }
 /* 目次からその場所へ飛ぶ */
 function jumpToAnchor(obj) {
@@ -10533,6 +10685,43 @@ function bindRichBar() {
     });
   bindTap($("#rbClear"), function(){ applyRich(null, true); });
   bindTap($("#rbMath"), function(){ convertSelectionToMath(); });
+  /* ★選んだ文字をそのまま見出し名にして目次へ登録する。
+     貼り付けた長文を読みながら、その場で章立てを作れるようにするため。
+     見出しはBOX単位なので、印は「その文字が入っているBOX」に付く。 */
+  bindTap($("#rbHead"), function(){
+    var r = selectionInsideEditing();
+    var name = r ? String(r.toString()).trim().replace(/\s+/g, " ").slice(0, 40) : "";
+    var o = editingObj;
+    if (!o) { statusEl.textContent = "見出しにする文字を選んでください"; return; }
+    if (!name) { statusEl.textContent = "見出しにする文字を選んでください"; return; }
+    showSheet("「" + name + "」を見出しにする", [
+      { label: "🔖 単元の見出し(縦に並ぶ)", fn: function(){ setAnchorFromText(o, name, 2); } },
+      { label: "📑 テーマの見出し(横に並ぶ列)", fn: function(){ setAnchorFromText(o, name, 1); } },
+      { label: "キャンセル", cancel: true }
+    ]);
+  });
+  function setAnchorFromText(o, name, lv) {
+    pushUndo();
+    o.anch = name;
+    o.anchLv = lv;
+    inkDirty = true;
+    scheduleSave();
+    renderTocPanel();
+    updateColBar();
+    statusEl.textContent = (lv === 1 ? "テーマに追加: " : "目次に追加: ") + name;
+    /* テーマにした直後は「ここから下を隣の列へ送る」を続けたいことが多いので
+       その場で聞く。長い1本の縦並びを上から切り分けていく流れに合わせる。 */
+    if (lv === 1 && canvasMode === "inf") {
+      setTimeout(function(){
+        commitText();
+        showSheet("「" + name + "」から下を右隣の列へ送りますか", [
+          { label: "📑 送る(ここから下が次の列になります)",
+            fn: function(){ moveDownwardToNextColumn(o); } },
+          { label: "そのままにする", cancel: true }
+        ]);
+      }, 260);
+    }
+  }
   /* ★リッチバーの上で指を下ろした時点で、OS標準メニューや
      ステージ側のジェスチャーにイベントを渡さない。
      渡してしまうと、押したつもりがOSのメニュー操作として扱われ、
@@ -12056,21 +12245,19 @@ function renderTocPanel() {
   if (!al.length) {
     var empty = document.createElement("div");
     empty.style.cssText = "color:var(--ui-dim);font-size:12px;text-align:center;padding:22px 8px;line-height:1.8";
-    empty.innerHTML = "🔖 まだ印がありません<br><span style='font-size:11px'>目次にしたいものを選んで ⋯ → 🔖 で追加</span>";
+    empty.innerHTML = "🔖 まだ見出しがありません<br><span style='font-size:11px'>列に名前をつける: ⋯ →「📑 この列に名前をつける」<br>単元を足す: 文字を選んでバーの 🔖</span>";
     host.appendChild(empty);
     return;
   }
-  function makeRow(a, indent) {
+  /* 単元(小見出し)の行 */
+  function unitRow(a) {
     var row = document.createElement("div");
     row.className = "toc-row";
-    if (indent) row.style.paddingLeft = "22px";
+    row.style.paddingLeft = "22px";
     var ic = document.createElement("span");
-    ic.className = "toc-ic"; ic.textContent = indent ? "🔖" : "📑";
+    ic.className = "toc-ic"; ic.textContent = "🔖";
     var nm = document.createElement("div");
     nm.className = "toc-name"; nm.textContent = a.name;
-    if (!indent) nm.style.fontWeight = "800";
-    var gg = document.createElement("div");
-    gg.className = "toc-g"; gg.textContent = a.g ? ("まとまり" + a.g) : "";
     var ed = document.createElement("button");
     ed.className = "toc-btn"; ed.textContent = "✎";
     var dl = document.createElement("button");
@@ -12081,92 +12268,135 @@ function renderTocPanel() {
       pushUndo(); a.o.anch = null; a.o.anchLv = null;
       inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
     });
-    row.addEventListener("click", function(){ jumpToAnchor(a.o); });
-    row.appendChild(ic); row.appendChild(nm); row.appendChild(gg);
-    row.appendChild(ed); row.appendChild(dl);
+    row.addEventListener("click", function(){ jumpToAnchor(a.o); closeToc(); });
+    row.appendChild(ic); row.appendChild(nm); row.appendChild(ed); row.appendChild(dl);
     return row;
   }
-  /* ★テーマ見出しがある時は2段の目次にする。
-     テーマ(列)の下に、その列の帯に入っている単元をぶら下げる。 */
+  /* テーマ(列)の行。ここが目次の大見出しになる */
+  function themeRow(t, idx, n) {
+    var row = document.createElement("div");
+    row.className = "toc-th";
+    var ic = document.createElement("span");
+    ic.className = "toc-ic"; ic.textContent = "📑";
+    var nm = document.createElement("div");
+    nm.className = "toc-name"; nm.textContent = (idx + 1) + ". " + t.name;
+    var cnt = document.createElement("span");
+    cnt.className = "toc-cnt"; cnt.textContent = n ? (n + "件") : "";
+    var ed = document.createElement("button");
+    ed.className = "toc-btn"; ed.textContent = "✎";
+    ed.addEventListener("click", function(e){ e.stopPropagation(); askAnchorName(t.o, 1); });
+    row.addEventListener("click", function(){ jumpToAnchor(t.o); closeToc(); });
+    row.appendChild(ic); row.appendChild(nm); row.appendChild(cnt); row.appendChild(ed);
+    return row;
+  }
   var themes = themeAnchors();
   if (!themes.length) {
-    for (var i = 0; i < al.length; i++) host.appendChild(makeRow(al[i], false));
+    // テーマ列がまだ無いノートは、これまでどおり平らな一覧
+    for (var i = 0; i < al.length; i++) host.appendChild(unitRow(al[i]));
     return;
   }
   var used = {};
   for (var t = 0; t < themes.length; t++) {
-    host.appendChild(makeRow({ o: themes[t].o, name: themes[t].name, g: themes[t].o.grp || 0 }, false));
     var lo = themes[t].x - COL_GAP / 2, hi = themes[t].x + COL_W + COL_GAP / 2;
     var kids = [];
     for (var k = 0; k < al.length; k++) {
       var a = al[k];
       if (a.o.anchLv === 1) continue;
       if (a.x < lo || a.x >= hi) continue;
-      used[k] = 1;
-      kids.push(a);
+      used[k] = 1; kids.push(a);
     }
     kids.sort(function(p, q){ return p.y - q.y; });
-    for (var m = 0; m < kids.length; m++) host.appendChild(makeRow(kids[m], true));
+    host.appendChild(themeRow(themes[t], t, kids.length));
+    if (!kids.length) {
+      var e2 = document.createElement("div");
+      e2.className = "toc-empty";
+      e2.textContent = "(単元の見出しはまだありません)";
+      host.appendChild(e2);
+    }
+    for (var m = 0; m < kids.length; m++) host.appendChild(unitRow(kids[m]));
   }
-  // どの列にも入らない見出しは最後にまとめる
   var rest = [];
   for (var r = 0; r < al.length; r++) if (!used[r] && al[r].o.anchLv !== 1) rest.push(al[r]);
   if (rest.length) {
     var hd = document.createElement("div");
-    hd.style.cssText = "color:var(--ui-dim);font-size:11px;padding:10px 8px 4px";
+    hd.style.cssText = "color:var(--ui-dim);font-size:11px;padding:12px 8px 4px";
     hd.textContent = "どの列にも入っていない見出し";
     host.appendChild(hd);
-    for (var s = 0; s < rest.length; s++) host.appendChild(makeRow(rest[s], true));
+    for (var s2 = 0; s2 < rest.length; s2++) host.appendChild(unitRow(rest[s2]));
   }
 }
 function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
 function closeToc() { $("#tocPanel").classList.remove("show"); }
 $("#tocClose").onclick = closeToc;
-$("#colPrev").onclick = function(){ jumpTheme(-1); };
-$("#colNext").onclick = function(){ jumpTheme(1); };
-$("#colUp").onclick = function(){ jumpUnit(-1); };
-$("#colDown").onclick = function(){ jumpUnit(1); };
-$("#colName").onclick = function(){ openToc(); };
+$("#tocChip").onclick = function(){ openToc(); };
 /* テーマ列のひな形を作る。名前をカンマか改行で区切って入力してもらう。
    ★既にあるものは消さない。空いている右側に足していく。 */
+/* ★「今画面に出ている列に名前をつける」。
+   以前はテーマ名をカンマ区切りでまとめて入力させ、見出しを新規に
+   並べて作る方式だったが、すでに置いてある内容には全く使えず
+   (左の列に後から名前を付けられない)、操作も分かりにくかった。
+   見たい列を画面に出して押すだけ、に変える。 */
+function contentColumnBandAt(cx) {
+  var l = themeAnchors();
+  for (var i = 0; i < l.length; i++) {
+    if (cx >= l[i].x - COL_GAP / 2 && cx < l[i].x + COL_W + COL_GAP / 2)
+      return { x0: l[i].x, theme: l[i].o };       // すでに名前のある列
+  }
+  /* まだ名前が無い場所。近くにある内容の左端に列を合わせる。
+     こうすると、貼り付けた本文の左端がそのまま列の左端になる。 */
+  var lo = cx - COL_W, hi = cx + COL_W;
+  var minX = Infinity;
+  for (var k = 0; k < objects.length; k++) {
+    var b = objBBox(objects[k]);
+    if (b.x + b.w < lo || b.x > hi) continue;
+    if (b.x < minX) minX = b.x;
+  }
+  if (!isFinite(minX)) minX = cx - COL_W / 2;
+  return { x0: minX, theme: null };
+}
+function nameCurrentColumn() {
+  if (canvasMode !== "inf") {
+    statusEl.textContent = "テーマ列は無限キャンバス用です(⚙の用紙を「無限」に)";
+    return;
+  }
+  var cx = (innerWidth / 2 - view.x) / view.s;
+  var band = contentColumnBandAt(cx);
+  var def = band.theme ? String(band.theme.anch) : "";
+  askText(band.theme ? "この列の名前を変える" : "この列の名前", def || "テーマ", function(name){
+    if (name == null) return;
+    name = String(name).trim();
+    if (!name) return;
+    pushUndo();
+    if (band.theme) {
+      band.theme.anch = name;
+      band.theme.anchLv = 1;
+    } else {
+      // 列の一番上を探して、その上に見出しを置く
+      var lo = band.x0 - COL_GAP / 2, hi = band.x0 + COL_W + COL_GAP / 2;
+      var topY = Infinity;
+      for (var k = 0; k < objects.length; k++) {
+        var b = objBBox(objects[k]);
+        if (b.x < lo || b.x >= hi) continue;
+        if (b.y < topY) topY = b.y;
+      }
+      if (!isFinite(topY)) topY = (innerHeight / 2 - view.y) / view.s;
+      var o = { id: idSeq++, type: "text", x: band.x0, y: topY - 90,
+                w: Math.max(360, COL_W - 40), text: name, fontSize: 30,
+                color: (THEMES[themeName] || THEMES.cream).pen,
+                anch: name, anchLv: 1 };
+      objects.push(o); makeTextEl(o); measureObj(o);
+    }
+    inkDirty = true;
+    refreshMeasures();
+    scheduleSave();
+    renderTocPanel();
+    updateColBar();
+    statusEl.textContent = "この列を「" + name + "」にしました";
+  });
+}
 $("#colMakeBtn").onclick = function(){
   closeMenu();
-  setTimeout(function(){
-    if (canvasMode !== "inf") {
-      statusEl.textContent = "テーマ列は無限キャンバス用です(⚙の用紙を「無限」にしてから作ってください)";
-      return;
-    }
-    askText("テーマ名(カンマか改行で区切る)", "基礎物理, シーケンス, 安全管理", function(v){
-      if (v == null) return;
-      var names = String(v).split(/[,、\n]/).map(function(s){ return s.trim(); })
-                           .filter(function(s){ return s; });
-      if (!names.length) return;
-      pushUndo();
-      // 既存のテーマ列の右側から始める
-      var ex = themeAnchors();
-      var startX = ex.length ? (ex[ex.length - 1].x + COL_W + COL_GAP) : 60;
-      var startY = ex.length ? ex[ex.length - 1].y : 80;
-      var made = [];
-      for (var i = 0; i < names.length; i++) {
-        var o = { id: idSeq++, type: "text",
-                  x: startX + i * (COL_W + COL_GAP), y: startY,
-                  w: Math.max(360, COL_W - 40),
-                  text: names[i], fontSize: 30,
-                  color: (THEMES[themeName] || THEMES.cream).pen,
-                  anch: names[i], anchLv: 1 };
-        objects.push(o); makeTextEl(o); measureObj(o); made.push(o);
-      }
-      inkDirty = true;
-      refreshMeasures();
-      switchTool("select");
-      setSelection([]);
-      scheduleSave();
-      renderTocPanel();
-      updateColBar();
-      if (made.length) bringIntoView(objBBox(made[0]));
-      statusEl.textContent = names.length + "個のテーマ列を作りました(列幅 " + COL_W + "px)";
-    });
-  }, 120);
+  setTimeout(nameCurrentColumn, 120);
 };
 $("#colWidthBtn").onclick = function(){
   closeMenu();
@@ -12422,7 +12652,15 @@ function openMoreSheet() {
   if (ctxVisible("ctxStraighten") || ctxVisible("ctxShapify"))
     items.push({ label: "✏️ 手書きを整える…", fn: openTuneSheet });
 
-  // --- 並べる・まとめる ---
+  // 並べる・まとめる
+  /* ★長い縦並びを、上からテーマごとに横へ切り分けていくための操作 */
+  if (canvasMode === "inf") {
+    items.push({ label: "📑 この列に名前をつける", fn: nameCurrentColumn });
+    if (sel.length === 1) {
+      items.push({ label: "📑 ここから下を右隣の列へ送る",
+                   fn: function(){ moveDownwardToNextColumn(sel[0]); } });
+    }
+  }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
   // ★複数のテキストを選んでいる時、幅をまとめて揃える
   if (sel.length > 1 && sel.every(function(x){ return x.type === "text"; })) {
