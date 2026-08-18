@@ -1038,7 +1038,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.62">InkNote <small>v20.62</small></div>
+  <div class="brand" title="InkNote v20.63">InkNote <small>v20.63</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1599,7 +1599,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.62";
+var APP_VERSION = "20.63";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13607,6 +13607,58 @@ function flushCloudPush() {
    ・開いている間は1分ごとに取り直す                                     */
 var lastPullAt = 0;
 var keptLocalOnSync = false;   // 同期中に編集していて、手元を優先したか
+/* ★全ページの本文を突き合わせて、端末の中身をそろえる。
+   syncAll は「一覧」と「片方にしか無いページ」と「今開いているページ」しか
+   本文を見ていない。両方にあって中身が違うページは、開くまで放置される。
+   これが「PCとAndroidが同じデータにならない」の直接の原因。 */
+function reconcileAllPages(quiet) {
+  var u = cloudUser();
+  if (!u) { statusEl.textContent = "同期していません(ログインが必要です)"; return Promise.resolve(); }
+  var pulled = 0, pushed = 0, same = 0, both = 0;
+  var chain = Promise.resolve();
+  var list = pages.slice();
+  if (!quiet) setSyncStatus("全ページを照合中… (0/" + list.length + ")");
+  list.forEach(function(p, i){
+    chain = chain.then(function(){
+      if (!quiet) setSyncStatus("全ページを照合中… (" + (i + 1) + "/" + list.length + ")");
+      return pageDocRef(p.id).get().then(function(snap){
+        var rd = (snap && snap.exists) ? (snap.data() || {}) : null;
+        return kvGet("page_" + p.id).then(function(cur){
+          var lr = (cur && cur.rev) || 0;
+          var rr = (rd && rd.rev) || 0;
+          var hasLocal = !!(cur && cur.json);
+          var hasRemote = !!rd;
+          if (!hasRemote) { if (hasLocal) { pushed++; return cloudPushPage(p.id, true); } return; }
+          if (!hasLocal) { pulled++; return pullAndStore(p.id, true); }
+          if (rd.stamp && contentStamp(cur.json) === rd.stamp) { same++; return; }
+          if (rr > lr) {
+            pulled++;
+            return onRemotePageChanged(p.id, rd.ts || 0, rr, rd.stamp || "", true);
+          }
+          if (lr > rr) { pushed++; return cloudPushPage(p.id, true); }
+          /* 版番号が同じなのに中身が違う = どちらかが枝分かれしている。
+             どちらを選んでも片方が消えるので、両方を控えに残してから
+             クラウド側(共通の正)に寄せる。こうすれば全端末が同じになる。 */
+          both++;
+          return keepVersion(p.id, "枝分かれ: この端末の版").then(function(){
+            return pullAndStore(p.id, true);
+          });
+        });
+      }).catch(function(){});
+    });
+  });
+  return chain.then(function(){
+    return cloudPushIndex(true).catch(function(){});
+  }).then(function(){
+    renderPageList(); updatePageBtn();
+    var msg = "照合しました(取り込み " + pulled + " / 送信 " + pushed +
+              " / 一致 " + same + (both ? " / 枝分かれ " + both : "") + ")";
+    setSyncStatus(msg);
+    statusEl.textContent = both
+      ? (msg + " — 枝分かれ分は ⋮→「以前の版に戻す」に控えました")
+      : msg;
+  });
+}
 function pullIfStale(minMs) {
   if (realtimeActive()) return;      // 購読中は届くので取りに行かない
   if (!cloudUser() || syncing) return;
@@ -13632,7 +13684,15 @@ function pullIfStale(minMs) {
          「未送信の編集を送りきる」→ 完全に終わってから →「取り込む」
          の順にしないと、送信の途中で取り込みが始まり、
          送ろうとしていた編集が取り込みに上書きされてしまう。 */
-      if (cloudUser() && !realtimeActive()) setTimeout(startRealtime, 300);
+      /* ★復帰時は購読を必ず張り直す。
+         以前は realtimeActive() が false の時だけ張り直していたが、
+         Androidで長く休止されると購読はエラーを出さずに黙って
+         届かなくなることがあり、その時 realtimeOn は true のまま残る。
+         すると「受信中だから取りに行かない」と判断され、
+         定期取得・復帰時取得・一覧を開いた時の取得のすべてが止まり、
+         その端末だけ永久に古いままになっていた。
+         張り直すと初回スナップショットが届き、全ページが突き合わされる。 */
+      if (cloudUser()) setTimeout(startRealtime, 300);
       lastPullAt = 0;
       if (unsyncedEdits && cloudUser() && currentId != null) {
         statusEl.textContent = "編集を送っています…";
@@ -13857,6 +13917,32 @@ function syncAll() {
         jobs = jobs.then(function(){ return pullAndStore(R.id); });
       }
     });
+    /* ★両方の端末にあるページの「本文」を、ここで必ず突き合わせる。
+       ---------------------------------------------------------
+       以前はここを一切やっていなかった。一覧(タイトル・並び)だけ統合し、
+       本文は「開いた時・保存した時・購読で届いた時」に任せていた。
+       つまり本文の収束が購読(startRealtime)だけに依存していて、
+       購読が始まらなかった端末では、開いていないページの本文が
+       いつまでも古いまま残る。これが「PCとAndroidが同じデータに
+       ならない」直接の原因。
+       しかも古い本文のまま編集すると、その古い内容を土台にした版が
+       新しい版として送られてしまう。
+       ページ一覧を1回のクエリで取り、版番号が進んでいるものだけ
+       取り込む(onRemotePageChangedが版番号と中身の指紋で判定するので、
+       同じ内容なら通信も発生しない)。 */
+    jobs = jobs.then(function(){
+      return fdb().collection("users").doc(u.uid).collection("pages").get()
+        .then(function(qs){
+          var chain = Promise.resolve();
+          qs.forEach(function(doc){
+            var rid = doc.id, rdd = doc.data() || {};
+            chain = chain.then(function(){
+              return onRemotePageChanged(rid, rdd.ts || 0, rdd.rev || 0, rdd.stamp || "");
+            }).catch(function(){});
+          });
+          return chain;
+        }).catch(function(){});
+    });
     return jobs.then(function(){
       pages = merged;
       return saveIndex();
@@ -13902,6 +13988,12 @@ function syncAll() {
     else
       setSyncStatus("同期エラー" + (code ? "(" + code + ")" : "(通信を確認)"));
     if (booting) createFirstPage();     // クラウド不通でもアプリは使える
+    /* ★失敗しても購読は始める。
+       以前は成功経路にしか startRealtime() が無かったため、
+       途中の1回の失敗(1ページの送信が拒否された等)で購読が始まらず、
+       その端末はそれ以降ずっと「開いているページ以外は同期されない」
+       状態に陥っていた。購読が生きていれば後から自力で追いつける。 */
+    try { if (cloudUser()) startRealtime(); } catch (e) {}
   }).then(function(){ syncing = false; });
 }
 
@@ -14113,6 +14205,23 @@ function refreshSyncPanel() {
     row.appendChild(b1);
     row.appendChild(b2);
     body.appendChild(row);
+    /* ★「今すぐ同期」は一覧と開いているページしか本文を見ない。
+       両端末に同じページがあって中身だけ違う場合はこちらを使う。 */
+    var b3 = document.createElement("button");
+    b3.className = "pp-tool";
+    b3.textContent = "🧮 全ページを照合(端末をそろえる)";
+    b3.style.cssText = "margin-top:10px;width:100%";
+    b3.onclick = function(){
+      b3.disabled = true;
+      Promise.resolve(reconcileAllPages()).then(function(){
+        b3.disabled = false;
+        refreshSyncPanel();
+      });
+    };
+    body.appendChild(b3);
+    div("端末どうしで中身が食い違う時に押してください。全ページの本文を1枚ずつ突き合わせます。" +
+        "枝分かれしていた分は消さずに版の控えへ残します。",
+        "color:#7E8593;font-size:11px;line-height:1.8;padding:10px 6px 4px");
   }
 }
 function openSync() {
