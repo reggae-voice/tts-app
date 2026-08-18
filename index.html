@@ -62,6 +62,17 @@
     max-height:1.2em;vertical-align:-0.2em;display:inline-block;
   }
   .obj-text th{background:rgba(120,120,120,.16);font-weight:700;text-align:left}
+  /* ノートの中の見出し・箇条書き(AIから取り込んだHTML等)。
+     ブラウザ既定のマージンは大きすぎてノート内で間延びするので抑える。 */
+  .obj-text h1,.obj-text h2,.obj-text h3{
+    line-height:1.35;margin:.5em 0 .3em;font-weight:800;
+  }
+  .obj-text h1{font-size:1.32em}
+  .obj-text h2{font-size:1.16em}
+  .obj-text h3{font-size:1.04em}
+  .obj-text h1:first-child,.obj-text h2:first-child,.obj-text h3:first-child{margin-top:0}
+  .obj-text ul,.obj-text ol{margin:.25em 0 .25em 0;padding-left:1.4em}
+  .obj-text li{margin:.12em 0}
   /* 図やコードのように、文字の位置を揃えたいテキスト */
   .obj-text.mono{
     font-family:"SF Mono","Roboto Mono",Menlo,Consolas,"Courier New",monospace !important;
@@ -903,6 +914,23 @@
     box-shadow:0 12px 40px rgba(10,12,16,.5);
   }
   #inputDlg.show{display:block}
+  /* AIから取り込む用の大きめ入力欄(HTMLを貼り付ける) */
+  #aiImpDlg{
+    position:fixed;left:50%;top:12%;transform:translateX(-50%);
+    width:min(520px, calc(100vw - 24px));
+    background:var(--ui-bg2);border:1px solid var(--ui-line);
+    border-radius:16px;padding:16px;z-index:62;display:none;
+    box-shadow:0 12px 40px rgba(10,12,16,.5);
+  }
+  #aiImpDlg.show{display:block}
+  #aiImpText{
+    width:100%;box-sizing:border-box;border:1px solid var(--ui-line);
+    background:rgba(255,255,255,.06);color:var(--ui-text);
+    border-radius:10px;padding:11px 12px;font-size:13px;outline:none;
+    height:38vh;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;
+    -webkit-user-select:text;user-select:text;
+  }
+  #aiImpText:focus{border-color:var(--accent)}
   #idLabel{color:var(--ui-text);font-size:13.5px;font-weight:600;margin-bottom:10px}
   #idInput{
     width:100%;box-sizing:border-box;border:1px solid var(--ui-line);
@@ -985,7 +1013,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.44">InkNote <small>v20.44</small></div>
+  <div class="brand" title="InkNote v20.47">InkNote <small>v20.47</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1220,6 +1248,15 @@ window.onerror = function(msg, src, line){
   </div>
 </div>
 
+<div id="aiImpDlg">
+  <div id="idLabel" style="margin-bottom:10px">AIが返したHTMLを貼り付けてください(新しいページとして取り込みます)</div>
+  <textarea id="aiImpText" placeholder="&lt;section&gt;…&lt;/section&gt; を貼り付け"></textarea>
+  <div class="id-row">
+    <button id="aiImpCancel">キャンセル</button>
+    <button id="aiImpOk">取り込む</button>
+  </div>
+</div>
+
 <div id="pagesPanel">
   <div id="ppGrip" title="上へ動かすと広がります"></div>
   <div class="pp-head">
@@ -1253,6 +1290,9 @@ window.onerror = function(msg, src, line){
       <button class="pp-tool" id="expPrint">🖨 印刷</button>
       <button class="pp-tool" id="expMd">📝 テキスト書出</button>
       <button class="pp-tool" id="expStudy">🎓 学習用コピー</button>
+      <button class="pp-tool" id="expAiOut">🤖 AIへ書き出す</button>
+      <button class="pp-tool" id="expImgSheet">🖼 画像シート書出</button>
+      <button class="pp-tool" id="expAiIn">📥 AIから取り込む</button>
       <button class="pp-tool" id="bakOut">💾 バックアップ</button>
       <button class="pp-tool" id="bakIn">📥 復元</button>
       <button class="pp-tool" id="findLost">🔍 消えたページを探す</button>
@@ -1489,10 +1529,10 @@ window.onerror = function(msg, src, line){
    未設定(空)のままでもアプリは通常どおり動作します。
 ========================================================= */
 var FIREBASE_CONFIG = {
-  apiKey: "AIzaSyDoUHoEfw3CYgJDfTGgVAnuL28YnEY0PIU",
-  authDomain: "inknote-e2994.firebaseapp.com",
-  projectId: "inknote-e2994",
-  appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  appId: ""
 };
 
 /* =========================================================
@@ -1525,7 +1565,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.44";
+var APP_VERSION = "20.47";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2902,7 +2942,12 @@ function isDarkColor(hex) {
    一部を太字にしたり色を変えたりできるよう、テキストは
    「読める文字(o.text)」と「装飾つきの中身(o.rich)」の2つで持つ。
    o.rich は安全のため、太字・斜体・下線・色・マーカー・文字サイズだけを通す。 */
+/* ★H1〜H3 / UL・OL・LI を許可リストに入れてある。
+   これらが無いと、許可外タグは「中身だけ残す」規則によって
+   見出しも箇条書きも改行を失い、1行に繋がった読めない塊になる
+   (AIが整理して返したHTMLを取り込む時に必ず踏む)。 */
 var RICH_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, BR:1, SPAN:1, DIV:1, P:1, FONT:1,
+                  H1:1, H2:1, H3:1, UL:1, OL:1, LI:1,
                   TABLE:1, THEAD:1, TBODY:1, TFOOT:1, TR:1, TD:1, TH:1, IMG:1 };
 function sanitizeRich(html) {
   var box = document.createElement("div");
@@ -8894,10 +8939,11 @@ function autoGroup(quiet) {
   return list.length;
 }
 /* 現在のまとまり一覧(番号順)。各要素 { no, items, bbox, label } */
-function groupList() {
+function groupList(srcList) {
+  var src = srcList || objects;
   var map = {};
-  for (var i = 0; i < objects.length; i++) {
-    var o = objects[i];
+  for (var i = 0; i < src.length; i++) {
+    var o = src[i];
     if (o.type === "text" && !String(o.text || "").trim()) continue;
     var g = o.grp || 0;
     if (!map[g]) map[g] = [];
@@ -8996,11 +9042,14 @@ function focusGroup(no) {
 /* ===== NotebookLM等との連携: テキスト書き出し・学習用コピー =====
    ノート内のテキストオブジェクトを読み順(上→下、同じ行は左→右)に
    集めてMarkdownにする。手書きは含まれない(そちらはPDF/PNGで)。 */
-function collectPageText() {
+function collectPageText(srcList) {
+  /* ★srcListを渡すと、今開いていないページの内容も書き出せる
+     (複数ページのまとめ書き出し用)。省略時は今開いているページ。 */
+  var src = srcList || objects;
   // まとまり(グループ)があれば、その順序で書き出す。
   // 散らかったキャンバスでも、塊ごとにまとまった読める文章になる。
   var hasGrp = false;
-  for (var i = 0; i < objects.length; i++) if (objects[i].grp) { hasGrp = true; break; }
+  for (var i = 0; i < src.length; i++) if (src[i].grp) { hasGrp = true; break; }
 
   function readOrder(list) {
     var texts = [];
@@ -9008,13 +9057,23 @@ function collectPageText() {
       var o = list[j];
       var isText = (o.type === "text" && o.text && String(o.text).trim());
       var isMath = (o.type === "image" && o.latex);      // 組版した数式
-      if (!isText && !isMath && !o.anch) continue;       // 印のない手書き・画像は本文に出さない
+      /* ★貼り付けたスクリーンショット等の画像は、文字にできないので
+         中身は出せないが、「ここに画像がある」という目印だけは残す。
+         これが無いと、AIはその節を空だと判断して整理の際に削ってしまう。
+         番号(#id)を添えてあるのは、後で「実物を新ページへ運ぶ」方式に
+         する時に、どの画像を指しているかの手がかりにするため。
+         ★手書き線(stroke/shape)には個別の目印を付けない。1段落の手書きが
+         数百本の線になることがあり、目印だらけで本文が読めなくなるため。
+         こちらはページ冒頭に個数だけまとめて添える。 */
+      var isPic = (o.type === "image" && !o.latex);
+      if (!isText && !isMath && !isPic && !o.anch) continue;
       var b = objBBox(o);
       var body = "";
       if (isText) body = String(o.text).replace(/\s+$/, "");
       // ★数式はLaTeXのまま書き出す($$で囲む)。
       //   こうしておけば貼り直した時に組版に戻せるし、NotebookLM等も数式として読める。
       else if (isMath) body = "$$" + String(o.latex).trim() + "$$";
+      else if (isPic) body = "[画像 #" + (o.id || 0) + "]";
       // 目次の印が付いたものは見出し(##)として書き出す → NotebookLMで構造が効く
       var t2 = o.anch ? ("## " + String(o.anch) + (body ? "\n\n" + body : "")) : body;
       texts.push({ y: b.y, x: b.x, t: t2 });
@@ -9027,9 +9086,9 @@ function collectPageText() {
     return out.join("\n\n");
   }
 
-  if (!hasGrp) return readOrder(objects);
+  if (!hasGrp) return readOrder(src);
 
-  var gl = groupList();
+  var gl = groupList(src);
   var blocks = [];
   for (var g = 0; g < gl.length; g++) {
     var body = readOrder(gl[g].items);
@@ -9089,6 +9148,376 @@ function copyForStudy() {
       ok ? done() : fail();
     }
   } catch (e) { fail(); }
+}
+/* =========================================================
+   AI連携: 複数ページのまとめ書き出し(Markdown)
+   ---------------------------------------------------------
+   目的は「複数ページの内容をまとめる/再配置する」ことなので、
+   1ページだけでなく、フォルダ単位・全ノート単位でも出せるようにする。
+   ★今開いていないページは kvGet("page_"+id) から読む。保存済みJSONには
+   w/h も入っているので、画面に出さなくても読み順を計算できる。
+   ★手書き線は文字にできないため本文には出せない。ただし「無かったこと」に
+   すると、AIが「このノートはこれで全部」と誤解して要約を作るので、
+   ページごとに手書きが何個あるかだけ添える。
+========================================================= */
+var AI_PROMPT_HEAD =
+  "以下は私の学習ノートの書き出しです(InkNoteというノートアプリから出力。" +
+  "数式は $$...$$ のLaTeX表記、表はMarkdown表記)。\n" +
+  "内容を読んで、次の方針で整理し直してください。\n" +
+  "- 重複する説明はまとめ、関連する内容は近くに集める\n" +
+  "- 見出しを付けて、後から読み返しやすい構成にする\n" +
+  "- 事実関係は変えないこと。書かれていないことを足さないこと\n" +
+  "\n" +
+  "【[画像 #番号] について】\n" +
+  "これは元のノートに貼ってあるスクリーンショットや図の位置を示す目印です。\n" +
+  "中身は文字にできないため渡せていません。消さずに、対応する説明の近くに\n" +
+  "そのままの表記で残してください(内容を想像で補わないこと)。\n" +
+  "画像そのものを見せる場合は、別途「画像シート」を添付します。これは\n" +
+  "各画像の上に #番号 を書いた1枚の画像で、本文の [画像 #番号] と\n" +
+  "番号で1対1に対応します。ページ全体のPNG/PDFを添付することもあります。\n" +
+  "どちらの場合も、本文の文字はこの書き出しを正とし、画像は補足として見てください\n" +
+  "(画像から数式を読み取り直すと L_1 と L₁ のような取り違えが起きるため)。\n" +
+  "\n" +
+  "【出力形式】結果はHTMLで返してください。InkNoteに取り込みます。\n" +
+  "- 大きな区切りごとに <section> で囲む(1つの <section> がノート上の1つの文章ブロックになります)\n" +
+  "- 使えるタグ: section, h1〜h3, p, br, b, strong, i, em, u, span, div,\n" +
+  "  ul, ol, li, table, thead, tbody, tr, th, td\n" +
+  "- 文字色やマーカーは span の style で color / background-color のみ指定可\n" +
+  "- 数式は $$...$$ のまま地の文に書いてください(取り込み時に自動で組版されます)\n" +
+  "- [画像 #番号] は地の文にそのまま書いてください\n" +
+  "- <script> や <style>、画像は使わないでください(取り込み時に除去されます)\n" +
+  "\n---\n\n";
+function pageObjectsFor(id) {
+  if (id === currentId) return Promise.resolve(objects.slice());
+  return kvGet("page_" + id).then(function(rec){
+    if (!rec || !rec.json) return [];
+    try { return JSON.parse(rec.json) || []; } catch (e) { return []; }
+  }).catch(function(){ return []; });
+}
+/* 指定したページ群をまとめて1つのMarkdownにする */
+function buildMarkdownForPages(ids) {
+  var chain = Promise.resolve();
+  var chunks = [];
+  ids.forEach(function(id){
+    chain = chain.then(function(){
+      return pageObjectsFor(id).then(function(list){
+        if (!list.length) return;
+        var body = collectPageText(list);
+        var ink = 0, pics = 0;
+        for (var i = 0; i < list.length; i++) {
+          var t = list[i].type;
+          if (t === "stroke" || t === "shape") ink++;
+          else if (t === "image" && !list[i].latex) pics++;
+        }
+        if (!body && !ink && !pics) return;
+        var pg = findPage(id);
+        var head = "# " + ((pg && pg.title) ? pg.title : "ノート");
+        /* ★このページに何が「文字として渡せていないか」を明示する。
+           これが無いと、AIは渡された文字だけでページの全体像を判断し、
+           図やスクショが担っている情報ごと切り落とした整理案を出す。 */
+        var miss = [];
+        if (pics) miss.push("画像 " + pics + "個(本文中の [画像 #番号] がその位置)");
+        if (ink) miss.push("手書き・図形 " + ink + "個(位置は示せません)");
+        var note = miss.length
+          ? ("\n\n*(このページには " + miss.join(" / ") +
+             " があります。文字にできないため中身は含まれていません)*")
+          : "";
+        chunks.push(head + note + (body ? "\n\n" + body : ""));
+      });
+    });
+  });
+  return chain.then(function(){ return chunks.join("\n\n---\n\n"); });
+}
+function copyTextToClipboard(payload, okMsg) {
+  var done = function(){ statusEl.textContent = okMsg; };
+  var fail = function(){ statusEl.textContent = "コピーに失敗しました(もう一度お試しください)"; };
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(payload).then(done, fail);
+    } else {
+      var ta = document.createElement("textarea");
+      ta.value = payload;
+      ta.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      ok ? done() : fail();
+    }
+  } catch (e) { fail(); }
+}
+function runAiExport(ids, label) {
+  if (!ids.length) { statusEl.textContent = "書き出すページがありません"; return; }
+  statusEl.textContent = "書き出しています…(" + ids.length + "ページ)";
+  buildMarkdownForPages(ids).then(function(md){
+    if (!md || !md.trim()) {
+      statusEl.textContent = "書き出せる文字がありませんでした(手書きだけのページはPDF書出を使ってください)";
+      return;
+    }
+    copyTextToClipboard(AI_PROMPT_HEAD + md,
+      "AI用にコピーしました(" + label + " / " + ids.length + "ページ) → AIに貼り付け、返ってきたHTMLを「AIから取り込む」へ");
+  });
+}
+/* 書き出す範囲(このページ/フォルダ/全部)を選ばせる。
+   AIへの書き出しと画像シートで共用する。 */
+function openScopeSheet(title, run) {
+  var pg = findPage(currentId);
+  var fol = pg && pg.folder;
+  var items = [];
+  items.push({ label: "📄 このページだけ", fn: function(){ run([currentId], "このページ"); } });
+  if (fol) {
+    var inFolder = pages.filter(function(p){ return p.folder === fol; })
+                        .map(function(p){ return p.id; });
+    items.push({ label: "📁 フォルダ「" + fol + "」ぜんぶ(" + inFolder.length + "ページ)",
+                 fn: function(){ run(inFolder, "フォルダ " + fol); } });
+  }
+  items.push({ label: "🗂 すべてのノート(" + pages.length + "ページ)",
+               fn: function(){ run(pages.map(function(p){ return p.id; }), "すべて"); } });
+  items.push({ label: "キャンセル", cancel: true });
+  showSheet(title, items);
+}
+function openAiExportSheet() {
+  openScopeSheet("AIへ書き出す範囲", runAiExport);
+}
+/* =========================================================
+   AI連携: 貼り付けた画像だけを「番号付きの1枚シート」にして書き出す
+   ---------------------------------------------------------
+   ページ全体のPDFを渡すと、本文中の [画像 #12] がその絵のどこなのかを
+   AIが推測するしかなく、画像が何枚もあると当てにならない。
+   画像だけを抜き出して #番号 を振っておけば1対1で対応するので、
+   推測の余地が無くなる。添付も1枚で済み、ページごとにPDFを
+   出す必要もない。
+   ★手書きが主役のページは、従来どおりページ全体のPDFの方が向く。
+========================================================= */
+var IMGSHEET_W = 720;          // シートの横幅
+var IMGSHEET_MAXH = 8000;      // 1枚の上限。超えたら分割する(端末のcanvas上限対策)
+function collectPageImages(ids) {
+  var chain = Promise.resolve();
+  var out = [];
+  ids.forEach(function(id){
+    chain = chain.then(function(){
+      return pageObjectsFor(id).then(function(list){
+        var pg = findPage(id);
+        var title = (pg && pg.title) ? pg.title : "ノート";
+        var picks = [];
+        for (var i = 0; i < list.length; i++) {
+          var o = list[i];
+          if (o.type !== "image" || o.latex || !o.src) continue;
+          picks.push({ id: o.id || 0, src: o.src, y: o.y, x: o.x, page: title });
+        }
+        // 本文と同じ読み順(上→下、同じ高さなら左→右)に並べる
+        picks.sort(function(a, b){
+          return (Math.abs(a.y - b.y) < 40) ? (a.x - b.x) : (a.y - b.y);
+        });
+        out = out.concat(picks);
+      });
+    });
+  });
+  return chain.then(function(){ return out; });
+}
+function loadImg(src) {
+  return new Promise(function(res){
+    var im = new Image();
+    im.onload = function(){ res(im); };
+    im.onerror = function(){ res(null); };
+    im.src = src;
+  });
+}
+function runImageSheetExport(ids, label) {
+  if (!ids.length) { statusEl.textContent = "書き出すページがありません"; return; }
+  statusEl.textContent = "画像を集めています…";
+  collectPageImages(ids).then(function(picks){
+    if (!picks.length) {
+      statusEl.textContent = "貼り付けた画像は見つかりませんでした(手書きはPDF書出を使ってください)";
+      return;
+    }
+    var chain = Promise.resolve();
+    var loaded = [];
+    picks.forEach(function(p){
+      chain = chain.then(function(){
+        return loadImg(p.src).then(function(im){ if (im) loaded.push({ p: p, im: im }); });
+      });
+    });
+    return chain.then(function(){
+      if (!loaded.length) { statusEl.textContent = "画像を読み込めませんでした"; return; }
+      var PAD = 16, LBL = 26, GAP = 18, MAXIMGH = 560;
+      var innerW = IMGSHEET_W - PAD * 2;
+      // 各画像の描画サイズと、ページ見出しの有無を先に決める
+      var items = [], lastPage = null;
+      for (var i = 0; i < loaded.length; i++) {
+        var im = loaded[i].im, p = loaded[i].p;
+        var sc = Math.min(innerW / im.width, MAXIMGH / im.height, 1);
+        var w = Math.max(1, Math.round(im.width * sc));
+        var h = Math.max(1, Math.round(im.height * sc));
+        var head = (p.page !== lastPage) ? p.page : null;
+        lastPage = p.page;
+        items.push({ im: im, p: p, w: w, h: h, head: head,
+                     total: (head ? LBL + 6 : 0) + LBL + h + GAP });
+      }
+      // 上限の高さで区切って複数枚に分ける
+      var sheets = [], cur = [], curH = PAD * 2;
+      for (var k = 0; k < items.length; k++) {
+        if (cur.length && curH + items[k].total > IMGSHEET_MAXH) {
+          sheets.push({ items: cur, h: curH }); cur = []; curH = PAD * 2;
+        }
+        cur.push(items[k]); curH += items[k].total;
+      }
+      if (cur.length) sheets.push({ items: cur, h: curH });
+
+      for (var s = 0; s < sheets.length; s++) {
+        var c = document.createElement("canvas");
+        c.width = IMGSHEET_W;
+        c.height = Math.max(120, sheets[s].h);
+        var g = c.getContext("2d");
+        g.fillStyle = "#ffffff";
+        g.fillRect(0, 0, c.width, c.height);
+        var y = PAD;
+        for (var t = 0; t < sheets[s].items.length; t++) {
+          var it = sheets[s].items[t];
+          if (it.head) {
+            g.fillStyle = "#666";
+            g.font = "600 13px system-ui, sans-serif";
+            g.fillText("― " + it.head + " ―", PAD, y + 15);
+            y += LBL + 6;
+          }
+          g.fillStyle = "#111";
+          g.font = "700 15px system-ui, sans-serif";
+          g.fillText("#" + it.p.id, PAD, y + 17);
+          y += LBL;
+          g.drawImage(it.im, PAD, y, it.w, it.h);
+          g.strokeStyle = "rgba(0,0,0,.25)";
+          g.lineWidth = 1;
+          g.strokeRect(PAD + 0.5, y + 0.5, it.w - 1, it.h - 1);
+          y += it.h + GAP;
+        }
+        var name = "InkNote画像シート" + (sheets.length > 1 ? ("_" + (s + 1)) : "") + ".png";
+        downloadURL(c.toDataURL("image/png"), name);
+      }
+      statusEl.textContent = "画像シートを書き出しました(" + loaded.length + "枚" +
+        (sheets.length > 1 ? " / " + sheets.length + "ファイル" : "") +
+        ") → Markdownと一緒にAIへ添付してください";
+    });
+  }).catch(function(){
+    statusEl.textContent = "画像シートの書き出しに失敗しました";
+  });
+}
+function openImageSheetSheet() {
+  openScopeSheet("画像シートを書き出す範囲", runImageSheetExport);
+}
+/* =========================================================
+   AI連携: AIが返したHTMLを「新しいページ」として取り込む
+   ---------------------------------------------------------
+   ★必ず新規ページに作る。既存ページは一切書き換えない。
+     同期まわりで過去に何度も上書き事故を踏んでいるため、
+     取り込みは「増やすだけ」に限定する。
+   ★<section>(無ければトップレベルの塊)1つ = テキストBOX1つ として、
+     上から縦に積む。座標はAIに決めさせず、こちらで並べる。
+   ★安全性は既存のsanitizeRichに任せる(タグの許可リスト方式)。
+     script/style/onclick/外部画像はここで確実に落ちる。
+========================================================= */
+function htmlToPageBlocks(html) {
+  var box = document.createElement("div");
+  box.innerHTML = String(html || "");
+  // 取り込みに邪魔なものは先に捨てる(sanitizeRichでも落ちるが、
+  // 中身のテキストだけ残ってしまうのを防ぐためここでも消す)
+  var junk = box.querySelectorAll("script,style,noscript,head,meta,link,title");
+  for (var j = junk.length - 1; j >= 0; j--)
+    if (junk[j].parentNode) junk[j].parentNode.removeChild(junk[j]);
+  // <body>で包まれていたら中身に降りる
+  var body = box.querySelector("body");
+  if (body) box = body;
+  var secs = box.querySelectorAll("section");
+  var blocks = [];
+  if (secs.length) {
+    for (var i = 0; i < secs.length; i++) {
+      var h = secs[i].innerHTML;
+      if (h && String(h).trim()) blocks.push(h);
+    }
+    return blocks;
+  }
+  /* <section>が無い場合は、見出し(h1〜h3)を区切りとして塊に分ける。
+     AIが指示どおりに囲ってこなかった時の受け皿。 */
+  var cur = document.createElement("div");
+  var kids = Array.prototype.slice.call(box.childNodes);
+  function flush() {
+    var h = cur.innerHTML;
+    if (h && String(h).trim()) blocks.push(h);
+    cur = document.createElement("div");
+  }
+  for (var k = 0; k < kids.length; k++) {
+    var n = kids[k];
+    if (n.nodeType === 1 && /^H[1-3]$/.test(n.tagName) && cur.childNodes.length) flush();
+    cur.appendChild(n.cloneNode(true));
+  }
+  flush();
+  // 塊に分けられなければ、全体で1つ
+  if (!blocks.length && String(box.innerHTML || "").trim()) blocks.push(box.innerHTML);
+  return blocks;
+}
+function importHtmlAsNewPage(html, title) {
+  var blocks = htmlToPageBlocks(html);
+  if (!blocks.length) { statusEl.textContent = "取り込める中身がありませんでした"; return; }
+  saveDocNow();
+  var id = Date.now();
+  pages.push({ id: id, title: title || ("AI整理 " + new Date().toLocaleDateString("ja-JP")),
+               ts: Date.now(), rev: 1 });
+  loadPage(id);
+  /* loadPageはkvGetの完了後に中身を組み立てるので、
+     その後に置かないと消される。少し待ってから並べる。 */
+  setTimeout(function(){
+    var W = defaultPasteWidth();
+    var left = 60, y = 60, made = [];
+    for (var i = 0; i < blocks.length; i++) {
+      var rich = sanitizeRich(blocks[i]);
+      if (!rich || !String(rich).trim()) continue;
+      var o = { id: idSeq++, type: "text", x: left, y: y, w: W,
+                text: "", rich: rich, fontSize: 18,
+                color: (THEMES[themeName] || THEMES.cream).pen };
+      var bx = document.createElement("div");
+      bx.innerHTML = rich;
+      o.text = (bx.innerText || bx.textContent || "").trim();
+      if (isTrulyEmptyText(o)) continue;
+      objects.push(o); makeTextEl(o); measureObj(o); made.push(o);
+      y += Math.max(40, objBBox(o).h) + 18;
+    }
+    if (!made.length) { statusEl.textContent = "取り込める中身がありませんでした"; return; }
+    inkDirty = true;
+    refreshMeasures();
+    for (var m = 0; m < made.length; m++) clampToSheet(made[m]);
+    switchTool("select");
+    setSelection([]);
+    scheduleSave();
+    if (cloudUser()) { saveIndex(); cloudPushIndex().catch(function(){}); }
+    statusEl.textContent = "新しいページに取り込みました(" + made.length + "ブロック)";
+    // ★表の中の $$…$$ は、貼り付けと同じように自動で組版する
+    if (autoCellMath) {
+      autoTypesetTablesIn(made).then(function(n){
+        if (n) statusEl.textContent =
+          "新しいページに取り込みました(" + made.length + "ブロック / 式 " + n + "個を組版)";
+      });
+    }
+  }, 500);
+}
+/* 取り込み用の入力欄を開く。クリップボードが読めれば先に入れておく。 */
+function openAiImportSheet() {
+  var dlg = $("#aiImpDlg");
+  var ta = $("#aiImpText");
+  ta.value = "";
+  $("#sheetScrim").classList.add("show");
+  dlg.classList.add("show");
+  setTimeout(function(){ try { ta.focus(); } catch (e) {} }, 60);
+  // 自動で読めるならクリップボードから下書きしておく(拒否されても手貼りできる)
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(function(t){
+        if (t && !ta.value) ta.value = t;
+      }).catch(function(){});
+    }
+  } catch (e) {}
+}
+function closeAiImportSheet() {
+  $("#aiImpDlg").classList.remove("show");
+  $("#sheetScrim").classList.remove("show");
 }
 function downloadURL(url, name) {
   var a = document.createElement("a");
@@ -9316,6 +9745,28 @@ $("#expMd").onclick = function(){
 $("#expStudy").onclick = function(){
   closeExp();
   setTimeout(copyForStudy, 80);
+};
+$("#expAiOut").onclick = function(){
+  closeExp();
+  closePages && closePages();
+  setTimeout(openAiExportSheet, 150);
+};
+$("#expAiIn").onclick = function(){
+  closeExp();
+  closePages && closePages();
+  setTimeout(openAiImportSheet, 150);
+};
+$("#expImgSheet").onclick = function(){
+  closeExp();
+  closePages && closePages();
+  setTimeout(openImageSheetSheet, 150);
+};
+$("#aiImpCancel").onclick = function(){ closeAiImportSheet(); };
+$("#aiImpOk").onclick = function(){
+  var t = $("#aiImpText").value || "";
+  if (!t.trim()) { statusEl.textContent = "貼り付けてから「取り込む」を押してください"; return; }
+  closeAiImportSheet();
+  setTimeout(function(){ importHtmlAsNewPage(t); }, 120);
 };
 $("#expPrint").onclick = function(){
   closeExp();
