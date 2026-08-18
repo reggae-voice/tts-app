@@ -1038,7 +1038,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.58">InkNote <small>v20.58</small></div>
+  <div class="brand" title="InkNote v20.62">InkNote <small>v20.62</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1507,7 +1507,8 @@ window.onerror = function(msg, src, line){
     <div class="st-row"><span class="st-label">テーマ列</span>
       <button class="stybtn" id="colMakeBtn">📑 この列に名前をつける</button>
       <button class="stybtn" id="colWidthBtn">↔ 列の幅</button>
-      <span style="color:var(--ui-dim);font-size:11px">無限キャンバス用。見たい列を画面に出してから押す</span>
+      <button class="toggle" id="colGuideToggle"></button>
+      <span style="color:var(--ui-dim);font-size:11px">区切り線の表示。見たい列を画面に出してから名前をつける</span>
     </div>
     <div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
@@ -1598,7 +1599,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.58";
+var APP_VERSION = "20.62";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1982,7 +1983,7 @@ function renderInk() {
   }
   /* ★無限モードでは用紙の枠が無いので、列の境目が見えないと必ず迷子になる。
      テーマ列の帯・区切り線・見出し名を薄く描いておく。 */
-  if (canvasMode === "inf") drawColumnGuides(VY0, VY1);
+  if (canvasMode === "inf" && showColGuides) drawColumnGuides(VY0, VY1);
   /* ★マーカーは「全部まとめて1枚の層に描いてから、一度だけ重ねる」。
      1本ずつ半透明で描くと、重ねた部分だけ色が二重にのって濃くなり、
      筆を往復させた所もむらになる。層の上では不透明で描くので、
@@ -6744,6 +6745,10 @@ function saveDoc() {
   // 端末ごとのlocalStorage設定だと他端末に伝わらないため、ページ側に持たせる。
   var payload = { json: serializeScene(), view: view, bookmarks: bookmarks,
                   canvasMode: canvasMode, bg: bgStyle,
+                  /* ★列幅もノートの属性。端末ごとのlocalStorageだけに持たせると、
+                     同じノートでも端末によって「どの列に入っているか」の判定が
+                     変わり、目次のまとまりや列送りの結果が食い違う。 */
+                  colW: COL_W,
                   rev: pageRev, ts: Date.now() };
   var pid = currentId;
   // ★書き込みの完了を返す。同期はこれを待ってから始める
@@ -6972,7 +6977,7 @@ function findPage(id) {
 }
 
 /* ---------- ページの読込・追加・切替・改名・削除 ---------- */
-function loadPage(id) {
+function loadPage(id, onReady) {
   currentId = id;
   isLoadingPage = true;                   // ★開いている間は自動保存を止める
   undoStack = []; redoStack = []; updateUndoUI();
@@ -6989,6 +6994,8 @@ function loadPage(id) {
       if (rec.canvasMode === "inf" || rec.canvasMode === "a4v" || rec.canvasMode === "a4h")
         canvasMode = rec.canvasMode;
       if (rec.bg) bgStyle = rec.bg;
+      // 列幅はノートに保存されたものを優先(端末間で判定を揃える)
+      if (rec.colW >= 320 && rec.colW <= 2400) COL_W = rec.colW;
     } else {
       rebuildScene("[]");
       view = { x: 0, y: 0, s: 1 };
@@ -7005,6 +7012,11 @@ function loadPage(id) {
       dirtySinceSave = false;
       unsyncedEdits = false;
       isLoadingPage = false;
+      /* ★読み込みが本当に終わってから呼ぶ。
+         ここより前に中身を足すと、rebuildSceneに消されたり、
+         isLoadingPage中で自動保存が止まっているせいで保存されず、
+         次に開いた時に空になる(AI取り込みで実際に踏みうる危険だった)。 */
+      if (typeof onReady === "function") { try { onReady(); } catch (e) {} }
     }, 400);
     hintEl.style.opacity = objects.length ? 0 : "";
     statusEl.textContent = objects.length ? "保存済み ✓" : "新規ノート";
@@ -7018,10 +7030,24 @@ function updatePageBtn() {
   var pg = findPage(currentId);
   $("#pageBtn").textContent = "📄 " + (pg ? pg.title : "ノート");
 }
+/* ★新しいページの名前。
+   以前は「ページ + (今の枚数+1)」だったが、これは端末ごとに枚数が違うと
+   同じ名前になってしまう。PCで作った"ページ11"とAndroidで作った"ページ11"は
+   別のページ(idが違うので両方ちゃんと残る)なのに、名前が同じせいで
+   「上書きされた/消えた」ように見えていた。
+   すでに使われている番号の最大+1にして、名前が重ならないようにする。 */
+function nextPageTitle() {
+  var max = 0;
+  for (var i = 0; i < pages.length; i++) {
+    var m = /^ページ(\d+)$/.exec(String(pages[i].title || ""));
+    if (m) { var n = parseInt(m[1], 10); if (n > max) max = n; }
+  }
+  return "ページ" + Math.max(max + 1, pages.length + 1);
+}
 function addPage() {
   saveDocNow();
   var id = Date.now();
-  pages.push({ id: id, title: "ページ" + (pages.length + 1), ts: Date.now(), rev: 1 });
+  pages.push({ id: id, title: nextPageTitle(), ts: Date.now(), rev: 1 });
   loadPage(id);
   /* ★これが無いと、新しく作ったページの存在そのものが、
      何かを編集して保存する(3秒後の自動送信)までクラウドに伝わらない。
@@ -9187,6 +9213,15 @@ try {
   if (_cw >= 320 && _cw <= 2400) COL_W = _cw;
 } catch (e) {}
 var COL_GAP = 90;            // 列と列のあいだ
+/* 列の区切り線を描くか。描画は毎フレーム走るので、既定は「切」。
+   ★常時描き続けるのは負担が大きく、見た目にも邪魔になるという指摘を受けて
+   既定を切に変更した。列の機能(命名・目次・列送り・幅そろえ)は
+   線を出さなくてもすべて使える。 */
+var showColGuides = false;
+try {
+  var _cg = localStorage.getItem("inknote_col_guides");
+  if (_cg !== null) showColGuides = (_cg === "1");
+} catch (e) {}
 function isThemeAnchor(o) { return !!(o && o.anch && o.anchLv === 1); }
 /* テーマ見出しを左から順に並べて返す */
 function themeAnchors() {
@@ -9326,6 +9361,99 @@ function moveObjBy(o, dx, dy) {
     o.x += dx; o.y += dy;
     if (o.el) { o.el.style.left = o.x + "px"; o.el.style.top = o.y + "px"; }
   }
+}
+/* =========================================================
+   縦積みの重なりを直す / 列の幅に収める
+   ---------------------------------------------------------
+   縦に連ねたテキストは、途中で改行や加筆をすると背が伸びて
+   下のものに重なってしまう。手で全部動かすのは現実的でないので、
+   「順番は変えずに、重なった分だけ下へ送る」操作を用意する。
+   ★横に並んだ別の列は動かさない。動かすのは同じ列の中だけ。
+========================================================= */
+function columnBandOfX(x) {
+  var l = themeAnchors();
+  for (var i = 0; i < l.length; i++)
+    if (x >= l[i].x - COL_GAP / 2 && x < l[i].x + COL_W + COL_GAP / 2)
+      return { x0: l[i].x, lo: l[i].x - COL_GAP / 2, hi: l[i].x + COL_W + COL_GAP / 2 };
+  var band = contentColumnBandAt(x);
+  return { x0: band.x0, lo: band.x0 - COL_GAP / 2, hi: band.x0 + COL_W + COL_GAP / 2 };
+}
+/* 重なりを解消して下に詰め直す。gapは物と物のあいだの余白 */
+function unstackColumn(gap) {
+  gap = (gap == null) ? 16 : gap;
+  var cx = (sel.length === 1) ? objBBox(sel[0]).x + 1
+                              : (innerWidth / 2 - view.x) / view.s;
+  var band = columnBandOfX(cx);
+  var list = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.locked) continue;
+    if (o.type === "stroke" || o.type === "shape") continue;  // 手書きは動かさない
+    var b = objBBox(o);
+    if (b.x < band.lo || b.x >= band.hi) continue;
+    list.push({ o: o, b: b });
+  }
+  if (list.length < 2) { statusEl.textContent = "この列に並べ直すものがありません"; return; }
+  list.sort(function(p, q){ return p.b.y - q.b.y; });
+  pushUndo();
+  var moved = 0;
+  var bottom = list[0].b.y + list[0].b.h;
+  for (var k = 1; k < list.length; k++) {
+    var it = list[k];
+    var want = bottom + gap;
+    if (it.b.y < want - 0.5) {                 // 重なっている/近すぎる
+      moveObjBy(it.o, 0, want - it.b.y);
+      it.b.y = want;
+      moved++;
+    }
+    bottom = it.b.y + it.b.h;
+  }
+  inkDirty = true;
+  refreshMeasures();
+  scheduleSave();
+  statusEl.textContent = moved
+    ? (moved + "個を下へずらして重なりを直しました")
+    : "重なりはありませんでした";
+}
+/* 列の幅からはみ出したものを、列の中に収める */
+function fitColumnWidth() {
+  var cx = (sel.length === 1) ? objBBox(sel[0]).x + 1
+                              : (innerWidth / 2 - view.x) / view.s;
+  var band = columnBandOfX(cx);
+  var inner = Math.max(320, COL_W - 40);
+  var left = band.x0 + 20;
+  var n = 0;
+  pushUndo();
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.locked) continue;
+    if (o.type === "stroke" || o.type === "shape") continue;
+    var b = objBBox(o);
+    if (b.x < band.lo || b.x >= band.hi) continue;
+    var changed = false;
+    if (o.type === "text") {
+      if ((o.w || 0) > inner) { o.w = inner; changed = true; }
+      if (o.x < left - 0.5 || o.x + (o.w || 0) > band.x0 + COL_W) { o.x = left; changed = true; }
+      if (changed) { if (o.el) o.el.style.left = o.x + "px"; measureObj(o); }
+    } else if (o.type === "image") {
+      if (o.w > inner) {                       // 縦横の比を保ったまま縮める
+        var r = inner / o.w;
+        o.w = inner; o.h = Math.max(20, Math.round(o.h * r));
+        changed = true;
+      }
+      if (o.x < left - 0.5 || o.x + o.w > band.x0 + COL_W) { o.x = left; changed = true; }
+      if (changed && o.el) {
+        o.el.style.left = o.x + "px";
+        o.el.style.width = o.w + "px";
+        o.el.style.height = o.h + "px";
+      }
+    }
+    if (changed) n++;
+  }
+  inkDirty = true;
+  refreshMeasures();
+  scheduleSave();
+  statusEl.textContent = n ? (n + "個を列の幅に収めました") : "はみ出しているものはありません";
 }
 /* 目次からその場所へ飛ぶ */
 function jumpToAnchor(obj) {
@@ -9931,10 +10059,14 @@ function importHtmlAsNewPage(html, title) {
   var id = Date.now();
   pages.push({ id: id, title: title || ("AI整理 " + new Date().toLocaleDateString("ja-JP")),
                ts: Date.now(), rev: 1 });
-  loadPage(id);
-  /* loadPageはkvGetの完了後に中身を組み立てるので、
-     その後に置かないと消される。少し待ってから並べる。 */
-  setTimeout(function(){
+  /* ★以前は loadPage(id) のあと setTimeout(...,500) で中身を並べていた。
+     loadPage は kvGet(非同期)の完了後に rebuildScene で objects を
+     作り直し、さらに400ms後まで自動保存を止めている。つまり
+     ・kvGetが500msより遅い端末 → 並べた中身が rebuildScene に消される
+     ・400msの保護が明けていない → scheduleSave が効かず保存されない
+     のどちらかで、取り込んだ内容が失われる可能性があった。
+     読み込み完了の合図(onReady)を待って並べるように直した。 */
+  loadPage(id, function(){
     var W = defaultPasteWidth();
     var left = 60, y = 60, made = [];
     for (var i = 0; i < blocks.length; i++) {
@@ -9966,7 +10098,7 @@ function importHtmlAsNewPage(html, title) {
           "新しいページに取り込みました(" + made.length + "ブロック / 式 " + n + "個を組版)";
       });
     }
-  }, 500);
+  });
 }
 /* 取り込み用の入力欄を開く。クリップボードが読めれば先に入れておく。 */
 function openAiImportSheet() {
@@ -12398,6 +12530,16 @@ $("#colMakeBtn").onclick = function(){
   closeMenu();
   setTimeout(nameCurrentColumn, 120);
 };
+$("#colGuideToggle").onclick = function(){
+  showColGuides = !showColGuides;
+  this.classList.toggle("on", showColGuides);
+  try { localStorage.setItem("inknote_col_guides", showColGuides ? "1" : "0"); } catch (e) {}
+  inkDirty = true;
+  statusEl.textContent = showColGuides
+    ? "列の区切り線を表示します"
+    : "列の区切り線を消しました(テーマ列の機能はそのまま使えます)";
+};
+$("#colGuideToggle").classList.toggle("on", showColGuides);
 $("#colWidthBtn").onclick = function(){
   closeMenu();
   setTimeout(function(){
@@ -12406,6 +12548,7 @@ $("#colWidthBtn").onclick = function(){
       if (!(n >= 320 && n <= 2400)) { statusEl.textContent = "320〜2400の数字を入れてください"; return; }
       COL_W = n;
       try { localStorage.setItem("inknote_col_w", String(n)); } catch (e) {}
+      scheduleSave();          // ★ノート側にも保存して他端末へ伝える
       inkDirty = true;
       renderTocPanel();
       updateColBar();
@@ -12655,6 +12798,8 @@ function openMoreSheet() {
   // 並べる・まとめる
   /* ★長い縦並びを、上からテーマごとに横へ切り分けていくための操作 */
   if (canvasMode === "inf") {
+    items.push({ label: "↧ 重なりを直して下に詰め直す", fn: function(){ unstackColumn(16); } });
+    items.push({ label: "↔ 列の幅に収める", fn: fitColumnWidth });
     items.push({ label: "📑 この列に名前をつける", fn: nameCurrentColumn });
     if (sel.length === 1) {
       items.push({ label: "📑 ここから下を右隣の列へ送る",
@@ -13290,9 +13435,20 @@ function cloudPushPage(id, force) {
          これをしないと、貼り付けた直後に古い版へ戻されてしまう。 */
       if (!force && remoteRev > localRev && id === currentId &&
           (dirtySinceSave || unsyncedEdits)) {
-        return Promise.resolve(saveDocNow()).then(function(){
-          return cloudPushPage(id, true);        // 書いた内容を優先して送る
-        });
+        /* ★ここは「クラウドに新しい版があるのに、この端末の編集を優先して
+           上書きする」経路。以前は相手の新しい内容を控えも取らずに
+           消していたため、片方の端末の作業が黙って失われ、しかも
+           どちらの端末からも復元できなかった。
+           上書きする前に、相手の版を必ず控えに残す。 */
+        return keepRemoteVersion(id, "他の端末の版(この端末の編集で置き換え)")
+          .then(function(){ return Promise.resolve(saveDocNow()); })
+          .then(function(){
+            setTimeout(function(){
+              statusEl.textContent =
+                "他の端末にも新しい版がありました(⋮→「以前の版に戻す」から取り出せます)";
+            }, 60);
+            return cloudPushPage(id, true);        // 書いた内容を優先して送る
+          });
       }
       if (!force && remoteRev > localRev) {
         var wasDirty = (id === currentId && dirtySinceSave);
@@ -13508,6 +13664,26 @@ function pullIfStale(minMs) {
    上書きの前に、今ある中身を控えに残す。
    同期の行き違いで中身が古い版に戻されても、ここから取り戻せる。 */
 var VER_KEEP = 8;                       // 1ページあたり残す控えの数
+/* ★上書きされる側(クラウドにある新しい版)を控えに残す。
+   keepVersion は手元の内容しか控えられないため、
+   「他の端末の新しい内容を自分の編集で上書きする」場面では
+   相手の内容が何処にも残らず、取り返しがつかなかった。 */
+function keepRemoteVersion(id, why) {
+  return cloudPullPage(id).then(function(payload){
+    if (!payload || !payload.json) return;
+    var cnt = 0;
+    try { cnt = (JSON.parse(payload.json) || []).length; } catch (e) { return; }
+    if (!cnt) return;
+    var key = "ver_" + id + "_" + (payload.ts || Date.now());
+    return kvGet(key).then(function(exists){
+      if (exists) return;
+      return kvSet(key, { json: payload.json, ts: payload.ts || Date.now(),
+                          view: payload.view, bookmarks: payload.bookmarks,
+                          canvasMode: payload.canvasMode, bg: payload.bg,
+                          count: cnt, why: why || "他の端末の版", savedAt: Date.now() });
+    }).then(function(){ return trimVersions(id); });
+  }).catch(function(){});
+}
 function keepVersion(id, why) {
   return kvGet("page_" + id).then(function(cur){
     if (!cur || !cur.json) return;
