@@ -1079,7 +1079,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.69">InkNote <small>v20.69</small></div>
+  <div class="brand" title="InkNote v20.70">InkNote <small>v20.70</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1654,7 +1654,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.69";
+var APP_VERSION = "20.70";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2023,15 +2023,13 @@ function drawColumnGuides(vy0, vy1) {
   var vx1 = (innerWidth - view.x) / view.s;
   var i0 = Math.floor(vx0 / lane) - 1;
   var i1 = Math.ceil(vx1 / lane) + 1;
-  var cur = Math.floor(((innerWidth / 2 - view.x) / view.s) / lane);
   ictx.save();
   for (var i = i0; i <= i1; i++) {
     var x0 = i * lane;
-    if (i === cur) {
-      ictx.fillStyle = "rgba(76,111,255,.035)";
-      ictx.fillRect(x0, vy0, COL_W, vy1 - vy0);
-    }
-    ictx.strokeStyle = (i === cur) ? "rgba(76,111,255,.34)" : "rgba(120,128,146,.22)";
+    /* ★以前は「今いるレーン」だけ青く塗って線も青くしていたが、
+       1枚だけ色が違う理由が分からず紛らわしいだけだった。
+       用紙の目安なのだから、どのレーンも同じ点線で引く。 */
+    ictx.strokeStyle = "rgba(120,128,146,.24)";
     ictx.lineWidth = 1 / view.s;
     ictx.setLineDash([8 / view.s, 7 / view.s]);
     ictx.beginPath();
@@ -2045,7 +2043,7 @@ function drawColumnGuides(vy0, vy1) {
     if (nm) {
       var fs = Math.max(11, 15 / view.s);
       ictx.font = "700 " + fs + "px system-ui, sans-serif";
-      ictx.fillStyle = (i === cur) ? "rgba(76,111,255,.85)" : "rgba(120,128,146,.6)";
+      ictx.fillStyle = "rgba(120,128,146,.7)";
       ictx.textBaseline = "bottom";
       ictx.fillText(nm.name, x0 + 12 / view.s, nm.y - 14 / view.s);
     }
@@ -8101,7 +8099,7 @@ function applyTheme(name, isStartup) {
 
 /* ---------- ⚙ メニュー ---------- */
 function anySheetOpen() {
-  return document.querySelector("#pagesPanel.show, #posPanel.show, #stylePanel.show, #expPanel.show, #syncPanel.show, #menuPanel.show");
+  return document.querySelector("#pagesPanel.show, #posPanel.show, #stylePanel.show, #expPanel.show, #syncPanel.show, #menuPanel.show, #findPanel.show, #aiImpDlg.show");
 }
 function openMenu() {
   var bs = document.querySelectorAll(".bg-opt");
@@ -9533,13 +9531,22 @@ function moveObjBy(o, dx, dy) {
    「順番は変えずに、重なった分だけ下へ送る」操作を用意する。
    ★横に並んだ別の列は動かさない。動かすのは同じ列の中だけ。
 ========================================================= */
+/* ★列の帯は、画面に引いてある点線の格子と同じ区切りで求める。
+   以前はテーマ見出しの位置から帯を作っていたため、画面に見えている
+   点線と判定が食い違い、「2列目に入れたつもりが1列目に入る」ことがあった。
+   格子は原点からA4横1枚ずつなので、floor(x / レーン幅) で決まる。 */
+function laneIndexOfX(x) {
+  return Math.floor(x / (COL_W + COL_GAP));
+}
+function laneBand(i) {
+  var lane = COL_W + COL_GAP;
+  return { x0: i * lane, lo: i * lane, hi: i * lane + COL_W, index: i };
+}
+function currentLaneIndex() {
+  return laneIndexOfX((innerWidth / 2 - view.x) / view.s);
+}
 function columnBandOfX(x) {
-  var l = themeAnchors();
-  for (var i = 0; i < l.length; i++)
-    if (x >= l[i].x - COL_GAP / 2 && x < l[i].x + COL_W + COL_GAP / 2)
-      return { x0: l[i].x, lo: l[i].x - COL_GAP / 2, hi: l[i].x + COL_W + COL_GAP / 2 };
-  var band = contentColumnBandAt(x);
-  return { x0: band.x0, lo: band.x0 - COL_GAP / 2, hi: band.x0 + COL_W + COL_GAP / 2 };
+  return laneBand(laneIndexOfX(x));
 }
 /* 重なりを解消して下に詰め直す。gapは物と物のあいだの余白 */
 function unstackColumn(gap) {
@@ -9578,37 +9585,60 @@ function unstackColumn(gap) {
     ? (moved + "個を下へずらして重なりを直しました")
     : "重なりはありませんでした";
 }
-/* 列の幅からはみ出したものを、列の中に収める */
+/* 列の幅からはみ出したものを、列の中に収める。
+   ★選んでいるものがある時は「今画面に出ているレーン」へ移して収める。
+     以前はそのものが今いるレーンを基準にしていたため、
+     2列目を見ながら実行しても1列目のまま動かなかった。 */
 function fitColumnWidth() {
-  var cx = (sel.length === 1) ? objBBox(sel[0]).x + 1
-                              : (innerWidth / 2 - view.x) / view.s;
-  var band = columnBandOfX(cx);
+  var dest = laneBand(currentLaneIndex());
   var inner = Math.max(320, COL_W - 40);
-  var left = band.x0 + 20;
-  var n = 0;
+  var left = dest.x0 + 20;
+  var targets = [];
+  if (sel.length) {
+    for (var s0 = 0; s0 < sel.length; s0++) if (!sel[s0].locked) targets.push(sel[s0]);
+  } else {
+    for (var i = 0; i < objects.length; i++) {
+      var o = objects[i];
+      if (o.locked) continue;
+      if (o.type === "stroke" || o.type === "shape") continue;
+      var b = objBBox(o);
+      if (b.x < dest.lo || b.x >= dest.hi) continue;
+      targets.push(o);
+    }
+  }
+  if (!targets.length) {
+    statusEl.textContent = "収めるものがありません(動かしたいものを選ぶか、その列を画面に出してください)";
+    return;
+  }
   pushUndo();
-  for (var i = 0; i < objects.length; i++) {
-    var o = objects[i];
-    if (o.locked) continue;
-    if (o.type === "stroke" || o.type === "shape") continue;
-    var b = objBBox(o);
-    if (b.x < band.lo || b.x >= band.hi) continue;
+  var n = 0;
+  for (var k = 0; k < targets.length; k++) {
+    var t = targets[k];
+    if (t.type === "stroke" || t.type === "shape") {
+      // 手書き・図形は形を保ったまま、レーンの中へ平行移動するだけ
+      var bb = objBBox(t);
+      if (bb.x >= dest.x0 && bb.x + bb.w <= dest.x0 + COL_W) continue;
+      moveObjBy(t, left - bb.x, 0);
+      n++;
+      continue;
+    }
+    var b2 = objBBox(t);
     var changed = false;
-    if (o.type === "text") {
-      if ((o.w || 0) > inner) { o.w = inner; changed = true; }
-      if (o.x < left - 0.5 || o.x + (o.w || 0) > band.x0 + COL_W) { o.x = left; changed = true; }
-      if (changed) { if (o.el) o.el.style.left = o.x + "px"; measureObj(o); }
-    } else if (o.type === "image") {
-      if (o.w > inner) {                       // 縦横の比を保ったまま縮める
-        var r = inner / o.w;
-        o.w = inner; o.h = Math.max(20, Math.round(o.h * r));
+    if (t.type === "text") {
+      if ((t.w || 0) > inner) { t.w = inner; changed = true; }
+      if (Math.abs(t.x - left) > 0.5) { t.x = left; changed = true; }
+      if (changed) { if (t.el) t.el.style.left = t.x + "px"; measureObj(t); }
+    } else if (t.type === "image") {
+      if (t.w > inner) {
+        var r = inner / t.w;
+        t.w = inner; t.h = Math.max(20, Math.round(t.h * r));
         changed = true;
       }
-      if (o.x < left - 0.5 || o.x + o.w > band.x0 + COL_W) { o.x = left; changed = true; }
-      if (changed && o.el) {
-        o.el.style.left = o.x + "px";
-        o.el.style.width = o.w + "px";
-        o.el.style.height = o.h + "px";
+      if (Math.abs(t.x - left) > 0.5) { t.x = left; changed = true; }
+      if (changed && t.el) {
+        t.el.style.left = t.x + "px";
+        t.el.style.width = t.w + "px";
+        t.el.style.height = t.h + "px";
       }
     }
     if (changed) n++;
@@ -9616,7 +9646,9 @@ function fitColumnWidth() {
   inkDirty = true;
   refreshMeasures();
   scheduleSave();
-  statusEl.textContent = n ? (n + "個を列の幅に収めました") : "はみ出しているものはありません";
+  statusEl.textContent = n
+    ? (n + "個を" + (dest.index + 1) + "列目に収めました")
+    : ((dest.index + 1) + "列目にすでに収まっています");
 }
 /* =========================================================
    ノートの中の文字を探す
@@ -10347,6 +10379,11 @@ function openAiImportSheet() {
   var ta = $("#aiImpText");
   ta.value = "";
   $("#sheetScrim").classList.add("show");
+  var guardI = Date.now() + 400;
+  $("#sheetScrim").onclick = function(){
+    if (Date.now() < guardI) return;
+    closeAiImportSheet();
+  };
   dlg.classList.add("show");
   setTimeout(function(){ try { ta.focus(); } catch (e) {} }, 60);
   // 自動で読めるならクリップボードから下書きしておく(拒否されても手貼りできる)
@@ -10360,7 +10397,8 @@ function openAiImportSheet() {
 }
 function closeAiImportSheet() {
   $("#aiImpDlg").classList.remove("show");
-  $("#sheetScrim").classList.remove("show");
+  $("#sheetScrim").onclick = null;
+  if (!anySheetOpen()) $("#sheetScrim").classList.remove("show");
 }
 function downloadURL(url, name) {
   var a = document.createElement("a");
@@ -12705,6 +12743,14 @@ $("#tocClose").onclick = closeToc;
 function openFind() {
   $("#findPanel").classList.add("show");
   $("#sheetScrim").classList.add("show");
+  /* ★スクリム(全面の膜)を出す時は、必ず閉じる手段も付けること。
+     付け忘れると膜が画面全体を覆ったまま残り、どこを押しても
+     反応しない=フリーズしたように見える(実際に起きた)。 */
+  var guard = Date.now() + 400;
+  $("#sheetScrim").onclick = function(){
+    if (Date.now() < guard) return;    // 開いた直後の指離しで閉じない
+    closeFind();
+  };
   var el = $("#findInput");
   el.value = findQuery || "";
   setTimeout(function(){ try { el.focus(); el.select(); } catch (e) {} }, 80);
@@ -12712,6 +12758,7 @@ function openFind() {
 }
 function closeFind() {
   $("#findPanel").classList.remove("show");
+  $("#sheetScrim").onclick = null;
   if (!anySheetOpen()) $("#sheetScrim").classList.remove("show");
 }
 function renderFindList(hits) {
@@ -12776,6 +12823,7 @@ function runFind() {
 $("#findClose").onclick = closeFind;
 $("#findInput").addEventListener("keydown", function(e){
   if (e.key === "Enter") { e.preventDefault(); runFind(); }
+  if (e.key === "Escape") { e.preventDefault(); closeFind(); }
 });
 $("#findInput").addEventListener("search", runFind);
 $("#miniFindBtn").onclick = function(){
@@ -15004,7 +15052,6 @@ try {
     loadFirebase().then(attachAuth).catch(function(){});
   }
 } catch (e) {}
-
 
 /* ---------- 共有メニュー経由のデータがあれば取り込む ---------- */
 setTimeout(importSharedItems, 400);
