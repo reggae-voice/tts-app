@@ -47,6 +47,15 @@
   /* テキストは長押しでの文字選択を許可する(画面スクロールはJSで処理) */
   .obj-text{touch-action:auto;-webkit-touch-callout:default}
   .obj.selected{outline:1.5px dashed var(--accent);outline-offset:3px}
+  /* 検索で飛んだ先を一瞬だけ光らせる(どれが該当か分かるように) */
+  .obj.found-flash{
+    outline:3px solid #ffb020;outline-offset:2px;
+    animation:foundPulse 1.6s ease-out 1;
+  }
+  @keyframes foundPulse{
+    0%{background:rgba(255,176,32,.30)}
+    100%{background:transparent}
+  }
   /* ノートの中の表 */
   .obj-text table{
     border-collapse:collapse;width:100%;table-layout:fixed;
@@ -995,6 +1004,9 @@
     border-radius:10px;padding:11px 12px;font-size:13px;outline:none;
     height:38vh;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;
     -webkit-user-select:text;user-select:text;
+    /* ★指でのスクロールを許可する。body側で touch-action:none にしているため、
+       ここで明示しないと中身をなぞっても動かず、上の方を確認できなかった。 */
+    touch-action:pan-y;overflow:auto;-webkit-overflow-scrolling:touch;
   }
   #aiImpText:focus{border-color:var(--accent)}
   #idLabel{color:var(--ui-text);font-size:13.5px;font-weight:600;margin-bottom:10px}
@@ -1079,7 +1091,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.73">InkNote <small>v20.73</small></div>
+  <div class="brand" title="InkNote v20.79">InkNote <small>v20.79</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1289,7 +1301,7 @@ window.onerror = function(msg, src, line){
   <span class="rb-sep"></span>
   <button id="rbHead" title="選んだ文字を見出しにして目次へ">🔖</button>
   <span class="rb-sep"></span>
-  <button id="rbSplitCol" title="ここで分けて、後半を右隣の列へ送る">⇥</button>
+  <button id="rbSplitCol" title="ここでテキストBOXを2つに分ける">⇥</button>
   <span class="rb-sep"></span>
   <button id="rbClear" title="装飾を消す">✕</button>
 </div>
@@ -1335,9 +1347,11 @@ window.onerror = function(msg, src, line){
   <div id="idLabel" style="margin-bottom:10px">AIが返したHTMLを貼り付けてください(新しいページとして取り込みます)</div>
   <textarea id="aiImpText" placeholder="&lt;section&gt;…&lt;/section&gt; を貼り付け"></textarea>
   <div class="id-row">
+    <button id="aiImpFile">📂 HTMLファイル</button>
     <button id="aiImpCancel">キャンセル</button>
     <button id="aiImpOk">取り込む</button>
   </div>
+  <input type="file" id="aiImpFileInput" accept=".html,.htm,text/html" style="display:none">
 </div>
 
 <div id="pagesPanel">
@@ -1559,11 +1573,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="tocOpenBtn">🔖 目次を開く</button>
       <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
     </div>
-    <div class="st-row"><span class="st-label">テーマ列</span>
-      <button class="stybtn" id="colMakeBtn">📑 この列に名前をつける</button>
-      <button class="stybtn" id="colWidthBtn">↔ 列の幅</button>
-      <button class="toggle" id="colGuideToggle"></button>
-      <span style="color:var(--ui-dim);font-size:11px">区切り線の表示。見たい列を画面に出してから名前をつける</span>
+    <div class="st-row"><span class="st-label">テーマ</span>
+      <button class="stybtn" id="colMakeBtn">📑 選んだものをテーマにする</button>
+      <button class="stybtn" id="colWidthBtn">↔ 見やすい幅</button>
+      <span style="color:var(--ui-dim);font-size:11px">テーマの下に単元がぶら下がります。追加は文字を選んで🔖</span>
     </div>
     <div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
@@ -1654,7 +1667,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.73";
+var APP_VERSION = "20.79";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2010,46 +2023,6 @@ function paintHighlighters(ctx, list, hide, paperCol, edgeCol, colorOf) {
   for (i = 0; i < list.length; i++)
     hlStrokePath(ctx, list[i], colorOf ? colorOf(list[i]) : list[i].color, 1, "source-over", 0);
 }
-/* テーマ列の区切りを薄く描く(無限モード用)。
-   ★内容の上に描くと邪魔になるので、必ず本文より先に呼ぶこと。 */
-function drawColumnGuides(vy0, vy1) {
-  /* ★A4横1枚ぶんを1レーンとして、原点から等間隔にずっと引く。
-     以前はテーマ見出しを置いた場所からしか線が出なかったので、
-     まだ名前を付けていない場所には目安が何も無かった。
-     常に同じ格子があれば、どこに何を置くかを最初から決められる。 */
-  var l = themeAnchors();
-  var lane = COL_W + COL_GAP;
-  var vx0 = (0 - view.x) / view.s;
-  var vx1 = (innerWidth - view.x) / view.s;
-  var i0 = Math.floor(vx0 / lane) - 1;
-  var i1 = Math.ceil(vx1 / lane) + 1;
-  ictx.save();
-  for (var i = i0; i <= i1; i++) {
-    var x0 = i * lane;
-    /* ★以前は「今いるレーン」だけ青く塗って線も青くしていたが、
-       1枚だけ色が違う理由が分からず紛らわしいだけだった。
-       用紙の目安なのだから、どのレーンも同じ点線で引く。 */
-    ictx.strokeStyle = "rgba(120,128,146,.24)";
-    ictx.lineWidth = 1 / view.s;
-    ictx.setLineDash([8 / view.s, 7 / view.s]);
-    ictx.beginPath();
-    ictx.moveTo(x0, vy0); ictx.lineTo(x0, vy1);
-    ictx.stroke();
-    ictx.setLineDash([]);
-    // そのレーンにテーマ名があれば上端に出す
-    var nm = null;
-    for (var k = 0; k < l.length; k++)
-      if (Math.floor(l[k].x / lane) === i) { nm = l[k]; break; }
-    if (nm) {
-      var fs = Math.max(11, 15 / view.s);
-      ictx.font = "700 " + fs + "px system-ui, sans-serif";
-      ictx.fillStyle = "rgba(120,128,146,.7)";
-      ictx.textBaseline = "bottom";
-      ictx.fillText(nm.name, x0 + 12 / view.s, nm.y - 14 / view.s);
-    }
-  }
-  ictx.restore();
-}
 function renderInk() {
   if (!inkDirty) return;
   inkDirty = false;
@@ -2078,7 +2051,6 @@ function renderInk() {
   }
   /* ★無限モードでは用紙の枠が無いので、列の境目が見えないと必ず迷子になる。
      テーマ列の帯・区切り線・見出し名を薄く描いておく。 */
-  if (canvasMode === "inf" && showColGuides) drawColumnGuides(VY0, VY1);
   /* ★マーカーは「全部まとめて1枚の層に描いてから、一度だけ重ねる」。
      1本ずつ半透明で描くと、重ねた部分だけ色が二重にのって濃くなり、
      筆を往復させた所もむらになる。層の上では不透明で描くので、
@@ -3251,7 +3223,7 @@ function defaultPasteWidth() {
   /* ★無限モードでテーマ列を使っている時は、貼り付け幅を列幅に合わせる。
      合わせないと、貼った瞬間に隣の列へはみ出して列分けの意味が消える。 */
   if (canvasMode === "inf" && themeAnchors().length) {
-    return Math.max(360, COL_W - 40);
+    return Math.max(360, READ_W);
   }
   var pageW = (canvasMode === "a4v") ? (A4W - 80)             // 用紙の左右余白ぶんを引く
             : (canvasMode === "a4h") ? (A4H - 80)
@@ -5721,8 +5693,8 @@ function splitHereAndSendRight() {
   refreshMeasures();
   setSelection([]);
   // 後半とその下にあるものを、まとめて右隣の列へ
-  moveDownwardToNextColumn(pieces[1]);
-  statusEl.textContent = "ここで分けて、後半を右隣の列へ送りました";
+  setSelection([pieces[1]]);
+  statusEl.textContent = "ここで2つに分けました(後半を選択中)";
 }
 function splitTextObjectByPath(o, path) {
   if (!o.el) return null;
@@ -6916,7 +6888,7 @@ function saveDoc() {
                   /* ★列幅もノートの属性。端末ごとのlocalStorageだけに持たせると、
                      同じノートでも端末によって「どの列に入っているか」の判定が
                      変わり、目次のまとまりや列送りの結果が食い違う。 */
-                  colW: COL_W,
+                  colW: READ_W,
                   rev: pageRev, ts: Date.now() };
   var pid = currentId;
   // ★書き込みの完了を返す。同期はこれを待ってから始める
@@ -7163,7 +7135,7 @@ function loadPage(id, onReady) {
         canvasMode = rec.canvasMode;
       if (rec.bg) bgStyle = rec.bg;
       // 列幅はノートに保存されたものを優先(端末間で判定を揃える)
-      if (rec.colW >= 320 && rec.colW <= 2400) COL_W = rec.colW;
+      if (rec.colW >= 320 && rec.colW <= 2400) READ_W = rec.colW;
     } else {
       rebuildScene("[]");
       view = { x: 0, y: 0, s: 1 };
@@ -9096,7 +9068,7 @@ function toggleAnchor() {
           }, 40);
         } },
       { label: "🔖 目次から外す", danger: true, fn: function(){
-          pushUndo(); o.anch = null; o.anchLv = null;
+          pushUndo(); o.anch = null; o.anchLv = null; o.anchTheme = null;
           inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
           setTimeout(function(){ statusEl.textContent = "目次から外しました"; }, 40);
         } },
@@ -9389,23 +9361,18 @@ function straightenSelection() {
    - o.anch    : 目次に出す名前(既存)
    - o.anchLv  : 1ならテーマ(列)の見出し。未設定/2は単元の見出し
 ========================================================= */
-var COL_W = 1123;            // 列の幅(既定=A4横の幅 A4H=1123)
+var READ_W = 900;            // 見やすい幅(幅そろえの基準)
 try {
   var _cw = parseInt(localStorage.getItem("inknote_col_w"), 10);
-  if (_cw >= 320 && _cw <= 2400) COL_W = _cw;
+  if (_cw >= 320 && _cw <= 2400) READ_W = _cw;
 } catch (e) {}
-var COL_GAP = 0;             // 列と列のあいだ(A4を隙間なく並べる)
-/* 列の区切り線を描くか。描画は毎フレーム走るので、既定は「切」。
-   ★常時描き続けるのは負担が大きく、見た目にも邪魔になるという指摘を受けて
-   既定を切に変更した。列の機能(命名・目次・列送り・幅そろえ)は
-   線を出さなくてもすべて使える。 */
-var showColGuides = true;
-try {
-  var _cg = localStorage.getItem("inknote_col_guides");
-  if (_cg !== null) showColGuides = (_cg === "1");
-} catch (e) {}
+
 function isThemeAnchor(o) { return !!(o && o.anch && o.anchLv === 1); }
-/* テーマ見出しを左から順に並べて返す */
+/* テーマ(章)の一覧。上から下へ読む順に並べる。
+   ★以前は「置いてあるX座標」で所属を決めていたが、その方式だと
+     物を動かすだけで所属が変わり、整理のために動かす必要もあった。
+     いまは所属を o.anchTheme(親テーマのid)として明示的に持つので、
+     どこに置いてあっても構わない。 */
 function themeAnchors() {
   var out = [];
   for (var i = 0; i < objects.length; i++) {
@@ -9413,64 +9380,51 @@ function themeAnchors() {
     var b = objBBox(objects[i]);
     out.push({ o: objects[i], name: String(objects[i].anch), x: b.x, y: b.y, b: b });
   }
-  out.sort(function(a, b2){ return a.x - b2.x; });
+  out.sort(function(a, b2){ return (a.y - b2.y) || (a.x - b2.x); });
   return out;
 }
-/* そのX座標がどのテーマ列に入るか。帯の中に無ければいちばん近い列 */
-function themeIndexAtX(list, x) {
-  if (!list.length) return -1;
-  for (var i = 0; i < list.length; i++)
-    if (x >= list[i].x - COL_GAP / 2 && x < list[i].x + COL_W + COL_GAP / 2) return i;
-  var best = 0, bd = Infinity;
-  for (var j = 0; j < list.length; j++) {
-    var d = Math.abs(x - (list[j].x + COL_W / 2));
-    if (d < bd) { bd = d; best = j; }
+/* いま開いているテーマ(直前に使ったもの)。単元を足す時の既定になる */
+var lastThemeId = null;
+function currentTheme() {
+  var l = themeAnchors();
+  if (!l.length) return null;
+  for (var i = 0; i < l.length; i++) if (l[i].o.id === lastThemeId) return l[i].o;
+  return l[0].o;
+}
+/* そのテーマにぶら下がる単元を、上から順に返す */
+function unitsOfTheme(themeId) {
+  var out = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (!o.anch || o.anchLv === 1) continue;
+    if ((o.anchTheme || null) !== themeId) continue;
+    var b = objBBox(o);
+    out.push({ o: o, name: String(o.anch), y: b.y, x: b.x, b: b });
   }
-  return best;
+  out.sort(function(a, b2){ return (a.y - b2.y) || (a.x - b2.x); });
+  return out;
 }
-/* いま画面の中央がいる列 */
-function currentThemeIndex(list) {
-  var l = list || themeAnchors();
-  if (!l.length) return -1;
-  var cx = (innerWidth / 2 - view.x) / view.s;
-  return themeIndexAtX(l, cx);
-}
-/* 隣のテーマ列へ飛ぶ(列の上端を画面に入れる) */
+/* 隣のテーマへ飛ぶ */
 function jumpTheme(dir) {
   var l = themeAnchors();
-  if (!l.length) { statusEl.textContent = "テーマの見出しがまだありません"; return; }
-  var i = currentThemeIndex(l);
+  if (!l.length) { statusEl.textContent = "テーマがまだありません"; return; }
+  var cur = currentTheme();
+  var i = 0;
+  for (var k = 0; k < l.length; k++) if (l[k].o === cur) { i = k; break; }
   var n = Math.max(0, Math.min(l.length - 1, i + dir));
-  if (n === i && ((dir < 0 && i === 0) || (dir > 0 && i === l.length - 1))) {
+  if (n === i) {
     statusEl.textContent = (dir < 0 ? "最初" : "最後") + "のテーマです";
     return;
   }
-  /* ★レーン(A4横1枚)の中心に寄せる。見出しの位置そのものへ飛ぶと
-     レーンの左端に貼り付いたり半端な位置になったりして、
-     行き来した時に毎回違う見え方になる。 */
-  var lane = COL_W + COL_GAP;
-  var li = Math.floor(l[n].x / lane);
-  bringIntoView({ x: li * lane, y: l[n].y, w: COL_W, h: Math.max(200, l[n].b.h) }, true);
-  updateColBar();
+  lastThemeId = l[n].o.id;
+  bringIntoView(l[n].b, true);
   statusEl.textContent = "テーマ「" + l[n].name + "」へ移動しました";
 }
-/* 今の列の中だけで、次/前の単元見出しへ飛ぶ。
-   ★列をまたがないのが肝心。またぐと分けた意味が無くなる。 */
+/* 今のテーマの中だけで、次/前の単元へ飛ぶ */
 function jumpUnit(dir) {
-  var l = themeAnchors();
-  var i = currentThemeIndex(l);
-  var lo = -Infinity, hi = Infinity;
-  if (i >= 0) { lo = l[i].x - COL_GAP / 2; hi = l[i].x + COL_W + COL_GAP / 2; }
-  var units = [];
-  for (var k = 0; k < objects.length; k++) {
-    var o = objects[k];
-    if (!o.anch || o.anchLv === 1) continue;
-    var b = objBBox(o);
-    if (b.x < lo || b.x >= hi) continue;
-    units.push({ o: o, y: b.y, b: b, name: String(o.anch) });
-  }
-  if (!units.length) { statusEl.textContent = "この列に単元の見出しがありません"; return; }
-  units.sort(function(a, b2){ return a.y - b2.y; });
+  var cur = currentTheme();
+  var units = unitsOfTheme(cur ? cur.id : null);
+  if (!units.length) { statusEl.textContent = "このテーマに単元がありません"; return; }
   var cy = (innerHeight / 2 - view.y) / view.s;
   var target = null;
   if (dir > 0) {
@@ -9478,71 +9432,9 @@ function jumpUnit(dir) {
   } else {
     for (var n2 = units.length - 1; n2 >= 0; n2--) if (units[n2].y < cy - 8) { target = units[n2]; break; }
   }
-  if (!target) { statusEl.textContent = (dir > 0 ? "この列の最後" : "この列の最初") + "です"; return; }
+  if (!target) { statusEl.textContent = (dir > 0 ? "最後" : "最初") + "の単元です"; return; }
   bringIntoView(target.b, true);
   statusEl.textContent = "「" + target.name + "」へ移動しました";
-}
-/* テーマ移動バーの表示更新。無限モードでテーマ見出しがある時だけ出す */
-window.updateColBar = updateColBar;
-function updateColBar() {
-  /* ★テーマ移動バーはユーザーの要望で廃止(左上の目次ボタンと役割が重なり、
-     画面上部を塞いでいたため)。移動は目次パネルから行う。
-     PCのAlt+矢印による移動は残してある。 */
-  var chip = document.getElementById("miniTocBtn");
-  if (chip) chip.classList.toggle("show", canvasMode === "inf");
-}
-/* ★「ここから下を、次の列の先頭へ送る」
-   ---------------------------------------------------------
-   長い1本の縦並びを、上から テーマ1 / テーマ2 / テーマ3 と切り分けていく
-   ための操作。選んだものより下(同じ列にあるもの)をまとめて右隣の列へ移し、
-   移した先では列の先頭の高さに揃える。
-   これを上から順に繰り返せば、1本の長い流れが横並びのテーマ列になる。 */
-function moveDownwardToNextColumn(o) {
-  if (!o) return;
-  /* ★この操作は「箱ごと」動かす。1つの長い箱の途中で分けたい時は
-     文字を選んでリッチバーの ⇥ を使う(そちらが切ってから送る)。 */
-  var b0 = objBBox(o);
-  var l = themeAnchors();
-  var i = themeIndexAtX(l, b0.x);
-  // 今の列の帯。テーマ見出しがまだ無ければ、このBOXの位置を列の基準にする
-  var colX = (i >= 0) ? l[i].x : b0.x;
-  var lo = colX - COL_GAP / 2, hi = colX + COL_W + COL_GAP / 2;
-  // 列の先頭の高さ(そこへ揃えて送る)
-  var topY = Infinity;
-  for (var t = 0; t < objects.length; t++) {
-    var ob = objBBox(objects[t]);
-    if (ob.x < lo || ob.x >= hi) continue;
-    if (ob.y < topY) topY = ob.y;
-  }
-  if (!isFinite(topY)) topY = b0.y;
-  // 送るのは「この列にあって、選んだものと同じ高さ以降」のもの
-  var moving = [];
-  for (var k = 0; k < objects.length; k++) {
-    var ok = objects[k];
-    if (ok.locked) continue;
-    var ob2 = objBBox(ok);
-    if (ob2.x < lo || ob2.x >= hi) continue;
-    if (ob2.y < b0.y - 2) continue;
-    moving.push(ok);
-  }
-  if (!moving.length) { statusEl.textContent = "送るものがありません"; return; }
-  if (moving.length === 1 && moving[0] === o && o.type === "text") {
-    /* 選んだ箱1つしか動かない = 長い1本を分けたかった場合が多い。
-       黙って箱ごと動かすと「何も起きていない」ように見えるので伝える。 */
-    statusEl.textContent = "この箱だけを右へ送ります(途中で分けたい時は文字を選んで ⇥ )";
-  }
-  pushUndo();
-  var dx = COL_W + COL_GAP;
-  var dy = topY - b0.y;              // 送り先では列の先頭の高さに揃える
-  for (var m = 0; m < moving.length; m++) moveObjBy(moving[m], dx, dy);
-  inkDirty = true;
-  refreshMeasures();
-  setSelection([]);
-  scheduleSave();
-  renderTocPanel();
-  updateColBar();
-  bringIntoView(objBBox(o));
-  statusEl.textContent = moving.length + "個を右隣の列の先頭へ送りました";
 }
 /* オブジェクトを平行移動する(種類ごとに持ち方が違うのでここで吸収) */
 function moveObjBy(o, dx, dy) {
@@ -9557,145 +9449,58 @@ function moveObjBy(o, dx, dy) {
   }
 }
 /* =========================================================
-   縦積みの重なりを直す / 列の幅に収める
+   見やすい幅にそろえる / 重なりを直す
    ---------------------------------------------------------
-   縦に連ねたテキストは、途中で改行や加筆をすると背が伸びて
-   下のものに重なってしまう。手で全部動かすのは現実的でないので、
-   「順番は変えずに、重なった分だけ下へ送る」操作を用意する。
-   ★横に並んだ別の列は動かさない。動かすのは同じ列の中だけ。
+   テーマとは無関係の、純粋な整形。選んだものが対象。
+   ★以前は「列の帯」に合わせる作りだったが、所属を座標で決める
+     設計をやめたので、帯の概念も不要になった。
 ========================================================= */
-/* ★列の帯は、画面に引いてある点線の格子と同じ区切りで求める。
-   以前はテーマ見出しの位置から帯を作っていたため、画面に見えている
-   点線と判定が食い違い、「2列目に入れたつもりが1列目に入る」ことがあった。
-   格子は原点からA4横1枚ずつなので、floor(x / レーン幅) で決まる。 */
-function laneIndexOfX(x) {
-  return Math.floor(x / (COL_W + COL_GAP));
-}
-function laneBand(i) {
-  var lane = COL_W + COL_GAP;
-  return { x0: i * lane, lo: i * lane, hi: i * lane + COL_W, index: i };
-}
-function currentLaneIndex() {
-  return laneIndexOfX((innerWidth / 2 - view.x) / view.s);
-}
-function columnBandOfX(x) {
-  return laneBand(laneIndexOfX(x));
-}
-/* 重なりを解消して下に詰め直す。gapは物と物のあいだの余白 */
-function unstackColumn(gap) {
-  gap = (gap == null) ? 16 : gap;
-  var cx = (sel.length === 1) ? objBBox(sel[0]).x + 1
-                              : (innerWidth / 2 - view.x) / view.s;
-  var band = columnBandOfX(cx);
-  var list = [];
-  for (var i = 0; i < objects.length; i++) {
-    var o = objects[i];
-    if (o.locked) continue;
-    if (o.type === "stroke" || o.type === "shape") continue;  // 手書きは動かさない
-    var b = objBBox(o);
-    if (b.x < band.lo || b.x >= band.hi) continue;
-    list.push({ o: o, b: b });
-  }
-  if (list.length < 2) { statusEl.textContent = "この列に並べ直すものがありません"; return; }
-  list.sort(function(p, q){ return p.b.y - q.b.y; });
-  pushUndo();
-  var moved = 0;
-  var bottom = list[0].b.y + list[0].b.h;
-  for (var k = 1; k < list.length; k++) {
-    var it = list[k];
-    var want = bottom + gap;
-    if (it.b.y < want - 0.5) {                 // 重なっている/近すぎる
-      moveObjBy(it.o, 0, want - it.b.y);
-      it.b.y = want;
-      moved++;
-    }
-    bottom = it.b.y + it.b.h;
-  }
-  inkDirty = true;
-  refreshMeasures();
-  scheduleSave();
-  statusEl.textContent = moved
-    ? (moved + "個を下へずらして重なりを直しました")
-    : "重なりはありませんでした";
-}
-/* 列の幅からはみ出したものを、列の中に収める。
-   ★選んでいるものがある時は「今画面に出ているレーン」へ移して収める。
-     以前はそのものが今いるレーンを基準にしていたため、
-     2列目を見ながら実行しても1列目のまま動かなかった。 */
-function fitColumnWidth() {
-  var dest = laneBand(currentLaneIndex());
-  var inner = Math.max(320, COL_W - 40);
-  var left = dest.x0 + 20;
+function tidyWidths() {
   var targets = [];
-  if (sel.length) {
-    for (var s0 = 0; s0 < sel.length; s0++) if (!sel[s0].locked) targets.push(sel[s0]);
-  } else {
-    for (var i = 0; i < objects.length; i++) {
-      var o = objects[i];
-      if (o.locked) continue;
-      if (o.type === "stroke" || o.type === "shape") continue;
-      var b = objBBox(o);
-      if (b.x < dest.lo || b.x >= dest.hi) continue;
-      targets.push(o);
-    }
+  for (var i = 0; i < sel.length; i++) {
+    var o = sel[i];
+    if (o.locked) continue;
+    if (o.type === "text" || o.type === "image") targets.push(o);
   }
   if (!targets.length) {
-    statusEl.textContent = "収めるものがありません(動かしたいものを選ぶか、その列を画面に出してください)";
+    statusEl.textContent = "幅をそろえたいものを選んでから実行してください";
     return;
   }
+  // 左端は「選んだ中でいちばん左」に合わせる(勝手に別の場所へ動かさない)
+  var left = Infinity;
+  for (var j = 0; j < targets.length; j++) left = Math.min(left, objBBox(targets[j]).x);
   pushUndo();
   var n = 0;
   for (var k = 0; k < targets.length; k++) {
-    var t = targets[k];
-    if (t.type === "stroke" || t.type === "shape") {
-      // 手書き・図形は形を保ったまま、レーンの中へ平行移動するだけ
-      var bb = objBBox(t);
-      if (bb.x >= dest.x0 && bb.x + bb.w <= dest.x0 + COL_W) continue;
-      moveObjBy(t, left - bb.x, 0);
-      n++;
-      continue;
-    }
-    var b2 = objBBox(t);
-    var changed = false;
+    var t = targets[k], changed = false;
     if (t.type === "text") {
-      /* ★幅を指定しても効かない書式が2つあり、これがはみ出しの原因だった。
-         ・自動で横に伸びる設定(autoW)は width:auto が優先され、
-           o.w をいくら小さくしても縮まない
-         ・等幅(ASCII図など)は折り返さない指定なので、やはり幅を超える
-         autoWは「列に収める」意図と両立しないので解除して折り返させる。
-         等幅は折り返すと図が崩れるため、幅ではなく文字の大きさを縮める。 */
+      /* 自動で横に伸びる設定は width:auto が優先され幅指定が効かないので解除。
+         等幅(ASCII図)は折り返すと崩れるため、広げず縮めるだけにする。 */
       if (t.autoW) {
         t.autoW = false;
         if (t.el) { t.el.classList.remove("autow"); t.el.style.maxWidth = ""; }
         changed = true;
       }
-      /* ★幅は「はみ出したら縮める」だけでなく、狭いものは列の幅まで広げる。
-         短いまま置かれた箱がバラバラの幅だと、列として読みにくいため。
-         等幅(ASCII図)は折り返さないので広げても意味がなく、崩れる恐れが
-         あるので対象外。画像は引き伸ばすとぼやけるので縮小のみ。 */
-      if (!t.mono && Math.abs((t.w || 0) - inner) > 1) { t.w = inner; changed = true; }
-      else if (t.mono && (t.w || 0) > inner) { t.w = inner; changed = true; }
+      var want = t.mono ? Math.min(t.w || READ_W, READ_W) : READ_W;
+      if (Math.abs((t.w || 0) - want) > 1) { t.w = want; changed = true; }
       if (Math.abs(t.x - left) > 0.5) { t.x = left; changed = true; }
       if (changed && t.el) {
         t.el.style.left = t.x + "px";
-        // ★DOM側の幅も更新する。o.w を変えるだけでは見た目が変わらず、
-        //   「収めたのにはみ出たまま」になる(はみ出しの主因のひとつ)。
-        t.el.style.width = t.w + "px";
+        t.el.style.width = t.w + "px";   // DOM側も更新しないと見た目が変わらない
       }
       if (changed) measureObj(t);
-      // 縮めても実際の描画幅が越えている(等幅など)なら、文字を小さくする
       var after = objBBox(t);
-      if (after.w > inner + 1) {
-        var sc = Math.max(0.4, inner / after.w);
-        t.fontSize = Math.max(8, Math.round((t.fontSize || 20) * sc));
+      if (after.w > READ_W + 1) {
+        var scq = Math.max(0.4, READ_W / after.w);
+        t.fontSize = Math.max(8, Math.round((t.fontSize || 20) * scq));
         if (t.el) t.el.style.fontSize = t.fontSize + "px";
         measureObj(t);
         changed = true;
       }
-    } else if (t.type === "image") {
-      if (t.w > inner) {
-        var r = inner / t.w;
-        t.w = inner; t.h = Math.max(20, Math.round(t.h * r));
+    } else {
+      if (t.w > READ_W) {                // 画像は引き伸ばさない(ぼやけるため)
+        var r = READ_W / t.w;
+        t.w = READ_W; t.h = Math.max(20, Math.round(t.h * r));
         changed = true;
       }
       if (Math.abs(t.x - left) > 0.5) { t.x = left; changed = true; }
@@ -9707,12 +9512,29 @@ function fitColumnWidth() {
     }
     if (changed) n++;
   }
-  inkDirty = true;
-  refreshMeasures();
-  scheduleSave();
-  statusEl.textContent = n
-    ? (n + "個を" + (dest.index + 1) + "列目の幅にそろえました")
-    : ((dest.index + 1) + "列目にすでにそろっています");
+  inkDirty = true; refreshMeasures(); scheduleSave();
+  statusEl.textContent = n ? (n + "個の幅をそろえました(" + READ_W + "px)")
+                           : "すでにそろっています";
+}
+function unstackSelection(gap) {
+  gap = (gap == null) ? 16 : gap;
+  var list = [];
+  for (var i = 0; i < sel.length; i++) {
+    var o = sel[i];
+    if (o.locked || o.type === "stroke" || o.type === "shape") continue;
+    list.push({ o: o, b: objBBox(o) });
+  }
+  if (list.length < 2) { statusEl.textContent = "2つ以上選んでから実行してください"; return; }
+  list.sort(function(p, q){ return p.b.y - q.b.y; });
+  pushUndo();
+  var moved = 0, bottom = list[0].b.y + list[0].b.h;
+  for (var k = 1; k < list.length; k++) {
+    var it = list[k], want = bottom + gap;
+    if (it.b.y < want - 0.5) { moveObjBy(it.o, 0, want - it.b.y); it.b.y = want; moved++; }
+    bottom = it.b.y + it.b.h;
+  }
+  inkDirty = true; refreshMeasures(); scheduleSave();
+  statusEl.textContent = moved ? (moved + "個を下へずらしました") : "重なりはありませんでした";
 }
 /* =========================================================
    ノートの中の文字を探す
@@ -9773,6 +9595,8 @@ function gotoHit(h) {
       bringIntoView(objBBox(objects[i]), true);
       setSelection([]);
       updateSelUI();
+      // 目で追えるように、少しの間だけ枠を光らせる
+      flashObject(objects[i]);
       statusEl.textContent = "「" + findQuery + "」の場所へ移動しました";
       return;
     }
@@ -9780,14 +9604,27 @@ function gotoHit(h) {
   }
   if (h.pageId === currentId) { closeFind(); focusIt(); return; }
   closeFind();
-  switchPage(h.pageId);
-  // ページの読み込みが終わるのを待ってから探す
-  var tries = 0;
-  (function wait(){
-    if (currentId === h.pageId && !isLoadingPage) { focusIt(); return; }
-    if (++tries > 40) return;
-    setTimeout(wait, 100);
-  })();
+  /* ★ページを切り替えてから移動する。
+     以前は「読み込みが終わったか」を100msごとに見張る作りで、
+     読み込みが失敗した時(手元にまだ無いページなど)は
+     いつまでも終わらず、何のメッセージも出ないまま無反応になっていた。
+     loadPageの完了合図(onReady)を使い、来なければその旨を出す。 */
+  statusEl.textContent = "ページを開いています…";
+  var done = false;
+  saveDocNow();
+  loadPage(h.pageId, function(){ done = true; focusIt(); });
+  closePages();
+  setTimeout(function(){
+    if (!done) statusEl.textContent =
+      "ページを開けませんでした(一覧から開いてもう一度お試しください)";
+  }, 6000);
+}
+/* 見つけた場所を一瞬強調する(移動しただけではどれか分からないため) */
+function flashObject(o) {
+  if (!o || !o.el) return;
+  var el = o.el;
+  el.classList.add("found-flash");
+  setTimeout(function(){ el.classList.remove("found-flash"); }, 1600);
 }
 function jumpToAnchor(obj) {
   /* ★目次からの移動は「見に行くだけ」。
@@ -10101,24 +9938,43 @@ var AI_PROMPT_HEAD =
   "内容を読んで、次の方針で整理し直してください。\n" +
   "- 重複する説明はまとめ、関連する内容は近くに集める\n" +
   "- 見出しを付けて、後から読み返しやすい構成にする\n" +
-  "- 事実関係は変えないこと。書かれていないことを足さないこと\n" +
+  "\n" +
+  "【足してよいこと・いけないこと】\n" +
+  "ここが重要です。次の2つを区別してください。\n" +
+  "○ 足してよい: 添付した画像や図の中に写っている文字・数値・表・グラフの\n" +
+  "  軸や凡例など、「実際に見えているもの」の書き起こし。むしろ積極的に読み取って、\n" +
+  "  文章や表として書き出してください。\n" +
+  "  ★書き出す場所は、元の画像があった位置ではなく「内容にふさわしい章」です。\n" +
+  "  この作業の目的は内容で並べ替えることなので、図の中身も他の文章と同じように\n" +
+  "  関連する話題のところへ移してまとめてください。\n" +
+  "  出典は位置ではなく番号で示します。書き起こした文の行頭に「(図#番号より)」と\n" +
+  "  付けてください(例: (図#12より) 18%未満で入室禁止)。\n" +
+  "  [画像 #番号] の目印も、その中身を書き起こした章へ一緒に移してください。\n" +
+  "  1つの図の内容が複数の章に散る場合は、目印は主に扱う章に1つだけ置き、\n" +
+  "  他の章では「(図#番号より)」の表記だけで参照してください。\n" +
+  "× 足してはいけない: ノートにも画像にも無い一般知識、あなたの推測や補足説明、\n" +
+  "  読み取れない部分の穴埋め。読めない所は「(判読不能)」と書いてください。\n" +
+  "つまり「書かれていないことは足さない」の“書かれている”には、\n" +
+  "画像の中に書かれていることも含みます。事実関係は変えないでください。\n" +
   "\n" +
   "【[画像 #番号] について】\n" +
-  "これは元のノートに貼ってあるスクリーンショットや図の位置を示す目印です。\n" +
-  "中身は文字にできないため渡せていません。消さずに、対応する説明の近くに\n" +
-  "そのままの表記で残してください(内容を想像で補わないこと)。\n" +
-  "画像そのものを見せる場合は、別途「画像シート」を添付します。これは\n" +
-  "各画像の上に #番号 を書いた1枚の画像で、本文の [画像 #番号] と\n" +
-  "番号で1対1に対応します。ページ全体のPNG/PDFを添付することもあります。\n" +
-  "どちらの場合も、本文の文字はこの書き出しを正とし、画像は補足として見てください\n" +
+  "これは元のノートに貼ってあるスクリーンショットや図を指す目印です。\n" +
+  "表記はそのままで残してください(消したり番号を変えたりしないこと)。\n" +
+  "ただし置き場所は動かして構いません。内容にふさわしい章へ移してください。\n" +
+  "画像そのものは別途「画像シート」として添付します。これは各画像の上に\n" +
+  "#番号 を書いた1枚の画像で、本文の [画像 #番号] と番号で1対1に対応します。\n" +
+  "ページ全体のPNG/PDFを添付することもあります。\n" +
+  "本文の文字はこの書き出しを正としてください\n" +
   "(画像から数式を読み取り直すと L_1 と L₁ のような取り違えが起きるため)。\n" +
+  "画像しか情報が無い部分だけ、上のルールで書き起こしてください。\n" +
   "\n" +
   "【出力形式】結果はHTMLで返してください。InkNoteに取り込みます。\n" +
   "- 大きな区切りごとに <section> で囲む(1つの <section> がノート上の1つの文章ブロックになります)\n" +
+  "- 表を含む区切りは、表とその説明文を同じ <section> に入れて構いません\n" +
   "- 使えるタグ: section, h1〜h3, p, br, b, strong, i, em, u, span, div,\n" +
   "  ul, ol, li, table, thead, tbody, tr, th, td\n" +
   "- 文字色やマーカーは span の style で color / background-color のみ指定可\n" +
-  "- 数式は $$...$$ のまま地の文に書いてください(取り込み時に自動で組版されます)\n" +
+  "- 数式は $$...$$ のまま地の文に書いてください(表のセルの中でも同じ。取り込み時に自動で組版されます)\n" +
   "- [画像 #番号] は地の文にそのまま書いてください\n" +
   "- <script> や <style>、画像は使わないでください(取り込み時に除去されます)\n" +
   "\n---\n\n";
@@ -10428,11 +10284,23 @@ function importHtmlAsNewPage(html, title) {
     scheduleSave();
     if (cloudUser()) { saveIndex(); cloudPushIndex().catch(function(){}); }
     statusEl.textContent = "新しいページに取り込みました(" + made.length + "ブロック)";
-    // ★表の中の $$…$$ は、貼り付けと同じように自動で組版する
+    /* ★ブロック全体(表の中も外も)の式を組版する。
+       表専用の処理だけだと、表を含むブロックの地の文が取り残される。 */
     if (autoCellMath) {
-      autoTypesetTablesIn(made).then(function(n){
-        if (n) statusEl.textContent =
-          "新しいページに取り込みました(" + made.length + "ブロック / 式 " + n + "個を組版)";
+      var c = Promise.resolve(), total = 0;
+      made.forEach(function(o){
+        c = c.then(function(){
+          return typesetMathInObject(o).then(function(k){ total += k; });
+        });
+      });
+      c.then(function(){
+        if (total) {
+          inkDirty = true; refreshMeasures();
+          for (var j = 0; j < made.length; j++) clampToSheet(made[j]);
+          scheduleSave();
+          statusEl.textContent =
+            "新しいページに取り込みました(" + made.length + "ブロック / 式 " + total + "個を組版)";
+        }
       });
     }
   });
@@ -10731,6 +10599,20 @@ $("#expImgSheet").onclick = function(){
   setTimeout(openImageSheetSheet, 150);
 };
 $("#aiImpCancel").onclick = function(){ closeAiImportSheet(); };
+/* ★長いHTMLは貼り付けが大変なので、ファイルからも読めるようにする */
+$("#aiImpFile").onclick = function(){ $("#aiImpFileInput").click(); };
+$("#aiImpFileInput").onchange = function(){
+  var f = this.files && this.files[0];
+  this.value = "";
+  if (!f) return;
+  var rd = new FileReader();
+  rd.onload = function(){
+    $("#aiImpText").value = String(rd.result || "");
+    statusEl.textContent = f.name + " を読み込みました(内容を確かめて「取り込む」)";
+  };
+  rd.onerror = function(){ statusEl.textContent = "ファイルを読めませんでした"; };
+  rd.readAsText(f);
+};
 $("#aiImpOk").onclick = function(){
   var t = $("#aiImpText").value || "";
   if (!t.trim()) { statusEl.textContent = "貼り付けてから「取り込む」を押してください"; return; }
@@ -11167,37 +11049,44 @@ function bindRichBar() {
     var r = selectionInsideEditing();
     var name = r ? String(r.toString()).trim().replace(/\s+/g, " ").slice(0, 40) : "";
     var o = editingObj;
-    if (!o) { statusEl.textContent = "見出しにする文字を選んでください"; return; }
-    if (!name) { statusEl.textContent = "見出しにする文字を選んでください"; return; }
-    showSheet("「" + name + "」を見出しにする", [
-      { label: "🔖 単元の見出し(縦に並ぶ)", fn: function(){ setAnchorFromText(o, name, 2); } },
-      { label: "📑 テーマの見出し(横に並ぶ列)", fn: function(){ setAnchorFromText(o, name, 1); } },
-      { label: "キャンセル", cancel: true }
-    ]);
+    if (!o || !name) { statusEl.textContent = "見出しにする文字を選んでください"; return; }
+    /* ★いちばん楽な形にする。前に使ったテーマがあれば、
+       1タップでその下に単元としてぶら下げられるようにする。 */
+    var cur = currentTheme();
+    var items = [];
+    if (cur) {
+      items.push({ label: "🔖 単元にする(テーマ: " + cur.anch + ")",
+                   fn: function(){ setAnchorFromText(o, name, 2, cur.id); } });
+    }
+    items.push({ label: "📑 新しいテーマにする",
+                 fn: function(){ setAnchorFromText(o, name, 1, null); } });
+    var others = themeAnchors();
+    if (others.length > (cur ? 1 : 0)) {
+      items.push({ label: "🔖 別のテーマの単元にする…", fn: function(){
+          var sub = others.map(function(t){
+            return { label: "📑 " + t.name,
+                     fn: function(){ setAnchorFromText(o, name, 2, t.o.id); } };
+          });
+          sub.push({ label: "キャンセル", cancel: true });
+          showSheet("どのテーマに入れますか", sub);
+        } });
+    }
+    items.push({ label: "キャンセル", cancel: true });
+    showSheet("「" + name + "」を", items);
   });
-  bindTap($("#rbSplitCol"), function(){ splitHereAndSendRight(); });
-  function setAnchorFromText(o, name, lv) {
+  function setAnchorFromText(o, name, lv, themeId) {
     pushUndo();
     o.anch = name;
     o.anchLv = lv;
+    o.anchTheme = (lv === 1) ? null : (themeId || null);
+    if (lv === 1) lastThemeId = o.id;
+    else if (themeId) lastThemeId = themeId;
     inkDirty = true;
     scheduleSave();
     renderTocPanel();
-    updateColBar();
-    statusEl.textContent = (lv === 1 ? "テーマに追加: " : "目次に追加: ") + name;
-    /* テーマにした直後は「ここから下を隣の列へ送る」を続けたいことが多いので
-       その場で聞く。長い1本の縦並びを上から切り分けていく流れに合わせる。 */
-    if (lv === 1 && canvasMode === "inf") {
-      setTimeout(function(){
-        commitText();
-        showSheet("「" + name + "」から下を右隣の列へ送りますか", [
-          { label: "📑 送る(ここから下が次の列になります)",
-            fn: function(){ moveDownwardToNextColumn(o); } },
-          { label: "そのままにする", cancel: true }
-        ]);
-      }, 260);
-    }
+    statusEl.textContent = (lv === 1 ? "テーマにしました: " : "単元にしました: ") + name;
   }
+
   /* ★リッチバーの上で指を下ろした時点で、OS標準メニューや
      ステージ側のジェスチャーにイベントを渡さない。
      渡してしまうと、押したつもりがOSのメニュー操作として扱われ、
@@ -11933,6 +11822,35 @@ function typesetTableCellMath(o) {
 }
 /* 貼り付けで作った物のうち、表だけを対象に自動で式を組版する。
    設定OFF・表なし・式なしの時は何もしない(貼り付け結果に触らない)。 */
+/* ★取り込んだブロック全体(表の中も外も)の式を組版する。
+   以前は表専用の処理(セルの中だけ)を使っていたため、
+   表を含むブロックでは表の外の地の文が変換されず、
+   「一番上の箱だけ組版できた」状態になっていた。 */
+function typesetMathInObject(o) {
+  if (!o || !o.el) return Promise.resolve(0);
+  var nodes = [];
+  var w = document.createTreeWalker(o.el, NodeFilter.SHOW_TEXT, null, false);
+  var n;
+  while ((n = w.nextNode())) if ((n.nodeValue || "").indexOf("$") !== -1) nodes.push(n);
+  if (!nodes.length) return Promise.resolve(0);
+  var total = 0;
+  var chain = Promise.resolve();
+  nodes.forEach(function(nd){
+    chain = chain.then(function(){
+      return typesetMathInTextNode(nd).then(function(c){ total += c; });
+    });
+  });
+  return chain.then(function(){
+    if (!total) return 0;
+    o.rich = sanitizeRich(o.el.innerHTML);
+    var b = document.createElement("div");
+    b.innerHTML = o.rich;
+    o.text = (b.innerText || b.textContent || "").trim();
+    o.el.innerHTML = o.rich;
+    measureObj(o);
+    return total;
+  }).catch(function(){ return total; });
+}
 function autoTypesetTablesIn(made) {
   if (!autoCellMath) return Promise.resolve(0);
   var tables = [];
@@ -12156,6 +12074,13 @@ function latexToUnicode(src) {
   /* ★度記号は「それ自体が上付き」なので、^\circ の上付き指定を先に外す。
      そうしないと ° を上付きにしようとして表せず、90° まで画像送りになる。 */
   s = s.replace(/\^\s*\{?\s*\\circ\s*\}?/g, "\\circ");
+  /* ★_\text{motion} のように、添字に波括弧が付いていない書き方への対策。
+     このあと \text{...} を中身だけに展開するので、先に括り直しておかないと
+     T_\text{motion} → T_motion となり、添字が「m」1文字だけと解釈されて
+     「Tₘotion」になってしまう(報告された症状そのもの)。
+     _ や ^ の直後に来る \text{...} は、明示的に {…} で括っておく。 */
+  s = s.replace(/([_^])\s*\\(?:text|mathrm|mathbf|mathit|operatorname)\s*\{([^{}]*)\}/g,
+                "$1{$2}");
   /* ★\text{...} の展開とコマンド置換は「1回の走査」でまとめて行う。
      先に \text{...} だけ展開すると、\circ\text{C} が \circC という
      繋がった1語になり、未知のコマンドと誤判定されてしまう
@@ -12741,7 +12666,7 @@ function renderTocPanel() {
     ed.addEventListener("click", function(e){ e.stopPropagation(); askAnchorName(a.o, a.o.anchLv); });
     dl.addEventListener("click", function(e){
       e.stopPropagation();
-      pushUndo(); a.o.anch = null; a.o.anchLv = null;
+      pushUndo(); a.o.anch = null; a.o.anchLv = null; a.o.anchTheme = null;
       inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
     });
     row.addEventListener("click", function(){ jumpToAnchor(a.o); closeToc(); });
@@ -12761,8 +12686,35 @@ function renderTocPanel() {
     var ed = document.createElement("button");
     ed.className = "toc-btn"; ed.textContent = "✎";
     ed.addEventListener("click", function(e){ e.stopPropagation(); askAnchorName(t.o, 1); });
+    /* ★テーマ列をやめる。中身(文字や画像)は消さず、
+       「この列のテーマである」という指定だけを外す。
+       列をやめたいだけなのに内容まで消えては困るため。 */
+    var rm = document.createElement("button");
+    rm.className = "toc-btn del"; rm.textContent = "🗑";
+    rm.title = "テーマ列をやめる(中身は消えません)";
+    rm.addEventListener("click", function(e){
+      e.stopPropagation();
+      showSheet("テーマ列「" + t.name + "」をやめますか", [
+        { label: "📑 テーマ指定だけ外す(文字はそのまま残る)", fn: function(){
+            pushUndo();
+            t.o.anch = null; t.o.anchLv = null; t.o.anchTheme = null;
+            inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+            setTimeout(function(){
+              statusEl.textContent = "テーマ列をやめました(中身はそのままです)";
+            }, 40);
+          } },
+        { label: "🔖 単元の見出しに格下げする", fn: function(){
+            pushUndo();
+            t.o.anchLv = 2; t.o.anchTheme = null;
+            inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+            setTimeout(function(){ statusEl.textContent = "単元の見出しにしました"; }, 40);
+          } },
+        { label: "キャンセル", cancel: true }
+      ]);
+    });
     row.addEventListener("click", function(){ jumpToAnchor(t.o); closeToc(); });
-    row.appendChild(ic); row.appendChild(nm); row.appendChild(cnt); row.appendChild(ed);
+    row.appendChild(ic); row.appendChild(nm); row.appendChild(cnt);
+    row.appendChild(ed); row.appendChild(rm);
     return row;
   }
   var themes = themeAnchors();
@@ -12773,15 +12725,16 @@ function renderTocPanel() {
   }
   var used = {};
   for (var t = 0; t < themes.length; t++) {
-    var lo = themes[t].x - COL_GAP / 2, hi = themes[t].x + COL_W + COL_GAP / 2;
+    /* ★座標ではなく、単元が持っている親テーマのidで束ねる */
+    var tid = themes[t].o.id;
     var kids = [];
     for (var k = 0; k < al.length; k++) {
       var a = al[k];
       if (a.o.anchLv === 1) continue;
-      if (a.x < lo || a.x >= hi) continue;
+      if ((a.o.anchTheme || null) !== tid) continue;
       used[k] = 1; kids.push(a);
     }
-    kids.sort(function(p, q){ return p.y - q.y; });
+    kids.sort(function(p, q){ return (p.y - q.y) || (p.x - q.x); });
     host.appendChild(themeRow(themes[t], t, kids.length));
     if (!kids.length) {
       var e2 = document.createElement("div");
@@ -12796,7 +12749,7 @@ function renderTocPanel() {
   if (rest.length) {
     var hd = document.createElement("div");
     hd.style.cssText = "color:var(--ui-dim);font-size:11px;padding:12px 8px 4px";
-    hd.textContent = "どの列にも入っていない見出し";
+    hd.textContent = "どのテーマにも入っていない見出し";
     host.appendChild(hd);
     for (var s2 = 0; s2 < rest.length; s2++) host.appendChild(unitRow(rest[s2]));
   }
@@ -12900,96 +12853,45 @@ $("#miniTocBtn").onclick = function(){
 };
 /* テーマ列のひな形を作る。名前をカンマか改行で区切って入力してもらう。
    ★既にあるものは消さない。空いている右側に足していく。 */
-/* ★「今画面に出ている列に名前をつける」。
-   以前はテーマ名をカンマ区切りでまとめて入力させ、見出しを新規に
-   並べて作る方式だったが、すでに置いてある内容には全く使えず
-   (左の列に後から名前を付けられない)、操作も分かりにくかった。
-   見たい列を画面に出して押すだけ、に変える。 */
-function contentColumnBandAt(cx) {
-  var l = themeAnchors();
-  for (var i = 0; i < l.length; i++) {
-    if (cx >= l[i].x - COL_GAP / 2 && cx < l[i].x + COL_W + COL_GAP / 2)
-      return { x0: l[i].x, theme: l[i].o };       // すでに名前のある列
-  }
-  /* まだ名前が無い場所。近くにある内容の左端に列を合わせる。
-     こうすると、貼り付けた本文の左端がそのまま列の左端になる。 */
-  var lo = cx - COL_W, hi = cx + COL_W;
-  var minX = Infinity;
-  for (var k = 0; k < objects.length; k++) {
-    var b = objBBox(objects[k]);
-    if (b.x + b.w < lo || b.x > hi) continue;
-    if (b.x < minX) minX = b.x;
-  }
-  if (!isFinite(minX)) minX = cx - COL_W / 2;
-  return { x0: minX, theme: null };
-}
-function nameCurrentColumn() {
-  if (canvasMode !== "inf") {
-    statusEl.textContent = "テーマ列は無限キャンバス用です(⚙の用紙を「無限」に)";
+/* ⚙メニューからは「選んだものをテーマにする」だけを提供する。
+   ★以前は「今画面に出ている列に名前をつける」だったが、
+     テーマを場所で決める設計をやめたので、対象は選択したもの。 */
+function makeSelectedTheme() {
+  if (sel.length !== 1) {
+    statusEl.textContent = "テーマにしたいものを1つ選んでから実行してください";
     return;
   }
-  var cx = (innerWidth / 2 - view.x) / view.s;
-  var band = contentColumnBandAt(cx);
-  var def = band.theme ? String(band.theme.anch) : "";
-  askText(band.theme ? "この列の名前を変える" : "この列の名前", def || "テーマ", function(name){
+  var o = sel[0];
+  var def = o.anch || (o.type === "text"
+    ? String(o.text || "").split("\n")[0].slice(0, 40) : "テーマ");
+  askText("テーマの名前", def || "テーマ", function(name){
     if (name == null) return;
     name = String(name).trim();
     if (!name) return;
     pushUndo();
-    if (band.theme) {
-      band.theme.anch = name;
-      band.theme.anchLv = 1;
-    } else {
-      // 列の一番上を探して、その上に見出しを置く
-      var lo = band.x0 - COL_GAP / 2, hi = band.x0 + COL_W + COL_GAP / 2;
-      var topY = Infinity;
-      for (var k = 0; k < objects.length; k++) {
-        var b = objBBox(objects[k]);
-        if (b.x < lo || b.x >= hi) continue;
-        if (b.y < topY) topY = b.y;
-      }
-      if (!isFinite(topY)) topY = (innerHeight / 2 - view.y) / view.s;
-      var o = { id: idSeq++, type: "text", x: band.x0, y: topY - 90,
-                w: Math.max(360, COL_W - 40), text: name, fontSize: 30,
-                color: (THEMES[themeName] || THEMES.cream).pen,
-                anch: name, anchLv: 1 };
-      objects.push(o); makeTextEl(o); measureObj(o);
-    }
-    inkDirty = true;
-    refreshMeasures();
-    scheduleSave();
-    renderTocPanel();
-    updateColBar();
-    statusEl.textContent = "この列を「" + name + "」にしました";
+    o.anch = name; o.anchLv = 1; o.anchTheme = null;
+    lastThemeId = o.id;
+    inkDirty = true; scheduleSave(); renderTocPanel();
+    statusEl.textContent = "テーマにしました: " + name;
   });
 }
 $("#colMakeBtn").onclick = function(){
   closeMenu();
-  setTimeout(nameCurrentColumn, 120);
+  setTimeout(makeSelectedTheme, 120);
 };
-$("#colGuideToggle").onclick = function(){
-  showColGuides = !showColGuides;
-  this.classList.toggle("on", showColGuides);
-  try { localStorage.setItem("inknote_col_guides", showColGuides ? "1" : "0"); } catch (e) {}
-  inkDirty = true;
-  statusEl.textContent = showColGuides
-    ? "列の区切り線を表示します"
-    : "列の区切り線を消しました(テーマ列の機能はそのまま使えます)";
-};
-$("#colGuideToggle").classList.toggle("on", showColGuides);
 $("#colWidthBtn").onclick = function(){
   closeMenu();
   setTimeout(function(){
-    askText("列の幅(px)", String(COL_W), function(v){
+    askText("見やすい幅(px)", String(READ_W), function(v){
       var n = parseInt(String(v || "").replace(/[^\d]/g, ""), 10);
       if (!(n >= 320 && n <= 2400)) { statusEl.textContent = "320〜2400の数字を入れてください"; return; }
-      COL_W = n;
+      READ_W = n;
       try { localStorage.setItem("inknote_col_w", String(n)); } catch (e) {}
       scheduleSave();          // ★ノート側にも保存して他端末へ伝える
       inkDirty = true;
       renderTocPanel();
       updateColBar();
-      statusEl.textContent = "列の幅を " + n + "px にしました(貼り付け幅も合わせます)";
+      statusEl.textContent = "見やすい幅を " + n + "px にしました(貼り付け幅も合わせます)";
     });
   }, 120);
 };
@@ -13235,13 +13137,8 @@ function openMoreSheet() {
   // 並べる・まとめる
   /* ★長い縦並びを、上からテーマごとに横へ切り分けていくための操作 */
   if (canvasMode === "inf") {
-    items.push({ label: "↧ 重なりを直して下に詰め直す", fn: function(){ unstackColumn(16); } });
-    items.push({ label: "↔ 列の幅にそろえる(広い物は縮め、狭い物は広げる)", fn: fitColumnWidth });
-    items.push({ label: "📑 この列に名前をつける", fn: nameCurrentColumn });
-    if (sel.length === 1) {
-      items.push({ label: "📑 ここから下を右隣の列へ送る",
-                   fn: function(){ moveDownwardToNextColumn(sel[0]); } });
-    }
+    items.push({ label: "↧ 重なりを直して下に詰め直す", fn: function(){ unstackSelection(16); } });
+    items.push({ label: "↔ 見やすい幅にそろえる", fn: tidyWidths });
   }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
   // ★複数のテキストを選んでいる時、幅をまとめて揃える
