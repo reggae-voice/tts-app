@@ -1091,7 +1091,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.79">InkNote <small>v20.79</small></div>
+  <div class="brand" title="InkNote v20.81">InkNote <small>v20.81</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1637,6 +1637,7 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
+
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1667,7 +1668,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.79";
+var APP_VERSION = "20.81";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -9588,6 +9589,14 @@ function searchAllPages(q) {
   return chain.then(function(){ return out; });
 }
 /* 検索結果からその場所へ飛ぶ(必要ならページを切り替えてから) */
+/* 目次ボタンの表示。マップの中に置いてあり、テーマの有無や
+   用紙の種類に関係なく常に使える(テーマは座標と無関係になったため)。
+   ★以前ここで無限モードだけに絞っていたが、その必要はなくなった。 */
+function updateColBar() {
+  var chip = document.getElementById("miniTocBtn");
+  if (chip) chip.classList.add("show");
+}
+window.updateColBar = updateColBar;
 function gotoHit(h) {
   function focusIt() {
     for (var i = 0; i < objects.length; i++) {
@@ -10037,7 +10046,10 @@ function copyTextToClipboard(payload, okMsg) {
     }
   } catch (e) { fail(); }
 }
-function runAiExport(ids, label) {
+/* AIへの書き出し。asFile=true ならクリップボードではなくファイルで保存する。
+   ★ページ数が増えるとコピー&貼り付けが現実的でなくなるため
+     (長文はコピーに失敗したり、貼り付け欄が扱いきれなくなる)。 */
+function runAiExport(ids, label, asFile) {
   if (!ids.length) { statusEl.textContent = "書き出すページがありません"; return; }
   statusEl.textContent = "書き出しています…(" + ids.length + "ページ)";
   buildMarkdownForPages(ids).then(function(md){
@@ -10045,8 +10057,28 @@ function runAiExport(ids, label) {
       statusEl.textContent = "書き出せる文字がありませんでした(手書きだけのページはPDF書出を使ってください)";
       return;
     }
-    copyTextToClipboard(AI_PROMPT_HEAD + md,
-      "AI用にコピーしました(" + label + " / " + ids.length + "ページ) → AIに貼り付け、返ってきたHTMLを「AIから取り込む」へ");
+    var payload = AI_PROMPT_HEAD + md;
+    if (!asFile) {
+      copyTextToClipboard(payload,
+        "AI用にコピーしました(" + label + " / " + ids.length + "ページ) → AIに貼り付け、返ってきたHTMLを「AIから取り込む」へ");
+      return;
+    }
+    var stamp = new Date();
+    var two = function(n){ return (n < 10 ? "0" : "") + n; };
+    var name = "InkNote_AI用_" + stamp.getFullYear() + two(stamp.getMonth() + 1) +
+               two(stamp.getDate()) + "_" + two(stamp.getHours()) + two(stamp.getMinutes()) + ".md";
+    try {
+      /* ★BOM付きにしておく。付けないと環境によっては日本語が
+         文字化けした状態で開かれることがある。 */
+      var blob = new Blob(["\ufeff" + payload], { type: "text/markdown;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      downloadURL(url, name);
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+      statusEl.textContent = name + " を保存しました(" + ids.length + "ページ / " +
+        Math.round(payload.length / 1000) + "千文字) → AIに添付してください";
+    } catch (e) {
+      copyTextToClipboard(payload, "ファイルに保存できなかったのでコピーしました");
+    }
   });
 }
 /* 書き出す範囲(このページ/フォルダ/全部)を選ばせる。
@@ -10068,7 +10100,20 @@ function openScopeSheet(title, run) {
   showSheet(title, items);
 }
 function openAiExportSheet() {
-  openScopeSheet("AIへ書き出す範囲", runAiExport);
+  openScopeSheet("AIへ書き出す範囲", function(ids, label){
+    /* ページ数が多い時はコピーだと詰まるので、既定をファイルにする */
+    var many = ids.length > 1;
+    var items = [
+      { label: (many ? "📄 ファイルに保存(おすすめ)" : "📄 ファイルに保存"),
+        fn: function(){ runAiExport(ids, label, true); } },
+      { label: (many ? "📋 コピー(長いと途中で切れることがあります)" : "📋 コピー"),
+        fn: function(){ runAiExport(ids, label, false); } },
+      { label: "キャンセル", cancel: true }
+    ];
+    setTimeout(function(){
+      showSheet(label + "(" + ids.length + "ページ)をどう渡しますか", items);
+    }, 180);
+  });
 }
 /* =========================================================
    AI連携: 貼り付けた画像だけを「番号付きの1枚シート」にして書き出す
