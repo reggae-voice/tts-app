@@ -1079,7 +1079,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.70">InkNote <small>v20.70</small></div>
+  <div class="brand" title="InkNote v20.73">InkNote <small>v20.73</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1654,7 +1654,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.70";
+var APP_VERSION = "20.73";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5600,6 +5600,37 @@ function groupToText(nodes) {
    貼り付けた長文には改行が入っていないことが多く、行の境目でしか
    割れない従来のやり方では「途中で切りたい」に応えられなかった。
    画面座標から文字位置を割り出して、そこでDOMごと切り分ける。 */
+/* ★切る位置の文字を、画面の当たり判定を使わずに求める。
+   以前は caretRangeFromPoint(その点に何があるか)で探していたが、
+   投げ縄の最中は入力を受け取る透明な層(#capture)が全面を覆っているため、
+   常にその層に当たってしまい文字が見つからず、分割できなかった。
+   文字の矩形を直接測って、切った線より下に来る最初の文字を二分探索で探す。 */
+function offsetAtClientY(el, clientY) {
+  var nodes = [];
+  var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+  var n;
+  while ((n = w.nextNode())) if ((n.nodeValue || "").length) nodes.push(n);
+  if (!nodes.length) return null;
+  var r = document.createRange();
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i], len = node.nodeValue.length;
+    try {
+      r.setStart(node, Math.max(0, len - 1)); r.setEnd(node, len);
+      if (r.getBoundingClientRect().bottom <= clientY) continue;   // まだ上
+    } catch (e) { continue; }
+    var lo = 0, hi = len;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      try {
+        r.setStart(node, mid); r.setEnd(node, Math.min(len, mid + 1));
+        if (r.getBoundingClientRect().bottom <= clientY) lo = mid + 1; else hi = mid;
+      } catch (e2) { break; }
+    }
+    if (lo <= 0 && i === 0) return null;        // 先頭すぎる = 切る意味がない
+    return { node: node, off: lo };
+  }
+  return null;
+}
 function caretOffsetAt(clientX, clientY) {
   if (document.caretRangeFromPoint) {
     var r = document.caretRangeFromPoint(clientX, clientY);
@@ -5653,9 +5684,8 @@ function splitTextObjectAtWorldY(o, worldY) {
   if (!o.el) return null;
   var b = objBBox(o);
   if (worldY <= b.y + 6 || worldY >= b.y + b.h - 6) return null;  // 端すぎる
-  var cx = (b.x + 8) * view.s + view.x;
   var cy = worldY * view.s + view.y;
-  var cp = caretOffsetAt(cx, cy);
+  var cp = offsetAtClientY(o.el, cy);
   if (!cp) return null;
   var pieces = splitPiecesAtCaret(o, cp.node, cp.off);
   if (!pieces) return null;
@@ -5839,6 +5869,7 @@ function performLassoCut(path) {
   }
   var cutImages = 0;
   var cutTexts = 0;
+  var textTried = 0;   // 文字BOXに当たったが割れなかった数
   for (var i = objects.length - 1; i >= 0; i--) {
     var o = objects[i];
 
@@ -5848,7 +5879,7 @@ function performLassoCut(path) {
       if (tb.x > px2 || tb.y > py2 || tb.x + tb.w < px1 || tb.y + tb.h < py1) continue;
       var res = null;
       try { res = splitTextObjectByPath(o, path); } catch (e) { res = null; }
-      if (!res) continue;
+      if (!res) { textTried++; continue; }
       if (sel.indexOf(o) !== -1) setSelection(sel.filter(function(x){ return x !== o; }));
       if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
       Array.prototype.splice.apply(objects, [i, 1].concat(res.pieces));
@@ -5929,7 +5960,9 @@ function performLassoCut(path) {
       : ("✂ 分割しました(内側 " + insidePieces.length + " 本を選択中)");
     setTimeout(function(){ statusEl.textContent = msg; }, 40);
   } else {
-    statusEl.textContent = "切り分けるものがありません(線や画像をまたいで囲んでください)";
+    statusEl.textContent = textTried
+      ? "この位置では文字BOXを割れませんでした(囲みの上辺か下辺がBOXの途中を横切るようにしてください)"
+      : "切り分けるものがありません(線や画像をまたいで囲んでください)";
   }
 }
 
@@ -9625,9 +9658,40 @@ function fitColumnWidth() {
     var b2 = objBBox(t);
     var changed = false;
     if (t.type === "text") {
-      if ((t.w || 0) > inner) { t.w = inner; changed = true; }
+      /* ★幅を指定しても効かない書式が2つあり、これがはみ出しの原因だった。
+         ・自動で横に伸びる設定(autoW)は width:auto が優先され、
+           o.w をいくら小さくしても縮まない
+         ・等幅(ASCII図など)は折り返さない指定なので、やはり幅を超える
+         autoWは「列に収める」意図と両立しないので解除して折り返させる。
+         等幅は折り返すと図が崩れるため、幅ではなく文字の大きさを縮める。 */
+      if (t.autoW) {
+        t.autoW = false;
+        if (t.el) { t.el.classList.remove("autow"); t.el.style.maxWidth = ""; }
+        changed = true;
+      }
+      /* ★幅は「はみ出したら縮める」だけでなく、狭いものは列の幅まで広げる。
+         短いまま置かれた箱がバラバラの幅だと、列として読みにくいため。
+         等幅(ASCII図)は折り返さないので広げても意味がなく、崩れる恐れが
+         あるので対象外。画像は引き伸ばすとぼやけるので縮小のみ。 */
+      if (!t.mono && Math.abs((t.w || 0) - inner) > 1) { t.w = inner; changed = true; }
+      else if (t.mono && (t.w || 0) > inner) { t.w = inner; changed = true; }
       if (Math.abs(t.x - left) > 0.5) { t.x = left; changed = true; }
-      if (changed) { if (t.el) t.el.style.left = t.x + "px"; measureObj(t); }
+      if (changed && t.el) {
+        t.el.style.left = t.x + "px";
+        // ★DOM側の幅も更新する。o.w を変えるだけでは見た目が変わらず、
+        //   「収めたのにはみ出たまま」になる(はみ出しの主因のひとつ)。
+        t.el.style.width = t.w + "px";
+      }
+      if (changed) measureObj(t);
+      // 縮めても実際の描画幅が越えている(等幅など)なら、文字を小さくする
+      var after = objBBox(t);
+      if (after.w > inner + 1) {
+        var sc = Math.max(0.4, inner / after.w);
+        t.fontSize = Math.max(8, Math.round((t.fontSize || 20) * sc));
+        if (t.el) t.el.style.fontSize = t.fontSize + "px";
+        measureObj(t);
+        changed = true;
+      }
     } else if (t.type === "image") {
       if (t.w > inner) {
         var r = inner / t.w;
@@ -9647,8 +9711,8 @@ function fitColumnWidth() {
   refreshMeasures();
   scheduleSave();
   statusEl.textContent = n
-    ? (n + "個を" + (dest.index + 1) + "列目に収めました")
-    : ((dest.index + 1) + "列目にすでに収まっています");
+    ? (n + "個を" + (dest.index + 1) + "列目の幅にそろえました")
+    : ((dest.index + 1) + "列目にすでにそろっています");
 }
 /* =========================================================
    ノートの中の文字を探す
@@ -13172,7 +13236,7 @@ function openMoreSheet() {
   /* ★長い縦並びを、上からテーマごとに横へ切り分けていくための操作 */
   if (canvasMode === "inf") {
     items.push({ label: "↧ 重なりを直して下に詰め直す", fn: function(){ unstackColumn(16); } });
-    items.push({ label: "↔ 列の幅に収める", fn: fitColumnWidth });
+    items.push({ label: "↔ 列の幅にそろえる(広い物は縮め、狭い物は広げる)", fn: fitColumnWidth });
     items.push({ label: "📑 この列に名前をつける", fn: nameCurrentColumn });
     if (sel.length === 1) {
       items.push({ label: "📑 ここから下を右隣の列へ送る",
