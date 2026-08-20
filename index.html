@@ -632,7 +632,7 @@
     position:fixed;left:50%;transform:translateX(-50%) translateY(120%);
     bottom:calc(env(safe-area-inset-bottom) + 12px);
     width:min(460px, calc(100vw - 20px));
-    max-height:min(74vh, 600px);display:flex;flex-direction:column;
+    max-height:min(80vh, 680px);display:flex;flex-direction:column;
     background:var(--ui-bg2);border:1px solid var(--ui-line);
     border-radius:18px;padding:12px 0 14px;z-index:47;
     box-shadow:0 -8px 30px rgba(10,12,16,.45);
@@ -647,7 +647,12 @@
     font-size:14px;outline:none;-webkit-user-select:text;user-select:text;
   }
   #findInput:focus{border-color:var(--accent)}
-  #findList{overflow-y:auto;padding:0 12px;display:flex;flex-direction:column;gap:6px}
+  #findList{
+    overflow-y:auto;padding:0 12px 4px;display:flex;flex-direction:column;gap:6px;
+    flex:1;min-height:120px;
+    /* 指でのスクロールを許可(body側で止めているため明示が要る) */
+    touch-action:pan-y;-webkit-overflow-scrolling:touch;
+  }
   .find-row{
     background:rgba(255,255,255,.05);border:1px solid var(--ui-line);
     border-radius:12px;padding:9px 11px;cursor:pointer;
@@ -1091,7 +1096,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.84">InkNote <small>v20.84</small></div>
+  <div class="brand" title="InkNote v20.87">InkNote <small>v20.87</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1668,7 +1673,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.84";
+var APP_VERSION = "20.87";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2851,6 +2856,10 @@ $("#undoBtn").onclick = function(){
   rebuildScene(expandSnapshot(undoStack.pop()));
   // 空白ページの挿入/削除も戻せるよう、用紙の枚数と表示を作り直す
   try { updateSheets(); applyView(); } catch (e) {}
+  /* ★戻した直後に続けて見た目を変えた時、それが同じ一続きと
+     誤判定されないようにする。パネルの表示も古い値のままにしない。 */
+  lastStyleUndo.id = null;
+  try { refreshStylePanel(); } catch (e) {}
   scheduleSave();
   updateUndoUI();
 };
@@ -2859,6 +2868,8 @@ $("#redoBtn").onclick = function(){
   undoStack.push(snapshotForUndo());
   rebuildScene(expandSnapshot(redoStack.pop()));
   try { updateSheets(); applyView(); } catch (e) {}
+  lastStyleUndo.id = null;
+  try { refreshStylePanel(); } catch (e) {}
   scheduleSave();
   updateUndoUI();
 };
@@ -6117,6 +6128,7 @@ function openStyle() {
   if (!curText()) return;
   refreshStylePanel();
   $("#stylePanel").classList.add("show");
+  lastStyleUndo.id = null;      // パネルを開くたびに区切る(1回開いて触った分で1手)
   document.body.classList.add("panel-open");   // 操作バーと重ならないように隠す
   $("#pagesScrim").classList.add("show");
 }
@@ -6184,9 +6196,18 @@ function refreshStylePanel() {
   $("#bbRect").classList.toggle("sel", o.bubbleShape === "rect");
   $("#bbBorder").classList.toggle("sel", !!o.border);
 }
+/* ★見た目パネルでの変更は、続けて何度も触るのが普通(色→形→背景…)。
+   1タップごとに1手にすると、戻すのに同じ回数だけ押す必要があり、
+   1回押しても見た目が変わらないので「戻せない」と感じてしまう。
+   同じ相手への連続した変更は、ひとまとまりの1手として扱う。 */
+var lastStyleUndo = { id: null, at: 0 };
 function styleChange(fn) {
   var o = curText(); if (!o) return;
-  pushUndo();
+  var now = Date.now();
+  var sameRun = (lastStyleUndo.id === o.id) && (now - lastStyleUndo.at < 2500);
+  if (!sameRun) pushUndo();
+  lastStyleUndo.id = o.id;
+  lastStyleUndo.at = now;
   fn(o);
   applyTextStyle(o);
   refreshStylePanel();
@@ -9559,7 +9580,14 @@ function unstackSelection(gap) {
 var findHits = [], findQuery = "";
 function objSearchText(o) {
   if (o.type === "text") return String(o.text || "");
-  if (o.type === "image" && o.latex) return String(o.latex);
+  if (o.type === "image") {
+    /* ★図に付けた「検索用のことば」も探せるようにする。
+       図の中身は文字にできないので、これが無いと図だけは
+       いつまでも検索に引っかからない。 */
+    var t = o.latex ? String(o.latex) : "";
+    if (o.note) t = (t ? t + " " : "") + String(o.note);
+    return t;
+  }
   return "";
 }
 function searchAllPages(q) {
@@ -9579,6 +9607,7 @@ function searchAllPages(q) {
           var inName = name.toLowerCase().indexOf(ql) !== -1;
           if (pos === -1 && !inName) continue;
           // 前後を少し添えて、どこに出てきたか分かるようにする
+          var isFig = (o.type === "image" && !o.latex);
           var snip;
           if (pos !== -1) {
             var s0 = Math.max(0, pos - 18);
@@ -9588,6 +9617,7 @@ function searchAllPages(q) {
           } else {
             snip = "見出し: " + name;
           }
+          if (isFig) snip = "🖼 図: " + snip;
           out.push({ pageId: pg.id, pageTitle: pg.title || "ノート",
                      objId: o.id, snip: snip, anch: name });
           if (out.length >= 300) return;      // 出しすぎない
@@ -9863,7 +9893,10 @@ function collectPageText(srcList) {
       // ★数式はLaTeXのまま書き出す($$で囲む)。
       //   こうしておけば貼り直した時に組版に戻せるし、NotebookLM等も数式として読める。
       else if (isMath) body = "$$" + String(o.latex).trim() + "$$";
-      else if (isPic) body = "[画像 #" + (o.id || 0) + "]";
+      /* ★図に付けた検索用のことばも書き出す。
+         AIに渡した時、図の中身の手がかりになる。 */
+      else if (isPic) body = "[画像 #" + (o.id || 0) +
+                             (o.note ? ": " + String(o.note) : "") + "]";
       // 目次の印が付いたものは見出し(##)として書き出す → NotebookLMで構造が効く
       var t2 = o.anch ? ("## " + String(o.anch) + (body ? "\n\n" + body : "")) : body;
       texts.push({ y: b.y, x: b.x, t: t2 });
@@ -12843,8 +12876,23 @@ function renderTocPanel() {
 function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
 function closeToc() { $("#tocPanel").classList.remove("show"); }
 $("#tocClose").onclick = closeToc;
+/* キーボードが出ている間も一覧が見えるよう、実際に見えている高さに合わせる */
+function fitFindPanel() {
+  var p = document.getElementById("findPanel");
+  if (!p || !p.classList.contains("show")) return;
+  var vv = window.visualViewport;
+  var h = vv ? vv.height : innerHeight;
+  var bottom = vv ? Math.max(8, innerHeight - (vv.offsetTop + vv.height) + 8) : 12;
+  p.style.bottom = bottom + "px";
+  p.style.maxHeight = Math.max(220, h - 24) + "px";
+}
+if (window.visualViewport) {
+  window.visualViewport.addEventListener("resize", fitFindPanel);
+  window.visualViewport.addEventListener("scroll", fitFindPanel);
+}
 function openFind() {
   $("#findPanel").classList.add("show");
+  setTimeout(fitFindPanel, 60);
   $("#sheetScrim").classList.add("show");
   /* ★スクリム(全面の膜)を出す時は、必ず閉じる手段も付けること。
      付け忘れると膜が画面全体を覆ったまま残り、どこを押しても
@@ -12882,6 +12930,10 @@ function renderFindList(hits) {
     host.appendChild(n1);
     return;
   }
+  var cnt = document.createElement("div");
+  cnt.style.cssText = "color:var(--ui-dim);font-size:11px;padding:2px 2px 4px";
+  cnt.textContent = hits.length + "件見つかりました(押すとその場所へ移動)";
+  host.appendChild(cnt);
   hits.forEach(function(h){
     var row = document.createElement("div");
     row.className = "find-row";
@@ -12907,8 +12959,17 @@ function renderFindList(hits) {
   });
 }
 function runFind() {
+  /* ★実行したらキーボードを閉じる。
+     開いたままだと結果一覧がキーボードの下に隠れて数件しか見えず、
+     しかも最初のタップがキーボードを閉じるだけに消費されて
+     結果を押しても移動できない(報告された3症状の共通原因)。 */
+  try { $("#findInput").blur(); } catch (e) {}
   var q = ($("#findInput").value || "").trim();
   if (!q) { findQuery = ""; renderFindList(null); return; }
+  if (q === findQuery && findHits.length) {   // 同じ語なら出ている結果を保つ
+    renderFindList(findHits);
+    return;
+  }
   findQuery = q;
   var host = $("#findList");
   host.innerHTML = "";
@@ -13235,6 +13296,23 @@ function openMoreSheet() {
   }
   if (sel.length > 1) {
     items.push({ label: "↧ 重なりを直して下に詰め直す", fn: function(){ unstackSelection(16); } });
+  }
+  /* ★図・写真に検索用のことばを付ける。図の中身は文字にできないため、
+     これが無いと図だけ検索から漏れる。 */
+  if (sel.length === 1 && sel[0].type === "image" && !sel[0].latex) {
+    var im0 = sel[0];
+    items.push({ label: im0.note ? "🔎 検索用のことばを直す" : "🔎 検索用のことばを付ける",
+                 fn: function(){
+      askText("この図を探すためのことば(カンマ区切り可)", im0.note || "", function(v){
+        if (v == null) return;
+        pushUndo();
+        im0.note = String(v).trim() || null;
+        scheduleSave();
+        statusEl.textContent = im0.note
+          ? ("この図は「" + im0.note + "」で探せます")
+          : "検索用のことばを外しました";
+      });
+    } });
   }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
   if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
