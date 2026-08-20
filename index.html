@@ -69,6 +69,11 @@
      セルの上にはみ出さないようにする */
   .obj-text img[data-latex]{
     max-height:1.2em;vertical-align:-0.2em;display:inline-block;
+    /* ★組版した数式は画像なので、そのままだと指やマウスで
+       つまんで運べてしまい、落とした先に複製が増える。
+       画像としての持ち出しを禁止する(文字の選択には影響しない)。 */
+    -webkit-user-drag:none;user-drag:none;
+    -webkit-touch-callout:none;
   }
   .obj-text th{background:rgba(120,120,120,.16);font-weight:700;text-align:left}
   /* ノートの中の見出し・箇条書き(AIから取り込んだHTML等)。
@@ -1096,7 +1101,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.88">InkNote <small>v20.88</small></div>
+  <div class="brand" title="InkNote v20.95">InkNote <small>v20.95</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1579,10 +1584,9 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="tocOpenBtn">🔖 目次を開く</button>
       <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
     </div>
-    <div class="st-row"><span class="st-label">テーマ</span>
-      <button class="stybtn" id="colMakeBtn">📑 選んだものをテーマにする</button>
-      <button class="stybtn" id="colWidthBtn">↔ 見やすい幅</button>
-      <span style="color:var(--ui-dim);font-size:11px">テーマの下に単元がぶら下がります。追加は文字を選んで🔖</span>
+    <div class="st-row"><span class="st-label">見出し</span>
+      <button class="stybtn" id="colWidthBtn">↔ 見やすい幅の設定</button>
+      <span style="color:var(--ui-dim);font-size:11px">貼り付けの初期幅と、⋯の「幅をそろえる」に使う幅</span>
     </div>
     <div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
@@ -1673,7 +1677,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.88";
+var APP_VERSION = "20.95";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2212,7 +2216,14 @@ function clearGridOverObjects() {
     var sh = b.h * view.s;
     if (!sw || !sh) continue;
     if (sx > innerWidth || sy > innerHeight || sx + sw < 0 || sy + sh < 0) continue;
-    ictx.clearRect(sx - 1, sy - 1, sw + 2, sh + 2);   // 1px余分に消して境界のドット残りを防ぐ
+    /* ★消す範囲を整数の画素に丸めて、外側へ少し広げる。
+       小数のままだとスクロールのたびに丸め位置が変わり、枠のきわで
+       背景のドットが出たり消えたりして「ビラビラ」ちらついて見える。
+       付箋や外枠は余白と枠線のぶんだけDOM側が大きいので、その分も見込む。 */
+    var pad = (o.bubble || o.border) ? 4 : 2;
+    var x0 = Math.floor(sx) - pad, y0 = Math.floor(sy) - pad;
+    var x1 = Math.ceil(sx + sw) + pad, y1 = Math.ceil(sy + sh) + pad;
+    ictx.clearRect(x0, y0, x1 - x0, y1 - y0);
   }
 }
 function drawGridBody() {
@@ -3233,16 +3244,15 @@ function hasRich(o) { return !!(o && o.rich && /<[a-z]/i.test(o.rich)); }
    ⇔ハンドルを毎回広げる必要があった。A4縦の紙面(用紙モードの時)や
    画面の広さに合わせて、最初から読みやすい段落幅で置く。 */
 function defaultPasteWidth() {
-  /* ★無限モードでテーマ列を使っている時は、貼り付け幅を列幅に合わせる。
-     合わせないと、貼った瞬間に隣の列へはみ出して列分けの意味が消える。 */
-  if (canvasMode === "inf" && themeAnchors().length) {
-    return Math.max(360, READ_W);
-  }
-  var pageW = (canvasMode === "a4v") ? (A4W - 80)             // 用紙の左右余白ぶんを引く
-            : (canvasMode === "a4h") ? (A4H - 80)
-            : 680;                                            // 無限キャンバスは既定680px
-  var screenCap = Math.max(320, innerWidth - 40);              // 画面よりはみ出さない上限
-  return Math.max(360, Math.min(pageW, screenCap, 720));
+  /* ★「見やすい幅」を貼り付けの初期幅としても使う。
+     以前は「無限モードでテーマ見出しがある時だけ」という条件が付いていて
+     (テーマ列を座標で管理していた頃の名残)、設定しても効いたり
+     効かなかったりした。テーマと幅は無関係なので条件を外す。
+     用紙モードでは紙からはみ出さない範囲に収める。 */
+  var cap = (canvasMode === "a4v") ? (A4W - 80)
+          : (canvasMode === "a4h") ? (A4H - 80)
+          : 4000;
+  return Math.max(360, Math.min(READ_W, cap));
 }
 function autoTextMaxW(o) {
   if (canvasMode === "a4v") return Math.max(160, A4W - 40 - ((o.x % A4W) || 0));
@@ -3353,6 +3363,17 @@ function startTextEdit(o, pt) {
   el.addEventListener("blur", onTextBlur);
   el.addEventListener("input", onTextInput);
   el.addEventListener("paste", onTextPaste);
+  /* ★組版した数式(画像)をつまんで運べてしまい、落とした先で
+     複製が増える問題への対策。sanitizeRichが属性を落とすので
+     draggable属性だけでは足りず、イベント側でも止める。 */
+  el.addEventListener("dragstart", function(ev){
+    if (ev.target && ev.target.tagName === "IMG") ev.preventDefault();
+  });
+  el.addEventListener("drop", function(ev){
+    // 画像の落とし込みは受け付けない(文字の貼り付けは従来どおり)
+    var dt = ev.dataTransfer;
+    if (dt && /image|text\/html/.test(String(dt.types || ""))) ev.preventDefault();
+  });
   el.addEventListener("copy", onTextCopyOrCut);
   el.addEventListener("cut", onTextCopyOrCut);
   /* 文字の上に指を置いている間は「選んでいる最中」とみなし、
@@ -6894,12 +6915,34 @@ function scheduleSave() {
      横から上書きしてしまう(取り込みかけの状態への追い打ち事故)。
      編集そのものは画面上でそのまま続けられる。取り込みが終わってから
      改めて編集すれば、その時点の全内容を正しく保存できる。 */
-  if (booting || isLoadingPage || syncing) return;   // 読込・同期反映の最中は保存しない
+  if (booting || isLoadingPage) return;
+  /* ★編集された事実は必ず記録する。
+     以前は同期中(syncing)に「何も記録せず」戻っていたため、
+     その間の編集は保存対象にすらならず、閉じると消えていた。
+     同期が全ページを見るようになってこの窓が長くなり、
+     貼り付けや移動がまるごと失われる事故につながっていた。
+     書き込みだけ後回しにして、同期が終わったら必ず保存する。 */
   dirtySinceSave = true;
   unsyncedEdits = true;
+  if (syncing) {
+    pendingSaveAfterSync = true;
+    statusEl.textContent = "同期中…(変更は保存待ち)";
+    return;
+  }
   statusEl.textContent = "保存中…";
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveDoc, 700);
+}
+/* 同期が終わった時に、待たせていた保存を必ず流す */
+var pendingSaveAfterSync = false;
+function flushPendingSave() {
+  if (!pendingSaveAfterSync) return;
+  pendingSaveAfterSync = false;
+  if (dirtySinceSave) {
+    statusEl.textContent = "保存中…";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(saveDoc, 200);
+  }
 }
 function saveDoc() {
   if (currentId == null) return Promise.resolve();
@@ -7588,13 +7631,46 @@ function openVersionSheet(pg) {
       ]);
       return;
     }
+    /* ★「どこが違うのか」が分からない一覧では選びようがない。
+       1つ新しい版と比べて、増えた/減った/中身が変わった数を出す。
+       (listVersions は新しい順なので、次の要素が1つ古い版) */
+    function summarize(json) {
+      var map = {}, n = 0;
+      try {
+        var arr = JSON.parse(json) || [];
+        n = arr.length;
+        for (var i = 0; i < arr.length; i++) {
+          var o = arr[i];
+          if (o && o.id != null) map[o.id] = JSON.stringify(o);
+        }
+      } catch (e) {}
+      return { map: map, n: n };
+    }
+    function diffLabel(newer, older) {
+      if (!older) return "";
+      var A = summarize(newer), B = summarize(older);
+      var added = 0, removed = 0, changed = 0, k;
+      for (k in A.map) if (!(k in B.map)) added++;
+      for (k in B.map) {
+        if (!(k in A.map)) removed++;
+        else if (A.map[k] !== B.map[k]) changed++;
+      }
+      var parts = [];
+      if (added) parts.push("+" + added);
+      if (removed) parts.push("-" + removed);
+      if (changed) parts.push("変更" + changed);
+      return parts.length ? parts.join(" ") : "違いなし";
+    }
     var items = [];
-    list.forEach(function(it){
+    list.forEach(function(it, i){
       var d = new Date(it.v.ts || it.v.savedAt || 0);
       var when = (d.getMonth() + 1) + "/" + d.getDate() + " " +
                  ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+      var older = list[i + 1];
+      var dl = diffLabel(it.v.json, older && older.v.json);
       items.push({
         label: "🕘 " + when + "(" + (it.v.count || 0) + "個)" +
+               (dl ? " · " + dl : "") +
                (it.v.why ? " · " + it.v.why : ""),
         fn: function(){ restoreVersion(pg.id, it.key); }
       });
@@ -8998,8 +9074,34 @@ function tidyPositions(mode) {
   pushUndo();
 
   if (mode === "left" || mode === "both") {
-    // ページ内での左端の中央値に寄せる。極端に外れた行(字下げなど)は動かさない
-    var target = medianOf(rels);
+    /* ★基準を「一番上の行の左端」にする。
+       以前は全行の左端の中央値に寄せていたため、ちょうど良い位置に
+       あったものが右へ動いて用紙からはみ出すことがあった。
+       選んで実行した時は、選んだものの中でいちばん左を基準にする。 */
+    var target;
+    if (sel.length >= 2) {
+      target = Infinity;
+      for (var q = 0; q < list.length; q++)
+        target = Math.min(target, objBBox(list[q]).x - pageOriginX(pageIndexOf(objBBox(list[q]))));
+    } else {
+      var topRow = null, topY = Infinity;
+      for (var kk = 0; kk < keys.length; kk++) {
+        var rr = pageRows[keys[kk]];
+        for (var rj = 0; rj < rr.length; rj++)
+          if (rr[rj].y1 < topY) { topY = rr[rj].y1; topRow = { r: rr[rj], p: keys[kk] }; }
+      }
+      target = topRow ? (topRow.r.left - pageOriginX(topRow.p)) : medianOf(rels);
+    }
+    /* 用紙からはみ出さない位置に収める(はみ出す指示は用紙内へ戻す) */
+    if (canvasMode !== "inf") {
+      var pw = (canvasMode === "a4v") ? A4W : A4H;
+      var widest = 0;
+      for (var wq = 0; wq < list.length; wq++)
+        widest = Math.max(widest, objBBox(list[wq]).w);
+      target = Math.max(20, Math.min(target, Math.max(20, pw - widest - 20)));
+    } else {
+      target = Math.max(target, 0);
+    }
     var spread = Math.max(40, medianOf(rels.map(function(v){ return Math.abs(v - target); })) * 3);
     for (var a = 0; a < keys.length; a++) {
       var ox2 = pageOriginX(keys[a]);
@@ -9013,17 +9115,26 @@ function tidyPositions(mode) {
     }
   }
 
+  var unstacked = 0;
   if (mode === "gap" || mode === "both") {
-    // 行間の中央値でそろえる。各ページの先頭行は動かさない(ページをまたがない)
-    var gap = Math.max(4, Math.round(medianOf(gaps)));
+    /* ★「間隔をそろえる」をやめ、「重なりを解除する」にした。
+       間隔を一律に均すと、意図して離してある所まで詰められて
+       何が起きたのか分からなかった。
+       重なっている(または近すぎる)行だけを下へ送り、
+       それ以外はいまの位置を保つ。 */
+    var GAPMIN = 12;
     for (var d = 0; d < keys.length; d++) {
       var rws2 = pageRows[keys[d]];
       if (rws2.length < 2) continue;
       var bottom = rws2[0].y2;
       for (var h = 1; h < rws2.length; h++) {
-        var dy = (bottom + gap) - rws2[h].y1;
-        if (dy) for (var m = 0; m < rws2[h].items.length; m++) moveObjectRaw(rws2[h].items[m].o, 0, dy);
-        rws2[h].y1 += dy; rws2[h].y2 += dy;
+        var need = bottom + GAPMIN;
+        if (rws2[h].y1 < need - 0.5) {
+          var dy = need - rws2[h].y1;
+          for (var m = 0; m < rws2[h].items.length; m++) moveObjectRaw(rws2[h].items[m].o, 0, dy);
+          rws2[h].y1 += dy; rws2[h].y2 += dy;
+          unstacked++;
+        }
         bottom = rws2[h].y2;
       }
     }
@@ -9035,7 +9146,8 @@ function tidyPositions(mode) {
   scheduleSave();
   updateSelUI();
   var name = (mode === "left") ? "左をそろえました"
-           : (mode === "gap") ? "間隔をそろえました" : "位置をそろえました";
+           : (mode === "gap") ? (unstacked ? unstacked + "行の重なりを解除しました" : "重なりはありませんでした")
+           : "左をそろえ、重なりを解除しました";
   var pgTxt = (keys.length > 1) ? (keys.length + "ページ / ") : "";
   setTimeout(function(){
     statusEl.textContent = name + "(" + pgTxt + rowCount + "行 / 元に戻すで取り消せます)";
@@ -9044,9 +9156,9 @@ function tidyPositions(mode) {
 function openTidySheet() {
   var scope = (sel.length >= 2) ? ("選んだもの " + sel.length + "件") : "ページ全体";
   showSheet("位置をそろえる(" + scope + ")", [
-    { label: "✨ 左と間隔をそろえる", fn: function(){ tidyPositions("both"); } },
+    { label: "✨ 左をそろえて重なりも解除", fn: function(){ tidyPositions("both"); } },
     { label: "⬅ 左だけそろえる", fn: function(){ tidyPositions("left"); } },
-    { label: "↕ 間隔だけそろえる", fn: function(){ tidyPositions("gap"); } },
+    { label: "↧ 重なりだけ解除する", fn: function(){ tidyPositions("gap"); } },
     { label: "キャンセル", cancel: true }
   ]);
 }
@@ -9504,7 +9616,13 @@ function tidyWidths() {
         if (t.el) { t.el.classList.remove("autow"); t.el.style.maxWidth = ""; }
         changed = true;
       }
+      /* ★広げる時も、中身が必要とする幅までにする。
+         短い見出しが横長の空箱になるのを防ぐ。 */
       var want = t.mono ? Math.min(t.w || READ_W, READ_W) : READ_W;
+      if (!t.mono) {
+        var nat0 = naturalTextWidth(t);
+        if (nat0) want = Math.max(140, Math.min(READ_W, nat0 + 4));
+      }
       if (Math.abs((t.w || 0) - want) > 1) { t.w = want; changed = true; }
       if (Math.abs(t.x - left) > 0.5) { t.x = left; changed = true; }
       if (changed && t.el) {
@@ -10914,6 +11032,14 @@ if (window.visualViewport) {
    通常の数式は独立した画像オブジェクトだが、これは文章や表のセルの
    途中に「差し込む」ための小さな画像。組版した後も data-latex に
    元の式を残すので、あとで消せば元の文字に戻せる。 */
+/* 独立した数式画像が横に長くなりすぎるのを防ぐ。
+   ★長い式(周波数差の定義など)はそのままだと本文よりずっと幅広になり、
+     周りのレイアウトを押し出して崩す。縦横比は保ったまま収める。 */
+function capFormulaSize(r, maxW) {
+  if (!r || !r.w || r.w <= maxW) return r;
+  var k = maxW / r.w;
+  return { src: r.src, w: Math.round(r.w * k), h: Math.max(12, Math.round(r.h * k)) };
+}
 function renderLatexInline(latex) {
   return loadMathJax().then(function(){
     var tex = sanitizeLatex(latex);
@@ -11508,6 +11634,9 @@ function insertFormula(latex, replaceObj, anchor) {
       else { var cw = toWorld(innerWidth / 2, innerHeight / 2); x = cw.x - r.w / 2; y = cw.y - r.h / 2; }
       var o = { id: idSeq++, type: "image", x: x, y: y,
                 w: r.w, h: r.h, _mw: r.w, _mh: r.h, src: r.src, latex: latex };
+      // 本文の幅を超える式は縮めて置く(レイアウトを押し出さない)
+      var capW = defaultPasteWidth();
+      if (o.w > capW) { var kk = capW / o.w; o.w = Math.round(o.w * kk); o.h = Math.max(12, Math.round(o.h * kk)); o._mw = o.w; o._mh = o.h; }
       objects.push(o);
       makeImageEl(o);
       clampToSheet(o);
@@ -11869,6 +11998,7 @@ function replaceMathSpansInNode(node, spans, onFail) {
         return renderLatexInline(latex).then(function(res){
           var img = document.createElement("img");
           img.setAttribute("src", res.src);
+          img.setAttribute("draggable", "false");   // つまんで複製されるのを防ぐ
           img.setAttribute("data-latex", latex);
           img.setAttribute("data-h", res.h);
           // 行の高さを超えないように(convertSelectionToMathと同じ値)
@@ -12208,7 +12338,12 @@ var TEX_UNI = {
   Rightarrow:"⇒", Leftarrow:"⇐",
   circ:"°", degree:"°", prime:"′", ldots:"…", dots:"…", cdots:"…",
   perp:"⊥", parallel:"∥", angle:"∠", in:"∈", subset:"⊂",
-  quad:" ", qquad:"  ", ",":" ", ";":" ", " ":" "
+  quad:" ", qquad:"  ", ",":" ", ";":" ", " ":" ",
+  /* ★関数名。1つでも未知の命令があると文字化を諦めて組版に回るため、
+     よく出るものは通しておく(組版はMathJax任せで失敗の元になる)。 */
+  ln:"ln", log:"log", exp:"exp", sin:"sin", cos:"cos", tan:"tan",
+  sinh:"sinh", cosh:"cosh", tanh:"tanh", arcsin:"arcsin", arccos:"arccos",
+  arctan:"arctan", max:"max", min:"min", lim:"lim", deg:"°", bmod:"mod"
 };
 var SUB_UNI = {
   "0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉",
@@ -12225,7 +12360,30 @@ var SUP_UNI = {
 function latexToUnicode(src) {
   var s = String(src || "").trim();
   if (!s) return null;
-  if (/\\(d|t)?frac|\\sqrt|\\sum|\\int|\\prod|\\lim|\\binom|\\begin|\\over|\\left|\\matrix|\\substack/.test(s))
+  /* ★日本語(かな・漢字)を含む分数は、MathJaxのフォントに日本語の字が無く
+     組版に失敗する(空白や崩れた表示になる)。分子/分母を「A / B」の
+     形の文字にして、読める状態を優先する。 */
+  var CJK = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
+  if (CJK.test(s)) {
+    /* \text{…} が分数の中に入れ子でいると波括弧が邪魔で崩せないので、
+       いったん預けてから分数を処理し、あとで元に戻す。 */
+    var keep = [];
+    s = s.replace(/\\(?:text|mathrm|mathbf|mathit|operatorname)\s*\{([^{}]*)\}/g,
+      function(m, inner){ keep.push(inner); return "\uE00B" + (keep.length - 1) + "\uE00C"; });
+    function wrapPart(x) {
+      x = String(x).trim();
+      // 単項ならかっこ不要。式ならかっこで括って読み違いを防ぐ
+      return /[+\-×\/\s=]/.test(x.replace(/\uE00B\d+\uE00C/g, "A")) ? "(" + x + ")" : x;
+    }
+    for (var gi = 0; gi < 4; gi++) {
+      var before = s;
+      s = s.replace(/\\[dt]?frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g,
+        function(m, a, b){ return wrapPart(a) + " / " + wrapPart(b); });
+      if (s === before) break;
+    }
+    s = s.replace(/\uE00B(\d+)\uE00C/g, function(m, i){ return "\\text{" + keep[+i] + "}"; });
+  }
+  if (/\\(d|t)?frac|\\sqrt|\\sum|\\int|\\prod|\\binom|\\begin|\\over|\\left|\\matrix|\\substack/.test(s))
     return null;                                   // 組版が要るものは対象外
   /* ★度記号は「それ自体が上付き」なので、^\circ の上付き指定を先に外す。
      そうしないと ° を上付きにしようとして表せず、90° まで画像送りになる。 */
@@ -12246,7 +12404,8 @@ function latexToUnicode(src) {
     /\\(?:text|mathrm|mathbf|mathit|operatorname)\s*\{([^{}]*)\}|\\([A-Za-z]+)|\\([%&#$,;\s])/g,
     function(m, inner, cmd, esc){
       if (inner != null) return inner;             // \text{…} は中身をそのまま
-      if (esc != null) return /\s/.test(esc) ? " " : esc;
+      // \, \; \␣ は「細い空白」の指定なので空白にする(記号として出さない)
+      if (esc != null) return /[\s,;]/.test(esc) ? " " : esc;
       var v = TEX_UNI[cmd];
       if (v == null) { bad = true; return m; }
       return v;
@@ -12313,6 +12472,30 @@ function escapeHtml(s) {
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
+/* 中身が本来必要とする横幅を測る。
+   ★短い文まで既定の幅いっぱいに広げると、数文字なのに横長の空箱になる。
+     折り返さない状態の実寸を測り、それ以上には広げない。 */
+function naturalTextWidth(o) {
+  var el = o && o.el;
+  if (!el) return null;
+  var pw = el.style.width, pws = el.style.whiteSpace, pmw = el.style.maxWidth;
+  el.style.width = "max-content";
+  el.style.whiteSpace = "pre-wrap";
+  el.style.maxWidth = "none";
+  var w = el.scrollWidth || el.offsetWidth || 0;
+  el.style.width = pw; el.style.whiteSpace = pws; el.style.maxWidth = pmw;
+  return w || null;
+}
+/* 目標幅を上限に、中身に合わせて詰める(広げすぎない) */
+function fitWidthToContent(o, target) {
+  var nat = naturalTextWidth(o);
+  if (!nat) return;
+  var want = Math.max(140, Math.min(target, nat + 4));
+  if (Math.abs((o.w || 0) - want) < 2) return;
+  o.w = want;
+  if (o.el) o.el.style.width = o.w + "px";
+  measureObj(o);
+}
 function insertRichPasteInner(raw, left, top, W, done) {
   var blocks = splitMathBlocks(String(raw || ""));
   var parts = [], buf = "";
@@ -12358,7 +12541,16 @@ function insertRichPasteInner(raw, left, top, W, done) {
       buf += "\uE001" + b.s + "\uE002";
       return;
     }
-    if (!restored && !needsTypeset(b.s)) { buf += "$" + b.s + "$"; return; }
+    /* ★独立行の式($$…$$)。
+       以前は「\frac等を含まない単純な式」を素の "$…$" のまま文字として
+       置いていたため、$$\omega_0 = \gamma B_0$$ のような式が
+       ドル記号付きの生のLaTeXのまま残っていた(報告された症状)。
+       まず文字(ω₀ = γB₀)にできるか試し、駄目なら必ず組版する。
+       生のドル記号を残す道はもう作らない。 */
+    if (!restored) {
+      var uniD = latexToUnicode(b.s);
+      if (uniD != null) { flush(); parts.push({ t: "text", s: uniD }); return; }
+    }
     flush();
     parts.push({ t: "math", s: b.s });
   });
@@ -12385,6 +12577,7 @@ function insertRichPasteInner(raw, left, top, W, done) {
         var hasInline = txt.indexOf("\uE001") !== -1;
         if (hasInline) o.rich = escapeHtml(txt);
         objects.push(o); makeTextEl(o); made.push(o); measureObj(o);
+        fitWidthToContent(o, W);      // 短い文は中身の幅に詰める
         if (!hasInline) {
           y += Math.max(28, objBBox(o).h) + 12;
           return;
@@ -12394,10 +12587,14 @@ function insertRichPasteInner(raw, left, top, W, done) {
            するのが要点(あとでまとめて並べ直すと、先に確定した位置と
            食い違って重なりや用紙外への飛び出しが起きる)。 */
         return typesetInlineMarks(o).catch(function(){}).then(function(){
+          fitWidthToContent(o, W);    // 組版で幅が変わることがあるので測り直す
           y += Math.max(28, objBBox(o).h) + 12;
         });
       }
-      return renderLatexToImage(p.s, 26).then(function(r){
+      /* ★26pxは本文(20px)より大きく、独立式が目立ちすぎて
+         周りとの間隔が崩れて見える原因になっていた。本文に寄せる。 */
+      return renderLatexToImage(p.s, 20).then(function(r0){
+        var r = capFormulaSize(r0, W);          // 本文の幅を超えないようにする
         var o2 = { id: idSeq++, type: "image", x: left + (W - r.w) / 2, y: y,
                    w: r.w, h: r.h, _mw: r.w, _mh: r.h, src: r.src, latex: p.s };
         objects.push(o2); makeImageEl(o2); made.push(o2);
@@ -13060,10 +13257,6 @@ function makeSelectedTheme() {
     statusEl.textContent = "テーマにしました: " + name;
   });
 }
-$("#colMakeBtn").onclick = function(){
-  closeMenu();
-  setTimeout(makeSelectedTheme, 120);
-};
 $("#colWidthBtn").onclick = function(){
   closeMenu();
   setTimeout(function(){
@@ -13076,7 +13269,7 @@ $("#colWidthBtn").onclick = function(){
       inkDirty = true;
       renderTocPanel();
       updateColBar();
-      statusEl.textContent = "見やすい幅を " + n + "px にしました(貼り付け幅も合わせます)";
+      statusEl.textContent = "見やすい幅を " + n + "px にしました(貼り付けの初期幅と、⋯の幅そろえに使います)";
     });
   }, 120);
 };
@@ -13351,6 +13544,11 @@ function openMoreSheet() {
           : "検索用のことばを外しました";
       });
     } });
+  }
+  /* 見出し(テーマ)にする操作は、対象を選んで行うのでこちらに置く */
+  if (sel.length === 1 && sel[0].type === "text") {
+    items.push({ label: sel[0].anchLv === 1 ? "📑 テーマ名を変える" : "📑 これをテーマにする",
+                 fn: makeSelectedTheme });
   }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
   if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
@@ -14290,16 +14488,37 @@ function keepVersion(id, why) {
     try { cnt = (JSON.parse(cur.json) || []).length; } catch (e) { return; }
     if (!cnt) return;                   // 空の版は控えない
     var key = "ver_" + id + "_" + (cur.ts || Date.now());
-    return kvGet(key).then(function(exists){
-      if (exists) return;               // 同じ版は二重に残さない
+    /* ★中身が前回の控えと同じなら残さない。
+       以前は保存時刻(ts)が違えば別物として積んでいたため、
+       開いただけ・少し動かしただけでも版が増え、
+       同じ内容の控えが何十個も並んでいた。 */
+    return newestVersionJson(id).then(function(prev){
+      if (prev != null && prev === cur.json) return;   // 変わっていない
+      return kvGet(key).then(function(exists){
+        if (exists) return;             // 同じ版は二重に残さない
       // ★用紙の向き・背景・しおりも一緒に控える
       //   (これが無いと、版を戻した時にA4縦がA4横に変わってしまう)
       return kvSet(key, { json: cur.json, ts: cur.ts || Date.now(),
                           view: cur.view, bookmarks: cur.bookmarks,
                           canvasMode: cur.canvasMode, bg: cur.bg,
                           count: cnt, why: why || "", savedAt: Date.now() });
-    }).then(function(){ return trimVersions(id); });
+      }).then(function(){ return trimVersions(id); });
+    });
   }).catch(function(){});
+}
+/* いちばん新しい控えの中身を返す(無ければnull) */
+function newestVersionJson(id) {
+  return kvKeys().then(function(keys){
+    var pre = "ver_" + id + "_", best = null, bestT = -1;
+    for (var i = 0; i < keys.length; i++) {
+      var k = String(keys[i]);
+      if (k.indexOf(pre) !== 0) continue;
+      var t = parseInt(k.slice(pre.length), 10);
+      if (isFinite(t) && t > bestT) { bestT = t; best = k; }
+    }
+    if (!best) return null;
+    return kvGet(best).then(function(v){ return (v && v.json) || null; });
+  }).catch(function(){ return null; });
 }
 function trimVersions(id) {
   return kvKeys().then(function(keys){
@@ -14374,13 +14593,13 @@ function askAccountChange(newUid) {
         uidAskOpen = false;
         setLastUid(newUid);
         pages = [];                       // 相手のアカウントへ混ぜない
-        saveIndex().then(function(){ syncing = false; syncAll(); });
+        saveIndex().then(function(){ syncing = false; flushPendingSave(); syncAll(); });
         statusEl.textContent = "元のノートは「🔍消えたページを探す」で戻せます";
       } },
     { label: "➕ 端末のノートもこのアカウントに追加する", fn: function(){
         uidAskOpen = false;
         setLastUid(newUid);
-        syncing = false;
+        syncing = false; flushPendingSave();
         syncAll();
       } },
     { label: "キャンセル(同期しない)", cancel: true, fn: function(){ uidAskOpen = false; } }
@@ -14475,6 +14694,13 @@ function syncAll() {
           var chain = Promise.resolve();
           qs.forEach(function(doc){
             var rid = doc.id, rdd = doc.data() || {};
+            /* ★いま開いていて、まだ保存できていない編集があるページは
+               ここでは取り込まない。取り込むと rebuildScene で
+               画面の内容が作り直され、保存前の貼り付けや移動が
+               そのまま消える(実際に失われたとの報告あり)。
+               保存が済んでから、通常の購読経路で改めて突き合わせる。 */
+            if (String(rid) === String(currentId) &&
+                (dirtySinceSave || unsyncedEdits || pendingSaveAfterSync)) return;
             chain = chain.then(function(){
               return onRemotePageChanged(rid, rdd.ts || 0, rdd.rev || 0, rdd.stamp || "");
             }).catch(function(){});
@@ -14533,7 +14759,7 @@ function syncAll() {
        その端末はそれ以降ずっと「開いているページ以外は同期されない」
        状態に陥っていた。購読が生きていれば後から自力で追いつける。 */
     try { if (cloudUser()) startRealtime(); } catch (e) {}
-  }).then(function(){ syncing = false; });
+  }).then(function(){ syncing = false; flushPendingSave(); });
 }
 
 /* =========================================================
