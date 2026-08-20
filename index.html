@@ -634,7 +634,7 @@
     width:min(460px, calc(100vw - 20px));
     max-height:min(80vh, 680px);display:flex;flex-direction:column;
     background:var(--ui-bg2);border:1px solid var(--ui-line);
-    border-radius:18px;padding:12px 0 14px;z-index:47;
+    border-radius:18px;padding:12px 0 14px;z-index:62;
     box-shadow:0 -8px 30px rgba(10,12,16,.45);
     transition:transform .2s ease;
   }
@@ -990,7 +990,7 @@
     position:fixed;left:50%;top:22%;transform:translateX(-50%);
     width:min(380px, calc(100vw - 32px));
     background:var(--ui-bg2);border:1px solid var(--ui-line);
-    border-radius:16px;padding:16px;z-index:62;display:none;
+    border-radius:16px;padding:16px;z-index:63;display:none;
     box-shadow:0 12px 40px rgba(10,12,16,.5);
   }
   #inputDlg.show{display:block}
@@ -1096,7 +1096,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.87">InkNote <small>v20.87</small></div>
+  <div class="brand" title="InkNote v20.88">InkNote <small>v20.88</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1673,7 +1673,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.87";
+var APP_VERSION = "20.88";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -9590,37 +9590,75 @@ function objSearchText(o) {
   }
   return "";
 }
+/* 全角/半角・大文字小文字のゆれを吸収する。
+   ★「ＳＮＲ」と「SNR」、「２５℃」と「25℃」が別物として扱われると
+     入れたつもりの言葉で見つからない。NFKCで揃えてから比べる。 */
+function normForSearch(t) {
+  t = String(t == null ? "" : t);
+  try { t = t.normalize("NFKC"); } catch (e) {}
+  return t.toLowerCase();
+}
+function makeSnippet(t, pos, qlen) {
+  var s0 = Math.max(0, pos - 18);
+  return (s0 > 0 ? "…" : "") +
+         t.slice(s0, pos + qlen + 26).replace(/\s+/g, " ") +
+         (pos + qlen + 26 < t.length ? "…" : "");
+}
 function searchAllPages(q) {
   q = String(q || "").trim();
   if (!q) return Promise.resolve([]);
-  var ql = q.toLowerCase();
+  var qRaw = q.toLowerCase();
+  var qNorm = normForSearch(q);
   var out = [];
   var chain = Promise.resolve();
   pages.forEach(function(pg){
     chain = chain.then(function(){
+      if (out.length >= 500) return;
       return pageObjectsFor(pg.id).then(function(list){
         for (var i = 0; i < list.length; i++) {
+          if (out.length >= 500) return;
           var o = list[i];
           var t = objSearchText(o);
           var name = String(o.anch || "");
-          var pos = t.toLowerCase().indexOf(ql);
-          var inName = name.toLowerCase().indexOf(ql) !== -1;
-          if (pos === -1 && !inName) continue;
-          // 前後を少し添えて、どこに出てきたか分かるようにする
           var isFig = (o.type === "image" && !o.latex);
-          var snip;
-          if (pos !== -1) {
-            var s0 = Math.max(0, pos - 18);
-            snip = (s0 > 0 ? "…" : "") +
-                   t.slice(s0, pos + q.length + 26).replace(/\s+/g, " ") +
-                   (pos + q.length + 26 < t.length ? "…" : "");
+          /* まず素のまま、見つからなければ全角半角を揃えて探す。
+             素のままで当たる時は、見た目どおりの前後を出せる。 */
+          var hay = t, needle = qRaw;
+          if (hay.toLowerCase().indexOf(needle) === -1) {
+            hay = normForSearch(t); needle = qNorm;
+            if (hay.indexOf(needle) === -1) hay = null;
           } else {
-            snip = "見出し: " + name;
+            hay = t;
           }
-          if (isFig) snip = "🖼 図: " + snip;
-          out.push({ pageId: pg.id, pageTitle: pg.title || "ノート",
-                     objId: o.id, snip: snip, anch: name });
-          if (out.length >= 300) return;      // 出しすぎない
+          var hits = [];
+          if (hay) {
+            /* ★1つの箱の中の「すべての出現箇所」を出す。
+               以前は最初の1か所だけだったため、長い文章に何度も
+               出てくる語でも1件しか出ず、少なく見えていた。 */
+            var low = hay.toLowerCase(), from = 0, n = 0;
+            while (n < 6) {
+              var at = low.indexOf(needle, from);
+              if (at === -1) break;
+              hits.push(at);
+              from = at + Math.max(1, needle.length);
+              n++;
+            }
+          }
+          if (!hits.length) {
+            if (name.toLowerCase().indexOf(qRaw) === -1 &&
+                normForSearch(name).indexOf(qNorm) === -1) continue;
+            out.push({ pageId: pg.id, pageTitle: pg.title || "ノート",
+                       objId: o.id, anch: name,
+                       snip: (isFig ? "🖼 図: " : "") + "見出し: " + name });
+            continue;
+          }
+          for (var k = 0; k < hits.length; k++) {
+            out.push({ pageId: pg.id, pageTitle: pg.title || "ノート",
+                       objId: o.id, anch: name,
+                       snip: (isFig ? "🖼 図: " : "") +
+                             makeSnippet(hay, hits[k], needle.length) +
+                             (hits.length > 1 ? "  (" + (k + 1) + "/" + hits.length + ")" : "") });
+          }
         }
       });
     });
