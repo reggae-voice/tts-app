@@ -992,7 +992,7 @@
   /* AIから取り込む用の大きめ入力欄(HTMLを貼り付ける) */
   #aiImpDlg{
     position:fixed;left:50%;top:12%;transform:translateX(-50%);
-    width:min(520px, calc(100vw - 24px));
+    width:min(620px, calc(100vw - 20px));
     background:var(--ui-bg2);border:1px solid var(--ui-line);
     border-radius:16px;padding:16px;z-index:62;display:none;
     box-shadow:0 12px 40px rgba(10,12,16,.5);
@@ -1002,7 +1002,7 @@
     width:100%;box-sizing:border-box;border:1px solid var(--ui-line);
     background:rgba(255,255,255,.06);color:var(--ui-text);
     border-radius:10px;padding:11px 12px;font-size:13px;outline:none;
-    height:38vh;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;
+    height:52vh;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;
     -webkit-user-select:text;user-select:text;
     /* ★指でのスクロールを許可する。body側で touch-action:none にしているため、
        ここで明示しないと中身をなぞっても動かず、上の方を確認できなかった。 */
@@ -1091,7 +1091,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.81">InkNote <small>v20.81</small></div>
+  <div class="brand" title="InkNote v20.84">InkNote <small>v20.84</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1347,7 +1347,8 @@ window.onerror = function(msg, src, line){
   <div id="idLabel" style="margin-bottom:10px">AIが返したHTMLを貼り付けてください(新しいページとして取り込みます)</div>
   <textarea id="aiImpText" placeholder="&lt;section&gt;…&lt;/section&gt; を貼り付け"></textarea>
   <div class="id-row">
-    <button id="aiImpFile">📂 HTMLファイル</button>
+    <button id="aiImpPaste">📋 貼り付け</button>
+    <button id="aiImpFile">📂 ファイル</button>
     <button id="aiImpCancel">キャンセル</button>
     <button id="aiImpOk">取り込む</button>
   </div>
@@ -1637,7 +1638,6 @@ var FIREBASE_CONFIG = {
   appId: "1:509358014557:web:2aba15dc574f8b8f978db4"
 };
 
-
 /* =========================================================
    InkNote v2.0
    アーキテクチャ:
@@ -1668,7 +1668,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.81";
+var APP_VERSION = "20.84";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3080,7 +3080,8 @@ document.addEventListener("touchmove", function(e){
   // Apple Pencilはタップ時に微小なtouchmoveを発するため、ここで
   // preventDefaultするとSafariがタップをキャンセルしclickが発火しなくなる。
   var pass = t && t.closest ? t.closest(
-    '.editing, .obj-text, .scrollable, input, button, ' +
+    '.editing, .obj-text, .scrollable, input, textarea, button, ' +
+    '#aiImpDlg, #findPanel, #tocPanel, ' +
     '#toolbar, #topbar, #ctxbar, #miniZoom, #editHandle, ' +
     '#penPanel, #shapePanel, #eraserPanel, #lassoPanel, ' +
     '#stylePanel, #menuPanel, #pagesPanel, #posPanel, #expPanel, #syncPanel'
@@ -9490,10 +9491,18 @@ function tidyWidths() {
         t.el.style.width = t.w + "px";   // DOM側も更新しないと見た目が変わらない
       }
       if (changed) measureObj(t);
-      var after = objBBox(t);
-      if (after.w > READ_W + 1) {
-        var scq = Math.max(0.4, READ_W / after.w);
-        t.fontSize = Math.max(8, Math.round((t.fontSize || 20) * scq));
+      /* ★等幅(ASCII図・コード)は折り返さない書式なので、幅を狭めても
+         中身は流れ込まず、そのまま外へはみ出す。図が崩れないよう
+         行の折り返しはさせず、代わりに文字を小さくして収める。
+         1回の縮小では足りないことがあるので、収まるまで繰り返す
+         (以前は1回だけで、大きくはみ出た図が収まりきらなかった)。 */
+      for (var pass = 0; pass < 5; pass++) {
+        var aw = objBBox(t).w;
+        if (aw <= READ_W + 1) break;
+        var scq = Math.max(0.5, (READ_W - 2) / aw);
+        var nf = Math.max(8, Math.floor((t.fontSize || 20) * scq));
+        if (nf === t.fontSize) break;            // これ以上小さくできない
+        t.fontSize = nf;
         if (t.el) t.el.style.fontSize = t.fontSize + "px";
         measureObj(t);
         changed = true;
@@ -10307,6 +10316,7 @@ function importHtmlAsNewPage(html, title) {
   loadPage(id, function(){
     var W = defaultPasteWidth();
     var left = 60, y = 60, made = [];
+    var lastTheme = null;    // 直前のh1(この下にh2/h3をぶら下げる)
     for (var i = 0; i < blocks.length; i++) {
       var rich = sanitizeRich(blocks[i]);
       if (!rich || !String(rich).trim()) continue;
@@ -10317,6 +10327,19 @@ function importHtmlAsNewPage(html, title) {
       bx.innerHTML = rich;
       o.text = (bx.innerText || bx.textContent || "").trim();
       if (isTrulyEmptyText(o)) continue;
+      /* ★AIが付けた見出しを、そのまま目次に取り込む。
+         整理の結果と索引が別物だと、せっかく章立てしてもらっても
+         もう一度手で🔖を押して回ることになる。
+         h1 = テーマ、h2/h3 = その下の単元として自動でぶら下げる。 */
+      var hd = bx.querySelector("h1, h2, h3");
+      if (hd) {
+        var hname = String(hd.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40);
+        if (hname) {
+          o.anch = hname;
+          if (hd.tagName === "H1") { o.anchLv = 1; o.anchTheme = null; lastTheme = o.id; }
+          else { o.anchLv = 2; o.anchTheme = lastTheme; }
+        }
+      }
       objects.push(o); makeTextEl(o); measureObj(o); made.push(o);
       y += Math.max(40, objBBox(o).h) + 18;
     }
@@ -10326,9 +10349,17 @@ function importHtmlAsNewPage(html, title) {
     for (var m = 0; m < made.length; m++) clampToSheet(made[m]);
     switchTool("select");
     setSelection([]);
-    scheduleSave();
-    if (cloudUser()) { saveIndex(); cloudPushIndex().catch(function(){}); }
-    statusEl.textContent = "新しいページに取り込みました(" + made.length + "ブロック)";
+    /* ★scheduleSave は「読み込み中・同期中はタイマーを仕掛けない」作りで、
+       取り込み直後はその条件に当たることがあり、保存されないまま
+       次に開くと空のページになっていた。ここは確実に今すぐ書き込む。 */
+    saveIndex();
+    saveDocNow();
+    if (cloudUser()) cloudPushIndex().catch(function(){});
+    var nAnch = made.filter(function(o){ return o.anch; }).length;
+    renderTocPanel();
+    updateColBar();
+    statusEl.textContent = "新しいページに取り込みました(" + made.length + "ブロック" +
+      (nAnch ? " / 見出し " + nAnch + "件を目次に登録" : "") + ")";
     /* ★ブロック全体(表の中も外も)の式を組版する。
        表専用の処理だけだと、表を含むブロックの地の文が取り残される。 */
     if (autoCellMath) {
@@ -10342,7 +10373,7 @@ function importHtmlAsNewPage(html, title) {
         if (total) {
           inkDirty = true; refreshMeasures();
           for (var j = 0; j < made.length; j++) clampToSheet(made[j]);
-          scheduleSave();
+          saveDocNow();          // 組版後の姿も確実に保存する
           statusEl.textContent =
             "新しいページに取り込みました(" + made.length + "ブロック / 式 " + total + "個を組版)";
         }
@@ -10363,14 +10394,10 @@ function openAiImportSheet() {
   };
   dlg.classList.add("show");
   setTimeout(function(){ try { ta.focus(); } catch (e) {} }, 60);
-  // 自動で読めるならクリップボードから下書きしておく(拒否されても手貼りできる)
-  try {
-    if (navigator.clipboard && navigator.clipboard.readText) {
-      navigator.clipboard.readText().then(function(t){
-        if (t && !ta.value) ta.value = t;
-      }).catch(function(){});
-    }
-  } catch (e) {}
+  /* ★以前はここでクリップボードを自動で流し込んでいたが、
+     前に何かをコピーしたままだと関係ない中身が居座り、
+     「過去のクリップボードが残る」状態になっていた。
+     入れるかどうかは本人に決めてもらう(📋ボタン)。 */
 }
 function closeAiImportSheet() {
   $("#aiImpDlg").classList.remove("show");
@@ -10645,6 +10672,19 @@ $("#expImgSheet").onclick = function(){
 };
 $("#aiImpCancel").onclick = function(){ closeAiImportSheet(); };
 /* ★長いHTMLは貼り付けが大変なので、ファイルからも読めるようにする */
+$("#aiImpPaste").onclick = function(){
+  var ta = $("#aiImpText");
+  try {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      navigator.clipboard.readText().then(function(t){
+        if (t) { ta.value = t; statusEl.textContent = "貼り付けました(" + t.length + "文字)"; }
+        else statusEl.textContent = "クリップボードが空です";
+      }).catch(function(){
+        statusEl.textContent = "読み取れませんでした(欄を長押しして貼り付けてください)";
+      });
+    }
+  } catch (e) {}
+};
 $("#aiImpFile").onclick = function(){ $("#aiImpFileInput").click(); };
 $("#aiImpFileInput").onchange = function(){
   var f = this.files && this.files[0];
@@ -12501,9 +12541,10 @@ function insertRichPaste(raw) {
       scheduleSave();
       var nMath = made.filter(function(o){ return o.latex; }).length;
       setTimeout(function(){
-        statusEl.textContent = nMath
-          ? ("貼り付けました(数式 " + nMath + "個を組版 / まとめて選択中)")
-          : "貼り付けました(まとめて選択中)";
+        statusEl.textContent = (nMath
+          ? ("貼り付けました(数式 " + nMath + "個を組版 / ")
+          : "貼り付けました(") +
+          made.length + "個を選択中) 幅をそろえるなら ⋯ → ⇔";
       }, 40);
     });
 }
@@ -13180,19 +13221,22 @@ function openMoreSheet() {
     items.push({ label: "✏️ 手書きを整える…", fn: openTuneSheet });
 
   // 並べる・まとめる
-  /* ★長い縦並びを、上からテーマごとに横へ切り分けていくための操作 */
-  if (canvasMode === "inf") {
+  /* ★幅そろえは用紙の種類に関係なく使える整形なので、
+     以前のように無限モード限定にはしない。
+     また、文章に画像が混ざっていても使えるようにする
+     (貼り付けた直後は文章と数式の画像が混ざるのが普通のため)。 */
+  var canWidth = sel.some(function(x){ return x.type === "text" || x.type === "image"; });
+  if (canWidth) {
+    items.push({ label: "⇔ 見やすい幅(" + READ_W + "px)にそろえる", fn: tidyWidths });
+  }
+  if (sel.length > 1 && sel.every(function(x){ return x.type === "text"; })) {
+    items.push({ label: "⇔ いちばん広いものに幅を合わせる",
+                 fn: function(){ equalizeTextWidths("max"); } });
+  }
+  if (sel.length > 1) {
     items.push({ label: "↧ 重なりを直して下に詰め直す", fn: function(){ unstackSelection(16); } });
-    items.push({ label: "↔ 見やすい幅にそろえる", fn: tidyWidths });
   }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
-  // ★複数のテキストを選んでいる時、幅をまとめて揃える
-  if (sel.length > 1 && sel.every(function(x){ return x.type === "text"; })) {
-    items.push({ label: "⇔ 幅をそろえる(いちばん広いものに合わせる)",
-                 fn: function(){ equalizeTextWidths("max"); } });
-    items.push({ label: "⇔ 読みやすい幅(" + defaultPasteWidth() + "px)に広げる",
-                 fn: function(){ equalizeTextWidths(defaultPasteWidth()); } });
-  }
   if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
   if (ctxVisible("ctxAnchor"))
     items.push({ label: (one && one.anch) ? ("🔖 目次「" + one.anch + "」を編集/外す")
