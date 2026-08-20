@@ -523,6 +523,17 @@
     box-shadow:0 4px 14px rgba(15,18,24,.4);cursor:pointer;
   }
   body.editing-mode #editDone{display:block}
+  /* ★文字を選ばなくても、カーソルの位置で分けられる専用ボタン。
+     リッチバーは「文字を選んだ時だけ」出るうえ、押すと焦点が外れて
+     編集が確定してしまい、分割の起点を見失いやすかった。 */
+  #editSplit{
+    position:fixed;z-index:41;display:none;
+    top:calc(env(safe-area-inset-top) + 10px);right:106px;
+    border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:9px 14px;
+    background:rgba(32,36,43,.92);color:#fff;font-size:13px;font-weight:800;
+    box-shadow:0 4px 14px rgba(15,18,24,.4);cursor:pointer;white-space:nowrap;
+  }
+  body.editing-mode #editSplit{display:block}
   #cropModal{
     position:fixed;inset:0;background:rgba(10,12,16,.93);z-index:100;
     display:none;flex-direction:column;align-items:center;justify-content:center;gap:16px;
@@ -784,10 +795,28 @@
   #pageBtn{max-width:132px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   /* ===== ページ一覧パネル ===== */
+  /* ノート一覧の同期ボタン(Androidで上のクラウドボタンが隠れるため) */
+  #ppSync{
+    background:rgba(255,255,255,.08);color:#cfd3da;
+    border:1px solid var(--ui-line);border-radius:999px;
+    font-size:12px;font-weight:700;padding:6px 12px;margin-right:8px;
+    cursor:pointer;white-space:nowrap;
+  }
+  #ppSync:active{background:rgba(255,255,255,.18)}
+  #ppSync.busy{color:#ffd98a}
+  /* 引っぱって同期する時の案内。ふだんは隠れている */
+  #ppSyncBar{
+    height:0;overflow:hidden;text-align:center;
+    color:var(--ui-dim);font-size:11.5px;
+    transition:height .15s ease;
+  }
+  #ppSyncBar.show{height:22px}
+  #syncPanel{z-index:64}
   #pagesScrim{position:fixed;inset:0;background:rgba(10,12,16,.45);z-index:40;display:none}
   #pagesScrim.show{display:block}
   #pagesPanel,#posPanel,#stylePanel,#expPanel,#syncPanel,#menuPanel{
     position:fixed;left:0;right:0;bottom:0;z-index:41;
+    /* ★同期パネルだけは、ほかの膜に覆われて押せなくなる事故を避けて手前に置く */
     background:var(--ui-bg);border-radius:20px 20px 0 0;
     padding:10px 14px calc(env(safe-area-inset-bottom) + 14px);
     transform:translateY(105%);transition:transform .22s ease;
@@ -1101,7 +1130,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v20.95">InkNote <small>v20.95</small></div>
+  <div class="brand" title="InkNote v21.00">InkNote <small>v21.00</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1261,6 +1290,7 @@ window.onerror = function(msg, src, line){
   <div id="vsPage"></div>
 </div>
 <div id="editHandle" title="ドラッグで移動">✥</div>
+<button id="editSplit" title="カーソル位置でテキストを上下に分ける">✂ ここで分割</button>
 <button id="editDone" title="入力を確定">✓ 確定</button>
 
 <div id="cropModal">
@@ -1372,8 +1402,10 @@ window.onerror = function(msg, src, line){
       <div class="pp-app">InkNote</div>
       <div class="pp-sub" id="ppCount">ノート</div>
     </div>
+    <button id="ppSync" title="クラウドと同期">☁ 同期</button>
     <button id="ppClose" title="閉じる">✕</button>
   </div>
+  <div id="ppSyncBar">下に引くと同期します</div>
   <div class="pp-tools">
     <div class="pp-search">
       <span class="pp-search-ic">🔍</span>
@@ -1677,7 +1709,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "20.95";
+var APP_VERSION = "21.00";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2187,9 +2219,17 @@ function renderInk() {
     ictx.lineWidth = 1.5 / view.s;
     ictx.setLineDash([6 / view.s, 5 / view.s]);
     ictx.beginPath();
-    ictx.moveTo(lassoPath[0].x, lassoPath[0].y);
-    for (var k = 1; k < lassoPath.length; k++) ictx.lineTo(lassoPath[k].x, lassoPath[k].y);
-    ictx.closePath();
+    if (lassoMode === "rect" && lassoPath.length === 2) {
+      /* ★長方形で切る時は、実際に切られる範囲そのものを描く。
+         斜めの軌跡だと、どこが切られるのか分からなかった。 */
+      var ra = lassoPath[0], rb = lassoPath[1];
+      ictx.rect(Math.min(ra.x, rb.x), Math.min(ra.y, rb.y),
+                Math.abs(rb.x - ra.x), Math.abs(rb.y - ra.y));
+    } else {
+      ictx.moveTo(lassoPath[0].x, lassoPath[0].y);
+      for (var k = 1; k < lassoPath.length; k++) ictx.lineTo(lassoPath[k].x, lassoPath[k].y);
+      ictx.closePath();
+    }
     ictx.fillStyle = "rgba(76,111,255,.08)";
     ictx.fill();
     ictx.stroke();
@@ -3484,7 +3524,7 @@ var TEX_SYM = [
   ["neq","≠"], ["ne","≠"], ["rightarrow","→"], ["Rightarrow","⇒"], ["to","→"],
   ["leftarrow","←"], ["alpha","α"], ["beta","β"], ["gamma","γ"], ["Delta","Δ"], ["delta","δ"],
   ["theta","θ"], ["lambda","λ"], ["mu","μ"], ["pi","π"], ["rho","ρ"],
-  ["sigma","σ"], ["tau","τ"], ["varphi","φ"], ["phi","φ"], ["Omega","Ω"], ["omega","ω"],
+  ["sigma","σ"], ["tau","τ"], ["varphi","φ"], ["phi","ϕ"], ["Omega","Ω"], ["omega","ω"],
   ["sim","~"], ["propto","∝"], ["infty","∞"], ["partial","∂"],
   ["circ","°"], ["degree","°"], ["quad","  "], ["qquad","    "],
   ["Gamma","Γ"], ["Lambda","Λ"], ["Sigma","Σ"], ["Theta","Θ"], ["Phi","Φ"],
@@ -4702,11 +4742,24 @@ capture.addEventListener("pointerdown", function(e){
   }
 
   if (tool === "lasso") {
-    lassoPath = [{ x: w.x, y: w.y }];
+    /* ★「長方形で切る」は、始点と現在点の2点だけを持つ。
+       以前はフリーハンドの軌跡をそのまま溜めていたため、
+       実際に切られる範囲(その外接四角形)が見えず操作しづらかった。
+       2点だけにしておけば、描画側で綺麗な長方形を描ける。
+       finishLassoは点の集まりの外接矩形を使うので、2点でも正しく働く。 */
+    var rectMode = (lassoMode === "rect");
+    lassoPath = rectMode ? [{ x: w.x, y: w.y }, { x: w.x, y: w.y }]
+                         : [{ x: w.x, y: w.y }];
     inkDirty = true;
     drag(e, {
       move: function(ev){
         if (!lassoPath || pinch) return;
+        if (rectMode) {
+          var rw = toWorld(ev.clientX, ev.clientY);
+          lassoPath[1] = { x: rw.x, y: rw.y };     // 終点だけを更新
+          inkDirty = true;
+          return;
+        }
         var evs = ev.getCoalescedEvents ? ev.getCoalescedEvents() : [ev];
         for (var i = 0; i < evs.length; i++) {
           var cw = toWorld(evs[i].clientX, evs[i].clientY);
@@ -5704,11 +5757,55 @@ function splitTextObjectAtWorldY(o, worldY) {
 /* ★カーソルのある所で切って、後半を右隣の列へ送る。
    「右に送る」が箱まるごとしか動かせず、長い1本の文章を
    途中で分けられなかったのを解消する。 */
-function splitHereAndSendRight() {
-  var o = editingObj;
+/* カーソル位置でテキストBOXを上下2つに分ける。
+   ★pointerdownで処理するのが要点。clickまで待つと、その前に
+     焦点が外れて編集が確定し、カーソル位置が失われる端末がある。 */
+function splitTextAtCursor() {
+  var o = editingObj, node = null, off = 0;
   var r = selectionInsideEditing();
-  if (!o || !r) { statusEl.textContent = "分けたい所をタップしてから押してください"; return; }
-  var node = r.startContainer, off = r.startOffset;
+  if (o && r) { node = r.startContainer; off = r.startOffset; }
+  else if (lastEditSnap && Date.now() - lastEditSnap.at < 4000 &&
+           objects.indexOf(lastEditSnap.o) !== -1) {
+    o = lastEditSnap.o; node = lastEditSnap.node; off = lastEditSnap.off;
+  }
+  if (!o || !node || !o.el || !o.el.contains(node)) {
+    statusEl.textContent = "分けたい所をタップしてカーソルを置いてください"; return;
+  }
+  var b = objBBox(o);
+  var pieces = splitPiecesAtCaret(o, node, off);
+  if (!pieces) {
+    statusEl.textContent = "ここでは分けられません(文章の途中にカーソルを置いてください)"; return;
+  }
+  var idx = objects.indexOf(o);
+  if (idx < 0) return;
+  pushUndo();
+  commitText();
+  if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+  objects.splice(idx, 1, pieces[0], pieces[1]);
+  pieces[0].x = b.x; pieces[0].y = b.y;
+  makeTextEl(pieces[0]); measureObj(pieces[0]);
+  pieces[1].x = b.x;
+  pieces[1].y = pieces[0].y + Math.max(20, objBBox(pieces[0]).h) + 12;
+  makeTextEl(pieces[1]); measureObj(pieces[1]);
+  inkDirty = true;
+  refreshMeasures();
+  switchTool("select");
+  setSelection([pieces[1]]);
+  scheduleSave();
+  statusEl.textContent = "カーソル位置で2つに分けました(下側を選択中)";
+}
+function splitHereAndSendRight() {
+  var o = editingObj, node = null, off = 0;
+  var r = selectionInsideEditing();
+  if (o && r) { node = r.startContainer; off = r.startOffset; }
+  else if (lastEditSnap && Date.now() - lastEditSnap.at < 4000 &&
+           objects.indexOf(lastEditSnap.o) !== -1) {
+    // 焦点が外れて編集が確定した後でも、押す直前の位置で分けられるようにする
+    o = lastEditSnap.o; node = lastEditSnap.node; off = lastEditSnap.off;
+  }
+  if (!o || !node || !o.el || !o.el.contains(node)) {
+    statusEl.textContent = "分けたい所をタップしてから押してください"; return;
+  }
   var b = objBBox(o);
   var pieces = splitPiecesAtCaret(o, node, off);
   if (!pieces) { statusEl.textContent = "そこでは分けられません(文章の途中を指してください)"; return; }
@@ -5753,16 +5850,50 @@ function splitTextObjectByPath(o, path) {
     }
     return { pieces: two, insidePieces: ins.length ? ins : [two[1]] };
   }
+  /* ★「行の中心が囲みの中にあるか」だけだと、横に薄く引いた帯では
+     どの行の中心も入らず反応しなかった。帯の高さに行の中心が入って
+     いれば内側とみなす。ただし横方向にも重なっている事を条件にして、
+     離れた場所の行まで巻き込まないようにする。 */
+  var pTop = Infinity, pBot = -Infinity, pLeft = Infinity, pRight = -Infinity;
+  for (var pi = 0; pi < path.length; pi++) {
+    if (path[pi].y < pTop) pTop = path[pi].y;
+    if (path[pi].y > pBot) pBot = path[pi].y;
+    if (path[pi].x < pLeft) pLeft = path[pi].x;
+    if (path[pi].x > pRight) pRight = path[pi].x;
+  }
   var infos = [];
   for (var i = 0; i < groups.length; i++) {
     var rc = groupRectWorld(groups[i]);
     if (!rc) return null;
-    infos.push({ nodes: groups[i], rect: rc,
-                 inside: pointInPoly(rc.x + rc.w / 2, rc.y + rc.h / 2, path) });
+    var cy = rc.y + rc.h / 2;
+    var isInside = pointInPoly(rc.x + rc.w / 2, cy, path);
+    if (!isInside && (pRight - pLeft) > 10 &&
+        cy >= pTop && cy <= pBot &&
+        rc.x < pRight && rc.x + rc.w > pLeft) {     // 横にも重なっている事
+      isInside = true;
+    }
+    infos.push({ nodes: groups[i], rect: rc, inside: isInside });
   }
   var firstSide = infos[0].inside, allSame = true;
   for (var j = 1; j < infos.length; j++) if (infos[j].inside !== firstSide) allSame = false;
-  if (allSame) return null;   // 境界をまたいでいない(全行が内側 or 全行が外側)
+  if (allSame) {
+    /* ★「行の中心が囲みの内側か」だけで見ていたため、細い線で
+       スッと横切っただけでは、どの行の中心も入らず何も起きなかった
+       (横切って切りたいのに反応しない、という報告の原因)。
+       境界をまたいでいない時は、線が通った高さで割る方式に落とす。 */
+    var pb2 = objBBox(o);
+    var ys2 = [];
+    for (var p2 = 0; p2 < path.length; p2++) ys2.push(path[p2].y);
+    var top2 = Math.min.apply(null, ys2), bot2 = Math.max.apply(null, ys2);
+    var cutY2 = null;
+    if (top2 > pb2.y + 6 && top2 < pb2.y + pb2.h - 6) cutY2 = top2;
+    else if (bot2 > pb2.y + 6 && bot2 < pb2.y + pb2.h - 6) cutY2 = bot2;
+    else if (top2 <= pb2.y + 6 && bot2 >= pb2.y + pb2.h - 6) return null;  // 丸ごと囲んだ
+    if (cutY2 == null) return null;
+    var two2 = splitTextObjectAtWorldY(o, cutY2);
+    if (!two2) return null;
+    return { pieces: two2, insidePieces: [two2[1]] };
+  }
   // 連続する同じ側の行をひとまとめにする(手書き線の分割と同じ考え方)
   var runs = [], cur = null;
   for (var k = 0; k < infos.length; k++) {
@@ -6324,6 +6455,13 @@ $("#tbTab").onclick = function(){
   document.body.classList.remove("tb-tucked");
   $("#tbTab").classList.remove("show");
 };
+/* ★カーソル位置で分けるボタン。pointerdownで受けて既定動作を止め、
+   焦点が外れて編集が確定する前に処理する。 */
+$("#editSplit").addEventListener("pointerdown", function(e){
+  e.preventDefault();
+  e.stopPropagation();
+  splitTextAtCursor();
+});
 $("#editDone").addEventListener("pointerdown", function(e){
   // pointerdownで処理する: blurより先に確実に拾う(clickだとキーボードの
   // 閉じアニメーションと競合して取りこぼす端末がある)
@@ -6933,16 +7071,23 @@ function scheduleSave() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(saveDoc, 700);
 }
-/* 同期が終わった時に、待たせていた保存を必ず流す */
+/* 同期が終わった時に、待たせていた保存と索引送信を必ず流す */
 var pendingSaveAfterSync = false;
+var pendingIndexPushAfterSync = false;
 function flushPendingSave() {
-  if (!pendingSaveAfterSync) return;
-  pendingSaveAfterSync = false;
-  if (dirtySinceSave) {
-    statusEl.textContent = "保存中…";
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(saveDoc, 200);
+  if (pendingSaveAfterSync) {
+    pendingSaveAfterSync = false;
+    if (dirtySinceSave) {
+      statusEl.textContent = "保存中…";
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveDoc, 200);
+    }
   }
+  if (pendingIndexPushAfterSync) {
+    pendingIndexPushAfterSync = false;
+    if (cloudUser()) cloudPushIndex().catch(function(){});
+  }
+  updateSyncChip();
 }
 function saveDoc() {
   if (currentId == null) return Promise.resolve();
@@ -6965,7 +7110,14 @@ function saveDoc() {
     return ok;
   });
   var pg = findPage(currentId);
-  if (pg) { bumpPageRev(pg); saveIndex(); }
+  if (pg) {
+    bumpPageRev(pg);
+    saveIndex();
+    /* ★版番号が上がった索引をクラウドにも反映する。
+       ここを送らないと、本文だけ新しくて名簿が古いという
+       ちぐはぐな状態になり、他の端末の一覧に出てこない。 */
+    if (cloudUser()) cloudPushIndex().catch(function(){});
+  }
   scheduleThumb(pid);
   // 節目(5分に1回)で控えを残す。事故があっても戻せるように
   if (!window.__lastVer) window.__lastVer = {};
@@ -8100,6 +8252,62 @@ function closePages() {
   $("#pagesScrim").classList.remove("show");
 }
 $("#pageBtn").onclick = openPages;
+/* ★同期の状態を見せる。何も出ないと「動いているのか壊れているのか」
+   が分からず、待てばよいのか操作すべきなのか判断できない。 */
+function updateSyncChip() {
+  var b = document.getElementById("ppSync");
+  if (!b) return;
+  if (!cloudUser()) { b.textContent = "☁ 未ログイン"; b.classList.remove("busy"); return; }
+  if (syncing) { b.textContent = "⟳ 同期中…"; b.classList.add("busy"); return; }
+  b.classList.remove("busy");
+  var extra = (dirtySinceSave || unsyncedEdits || pendingIndexPushAfterSync) ? " ・未送信" : "";
+  b.textContent = "☁ 同期" + extra;
+}
+setInterval(updateSyncChip, 1200);
+/* いま同期する(索引と全ページを突き合わせる) */
+function syncNowFromList() {
+  if (!cloudUser()) { statusEl.textContent = "同期にはログインが必要です(⚙→同期)"; return; }
+  if (syncing) { statusEl.textContent = "すでに同期中です"; return; }
+  statusEl.textContent = "同期しています…";
+  updateSyncChip();
+  Promise.resolve(dirtySinceSave ? saveDocNow() : null)
+    .then(function(){ return cloudPushIndex(true).catch(function(){}); })
+    .then(function(){ return syncAll(); })
+    .then(function(){
+      renderPageList();
+      updateSyncChip();
+      statusEl.textContent = "同期しました(" + pages.length + "ノート)";
+    })
+    .catch(function(){
+      updateSyncChip();
+      statusEl.textContent = "同期できませんでした(通信を確認してください)";
+    });
+}
+$("#ppSync").onclick = syncNowFromList;
+/* 一覧を下に引っぱって離すと同期する */
+(function(){
+  var list = document.getElementById("ppList");
+  var bar = document.getElementById("ppSyncBar");
+  if (!list || !bar) return;
+  var y0 = null, pulled = 0;
+  list.addEventListener("touchstart", function(e){
+    y0 = (list.scrollTop <= 0 && e.touches.length === 1) ? e.touches[0].clientY : null;
+    pulled = 0;
+  }, { passive: true });
+  list.addEventListener("touchmove", function(e){
+    if (y0 == null) return;
+    pulled = e.touches[0].clientY - y0;
+    if (pulled > 8) {
+      bar.classList.add("show");
+      bar.textContent = pulled > 70 ? "離すと同期します" : "下に引くと同期します";
+    } else bar.classList.remove("show");
+  }, { passive: true });
+  list.addEventListener("touchend", function(){
+    bar.classList.remove("show");
+    if (y0 != null && pulled > 70) syncNowFromList();
+    y0 = null; pulled = 0;
+  }, { passive: true });
+})();
 $("#ppClose").onclick = closePages;
 $("#pagesScrim").onclick = function(){ closePages(); closePos(); closeStyle(); closeExp(); closeSync(); closeMenu(); collapseMini(); };
 
@@ -11263,6 +11471,7 @@ function bindTap(el, fn) {
     fn.call(el);
   });
 }
+var lastEditSnap = null;   // リッチバーを押す直前の編集状態
 function bindRichBar() {
   var b = rbEl();
   if (!b) return;
@@ -11277,6 +11486,17 @@ function bindRichBar() {
      bindTapのclick経路(マウス用)には影響しない。 */
   b.addEventListener("pointerdown", function(ev){
     ev.preventDefault();
+    /* ★押した瞬間の「編集中の箱」と「カーソル位置」を控える。
+       バーを押すと入力から焦点が外れて編集が確定し(editingObjが空になる)、
+       その後にボタンの処理が走る端末があるため、live の選択に頼ると
+       「分けたい所をタップしてから押してください」で終わってしまう。 */
+    try {
+      var rr = selectionInsideEditing();
+      if (editingObj && rr) {
+        lastEditSnap = { o: editingObj, node: rr.startContainer, off: rr.startOffset,
+                         text: String(rr.toString() || ""), at: Date.now() };
+      }
+    } catch (e) {}
   });
   bindTap($("#rbBold"), function(){
     var on = selectionHas("fontWeight");
@@ -11327,10 +11547,19 @@ function bindRichBar() {
   /* ★選んだ文字をそのまま見出し名にして目次へ登録する。
      貼り付けた長文を読みながら、その場で章立てを作れるようにするため。
      見出しはBOX単位なので、印は「その文字が入っているBOX」に付く。 */
+  /* ★ここの配線がリッチバー改修の際に消えており、⇥ を押しても
+     何も起きない状態だった(関数はあるのに呼ばれていなかった)。 */
+  bindTap($("#rbSplitCol"), function(){ splitTextAtCursor(); });
   bindTap($("#rbHead"), function(){
     var r = selectionInsideEditing();
     var name = r ? String(r.toString()).trim().replace(/\s+/g, " ").slice(0, 40) : "";
     var o = editingObj;
+    /* 焦点が外れて編集が確定した後でも押せるように、直前の控えを使う */
+    if ((!o || !name) && lastEditSnap && Date.now() - lastEditSnap.at < 4000 &&
+        objects.indexOf(lastEditSnap.o) !== -1) {
+      o = lastEditSnap.o;
+      if (!name) name = String(lastEditSnap.text || "").trim().replace(/\s+/g, " ").slice(0, 40);
+    }
     if (!o || !name) { statusEl.textContent = "見出しにする文字を選んでください"; return; }
     /* ★いちばん楽な形にする。前に使ったテーマがあれば、
        1タップでその下に単元としてぶら下げられるようにする。 */
@@ -12327,7 +12556,9 @@ var TEX_UNI = {
   alpha:"α", beta:"β", gamma:"γ", delta:"δ", epsilon:"ε", varepsilon:"ε",
   zeta:"ζ", eta:"η", theta:"θ", vartheta:"ϑ", iota:"ι", kappa:"κ",
   lambda:"λ", mu:"μ", nu:"ν", xi:"ξ", pi:"π", rho:"ρ", sigma:"σ",
-  tau:"τ", upsilon:"υ", phi:"φ", varphi:"φ", chi:"χ", psi:"ψ", omega:"ω",
+  /* ★\phi と \varphi は別の字。両方 φ にしていたので区別が付かなかった。
+     LaTeXの慣習どおり \phi=ϕ(U+03D5) / \varphi=φ(U+03C6) に分ける。 */
+  tau:"τ", upsilon:"υ", phi:"ϕ", varphi:"φ", chi:"χ", psi:"ψ", omega:"ω",
   Gamma:"Γ", Delta:"Δ", Theta:"Θ", Lambda:"Λ", Xi:"Ξ", Pi:"Π",
   Sigma:"Σ", Upsilon:"Υ", Phi:"Φ", Psi:"Ψ", Omega:"Ω",
   times:"×", cdot:"·", div:"÷", pm:"±", mp:"∓",
@@ -14255,7 +14486,11 @@ function cloudDeletePage(id) {
 function cloudPushIndex(force) {
   /* ★索引も同様。取り込み中に古い一覧を送り返さないようにする
      (syncAll自身は取り込みを終えたあとに force で呼ぶ)。 */
-  if (syncing && !force) return Promise.resolve();
+  /* ★同期中は送らないが、捨ててはいけない。
+     以前はここで黙って諦めていたため、同期中に作ったページが
+     索引に反映されず、他の端末の一覧にいつまでも出てこなかった。
+     旗を立てておき、同期が終わったら必ず送り直す。 */
+  if (syncing && !force) { pendingIndexPushAfterSync = true; return Promise.resolve(); }
   var u = cloudUser();
   if (!u) return Promise.resolve();
   var ref = fdb().collection("users").doc(u.uid).collection("meta").doc("index");
