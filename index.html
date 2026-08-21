@@ -526,6 +526,20 @@
   /* ★文字を選ばなくても、カーソルの位置で分けられる専用ボタン。
      リッチバーは「文字を選んだ時だけ」出るうえ、押すと焦点が外れて
      編集が確定してしまい、分割の起点を見失いやすかった。 */
+  /* ★#status は上部バーの中にあり、文字入力中は上部バーごと隠れる。
+     そのため編集中の案内が「何も出ない」ように見えていた。
+     編集中でも見える場所に、同じ内容を短く出す。 */
+  #toast{
+    position:fixed;left:50%;transform:translateX(-50%);
+    top:calc(env(safe-area-inset-top) + 62px);
+    z-index:70;display:none;max-width:calc(100vw - 32px);
+    background:rgba(20,23,29,.95);color:#fff;
+    font-size:12.5px;font-weight:600;line-height:1.5;
+    padding:9px 14px;border-radius:12px;
+    box-shadow:0 6px 20px rgba(0,0,0,.45);
+    pointer-events:none;text-align:center;
+  }
+  #toast.show{display:block}
   #editSplit{
     position:fixed;z-index:41;display:none;
     top:calc(env(safe-area-inset-top) + 10px);right:106px;
@@ -1130,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.01">InkNote <small>v21.01</small></div>
+  <div class="brand" title="InkNote v21.02">InkNote <small>v21.02</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1290,6 +1304,7 @@ window.onerror = function(msg, src, line){
   <div id="vsPage"></div>
 </div>
 <div id="editHandle" title="ドラッグで移動">✥</div>
+<div id="toast"></div>
 <button id="editSplit" title="カーソル位置でテキストを上下に分ける">✂ ここで分割</button>
 <button id="editDone" title="入力を確定">✓ 確定</button>
 
@@ -1709,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.01";
+var APP_VERSION = "21.02";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1856,7 +1871,24 @@ sheetLayer.id = "sheetLayer";
 sheetLayer.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;display:none";
 world.insertBefore(sheetLayer, world.firstChild);
 var editHandle = $("#editHandle");
-var statusEl = $("#status");
+/* ★#status は上部バーの中にあり、文字入力中は隠れてしまう。
+   案内が「何も出ない」ように見える原因だったので、
+   書き込みを横取りして、編集中は見える場所(トースト)にも出す。 */
+var _statusEl = $("#status");
+var _toastEl = $("#toast"), _toastTimer = null;
+var statusEl = {
+  get textContent(){ return _statusEl ? _statusEl.textContent : ""; },
+  set textContent(v){
+    if (_statusEl) _statusEl.textContent = v;
+    if (!_toastEl) return;
+    var hidden = document.body.classList.contains("editing-mode");
+    if (!hidden || !v) { _toastEl.classList.remove("show"); return; }
+    _toastEl.textContent = v;
+    _toastEl.classList.add("show");
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function(){ _toastEl.classList.remove("show"); }, 2600);
+  }
+};
 var hintEl = $("#hint");
 var ctxbar = $("#ctxbar");
 var DPR = Math.max(1, window.devicePixelRatio || 1);
@@ -5833,6 +5865,24 @@ function splitHereAndSendRight() {
 }
 function splitTextObjectByPath(o, path) {
   if (!o.el) return null;
+  /* ★長方形で切る時は、細かい判定を挟まずに「枠の横線がBOXの
+     途中を通っていれば、その高さで割る」を最優先にする。
+     行の中心や横幅の判定を通そうとすると、少しの囲みのズレで
+     条件から漏れて無言で終わってしまっていた。 */
+  if (typeof lassoMode !== "undefined" && lassoMode === "rect") {
+    var rTop = Infinity, rBot = -Infinity;
+    for (var ri = 0; ri < path.length; ri++) {
+      if (path[ri].y < rTop) rTop = path[ri].y;
+      if (path[ri].y > rBot) rBot = path[ri].y;
+    }
+    var rb = objBBox(o), rCut = null;
+    if (rTop > rb.y + 10 && rTop < rb.y + rb.h - 10) rCut = rTop;
+    else if (rBot > rb.y + 10 && rBot < rb.y + rb.h - 10) rCut = rBot;
+    if (rCut !== null) {
+      var rTwo = splitTextObjectAtWorldY(o, rCut);
+      if (rTwo) return { pieces: rTwo, insidePieces: [rTwo[1]] };
+    }
+  }
   var groups = textLineGroups(o.el);
   if (groups.length < 2) {
     /* 改行が無い段落は、切った枠の上辺・下辺のうち
