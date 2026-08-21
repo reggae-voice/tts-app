@@ -1130,7 +1130,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.00">InkNote <small>v21.00</small></div>
+  <div class="brand" title="InkNote v21.01">InkNote <small>v21.01</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1709,7 +1709,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.00";
+var APP_VERSION = "21.01";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5764,12 +5764,16 @@ function splitTextAtCursor() {
   var o = editingObj, node = null, off = 0;
   var r = selectionInsideEditing();
   if (o && r) { node = r.startContainer; off = r.startOffset; }
-  else if (lastEditSnap && Date.now() - lastEditSnap.at < 4000 &&
+  else if (lastEditSnap && Date.now() - lastEditSnap.at < 20000 &&
            objects.indexOf(lastEditSnap.o) !== -1) {
     o = lastEditSnap.o; node = lastEditSnap.node; off = lastEditSnap.off;
   }
   if (!o || !node || !o.el || !o.el.contains(node)) {
-    statusEl.textContent = "分けたい所をタップしてカーソルを置いてください"; return;
+    /* どこで止まったのか分かるように、理由を分けて出す */
+    statusEl.textContent = editingObj
+      ? "カーソルの位置が取れませんでした(文章を一度タップし直してください)"
+      : "文章をダブルタップして編集中にしてから押してください";
+    return;
   }
   var b = objBBox(o);
   var pieces = splitPiecesAtCaret(o, node, off);
@@ -5798,7 +5802,7 @@ function splitHereAndSendRight() {
   var o = editingObj, node = null, off = 0;
   var r = selectionInsideEditing();
   if (o && r) { node = r.startContainer; off = r.startOffset; }
-  else if (lastEditSnap && Date.now() - lastEditSnap.at < 4000 &&
+  else if (lastEditSnap && Date.now() - lastEditSnap.at < 20000 &&
            objects.indexOf(lastEditSnap.o) !== -1) {
     // 焦点が外れて編集が確定した後でも、押す直前の位置で分けられるようにする
     o = lastEditSnap.o; node = lastEditSnap.node; off = lastEditSnap.off;
@@ -11214,6 +11218,24 @@ function updateRichBar() {
   showRichBarFor(r);
 }
 document.addEventListener("selectionchange", function(){
+  /* ★編集中のカーソル位置を、動くたびに即座に控える。
+     ボタンを押した時に初めて位置を取りに行くと、その前に
+     焦点が外れて編集が確定してしまう端末があり、
+     「カーソルを置いてください」で終わってしまう。
+     待たずに(タイマーの外で)控えるのが要点。 */
+  try {
+    if (editingObj) {
+      var sc = window.getSelection();
+      if (sc && sc.rangeCount) {
+        var rc0 = sc.getRangeAt(0);
+        if (editingObj.el && editingObj.el.contains(rc0.startContainer)) {
+          lastEditSnap = { o: editingObj, node: rc0.startContainer,
+                           off: rc0.startOffset,
+                           text: String(rc0.toString() || ""), at: Date.now() };
+        }
+      }
+    }
+  } catch (e) {}
   // 選び終わるのを少し待つ(指でなぞっている最中はちらつくため)
   clearTimeout(window.__rbTimer);
   window.__rbTimer = setTimeout(function(){
@@ -13780,6 +13802,37 @@ function openMoreSheet() {
   if (sel.length === 1 && sel[0].type === "text") {
     items.push({ label: sel[0].anchLv === 1 ? "📑 テーマ名を変える" : "📑 これをテーマにする",
                  fn: makeSelectedTheme });
+  }
+  /* ★カーソルを使わずに分ける道も用意する。
+     編集中の操作が端末の都合で効かない時の逃げ道。
+     選んだ箱を、見えている行の境目で2つに割る。 */
+  if (sel.length === 1 && sel[0].type === "text" && sel[0].el) {
+    items.push({ label: "✂ この文章を上下に分ける…", fn: function(){
+      var o = sel[0], b = objBBox(o);
+      var opts = [];
+      [[0.25, "上から1/4"], [0.5, "まん中"], [0.75, "上から3/4"]].forEach(function(q){
+        opts.push({ label: "✂ " + q[1] + "あたりで分ける", fn: function(){
+          var two = splitTextObjectAtWorldY(o, b.y + b.h * q[0]);
+          if (!two) { statusEl.textContent = "そこでは分けられませんでした"; return; }
+          var idx = objects.indexOf(o);
+          if (idx < 0) return;
+          pushUndo();
+          if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+          objects.splice(idx, 1, two[0], two[1]);
+          two[0].x = b.x; two[0].y = b.y;
+          makeTextEl(two[0]); measureObj(two[0]);
+          two[1].x = b.x;
+          two[1].y = two[0].y + Math.max(20, objBBox(two[0]).h) + 12;
+          makeTextEl(two[1]); measureObj(two[1]);
+          inkDirty = true; refreshMeasures();
+          setSelection([two[1]]);
+          scheduleSave();
+          statusEl.textContent = "2つに分けました(下側を選択中)";
+        } });
+      });
+      opts.push({ label: "キャンセル", cancel: true });
+      showSheet("どのあたりで分けますか", opts);
+    } });
   }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
   if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
