@@ -1144,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.03">InkNote <small>v21.03</small></div>
+  <div class="brand" title="InkNote v21.05">InkNote <small>v21.05</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.03";
+var APP_VERSION = "21.05";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5684,7 +5684,10 @@ function groupToText(nodes) {
        必ず空文字が返る。空だと「片方が空になる切り方」と誤判定して
        分割を中止していたため、どこを指定しても割れなかった。
        見えない状態は保ちつつ innerText が読める opacity:0 にする。 */
-    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none";
+    /* ★white-space の指定が無いと、HTML上の改行が半角スペースに
+       圧縮されて innerText に出てくる。元の箱と同じ折り返し規則にする。 */
+    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;" +
+                        "opacity:0;pointer-events:none;white-space:pre-wrap";
   for (var i = 0; i < nodes.length; i++) box.appendChild(nodes[i].cloneNode(true));
   document.body.appendChild(box);
   var t = box.innerText || box.textContent || "";
@@ -5739,6 +5742,33 @@ function caretOffsetAt(clientX, clientY) {
 }
 /* カーソル位置(node/offset)でテキストBOXを2つに割り、
    中身だけを作って返す(位置や大きさは呼び出し側で決める)。 */
+/* HTMLの構造から、改行を保った素の文字列を作る。
+   ★innerText に頼ると、環境や表示状態によって改行が消える。
+     段落(div/p等)の切れ目と <br> を、確実に改行として扱う。 */
+var BLOCK_TAGS = { DIV:1, P:1, LI:1, TR:1, H1:1, H2:1, H3:1, H4:1, H5:1, H6:1,
+                   UL:1, OL:1, TABLE:1, THEAD:1, TBODY:1, BLOCKQUOTE:1, SECTION:1 };
+function htmlToPlainText(html) {
+  var box = document.createElement("div");
+  box.innerHTML = String(html || "");
+  var out = [];
+  (function walk(node){
+    for (var i = 0; i < node.childNodes.length; i++) {
+      var n = node.childNodes[i];
+      if (n.nodeType === 3) { out.push(n.nodeValue || ""); continue; }
+      if (n.nodeType !== 1) continue;
+      if (n.tagName === "BR") { out.push("\n"); continue; }
+      if (n.tagName === "IMG") {                 // 組版した数式は元の式で残す
+        out.push(n.getAttribute("data-latex") ? ("$" + n.getAttribute("data-latex") + "$") : "");
+        continue;
+      }
+      var isBlock = !!BLOCK_TAGS[n.tagName];
+      if (isBlock && out.length && !/\n$/.test(out[out.length - 1])) out.push("\n");
+      walk(n);
+      if (isBlock && out.length && !/\n$/.test(out[out.length - 1])) out.push("\n");
+    }
+  })(box);
+  return out.join("").replace(/\n{3,}/g, "\n\n").replace(/\s+$/, "");
+}
 function splitPiecesAtCaret(o, node, off) {
   if (!o.el || !node || !o.el.contains(node)) return null;
   var html = [];
@@ -5760,7 +5790,10 @@ function splitPiecesAtCaret(o, node, off) {
        必ず空文字が返る。空だと「片方が空になる切り方」と誤判定して
        分割を中止していたため、どこを指定しても割れなかった。
        見えない状態は保ちつつ innerText が読める opacity:0 にする。 */
-    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none";
+    /* ★white-space の指定が無いと、HTML上の改行が半角スペースに
+       圧縮されて innerText に出てくる。元の箱と同じ折り返し規則にする。 */
+    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;" +
+                        "opacity:0;pointer-events:none;white-space:pre-wrap";
     box.innerHTML = html[i];
     document.body.appendChild(box);
     var txt = (box.innerText || box.textContent || "").replace(/\s+$/, "");
@@ -5771,9 +5804,13 @@ function splitPiecesAtCaret(o, node, off) {
     }));
     copy.id = idSeq++;
     copy.anch = null;
-    copy.text = txt;
+    // 構造から作った文字列を使う(改行が確実に残る)
+    copy.text = htmlToPlainText(html[i]) || txt;
     var rich = sanitizeRich(html[i]);
-    copy.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img|h1|h2|h3|ul|ol|li)\b/i.test(rich)
+    /* ★div / p / br が「構造あり」の判定から漏れていた。
+       段落や空行だけで組まれた文章(装飾なし)は rich が捨てられ、
+       ただの文字列に戻るため、切った上側の段落分けが消えていた。 */
+    copy.rich = /<(div|p|br|b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img|h1|h2|h3|ul|ol|li)\b/i.test(rich)
               ? rich : null;
     pieces.push(copy);
   }
@@ -8332,15 +8369,24 @@ function syncNowFromList() {
   if (syncing) { statusEl.textContent = "すでに同期中です"; return; }
   statusEl.textContent = "同期しています…";
   updateSyncChip();
+  /* ★順序は「保存 → 受信して統合 → 送信」。
+     送信を先にすると、まだ受け取っていない他端末の変更を知らないまま
+     書き戻すことになり、無駄な書き込みが1回増える。
+     (cloudPushIndex は上書きではなく統合なので、これでページが
+      消えることは無いが、受信を先にする方が筋が通っている)
+     受信に失敗した時も、手元だけにあるページが取り残されないよう
+     送信は試みる。 */
   Promise.resolve(dirtySinceSave ? saveDocNow() : null)
-    .then(function(){ return cloudPushIndex(true).catch(function(){}); })
-    .then(function(){ return syncAll(); })
+    .then(function(){ return syncAll(); })                          // 先に受信して統合
+    .then(function(){ return cloudPushIndex(true).catch(function(){}); })  // その後に送信
     .then(function(){
       renderPageList();
       updateSyncChip();
       statusEl.textContent = "同期しました(" + pages.length + "ノート)";
     })
     .catch(function(){
+      // 受信できなくても、手元の一覧だけは送っておく
+      cloudPushIndex(true).catch(function(){});
       updateSyncChip();
       statusEl.textContent = "同期できませんでした(通信を確認してください)";
     });
