@@ -1144,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.02">InkNote <small>v21.02</small></div>
+  <div class="brand" title="InkNote v21.03">InkNote <small>v21.03</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.02";
+var APP_VERSION = "21.03";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5680,10 +5680,14 @@ function groupToHtml(nodes) {
 }
 function groupToText(nodes) {
   var box = document.createElement("div");
-  box.style.cssText = "position:fixed;left:-9999px;top:-9999px;visibility:hidden";
+  /* ★visibility:hidden の要素から innerText を読むと、ブラウザの仕様で
+       必ず空文字が返る。空だと「片方が空になる切り方」と誤判定して
+       分割を中止していたため、どこを指定しても割れなかった。
+       見えない状態は保ちつつ innerText が読める opacity:0 にする。 */
+    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none";
   for (var i = 0; i < nodes.length; i++) box.appendChild(nodes[i].cloneNode(true));
   document.body.appendChild(box);
-  var t = (box.innerText != null ? box.innerText : box.textContent) || "";
+  var t = box.innerText || box.textContent || "";
   document.body.removeChild(box);
   return t.replace(/\n$/, "");
 }
@@ -5752,10 +5756,14 @@ function splitPiecesAtCaret(o, node, off) {
   var pieces = [];
   for (var i = 0; i < 2; i++) {
     var box = document.createElement("div");
-    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;visibility:hidden";
+    /* ★visibility:hidden の要素から innerText を読むと、ブラウザの仕様で
+       必ず空文字が返る。空だと「片方が空になる切り方」と誤判定して
+       分割を中止していたため、どこを指定しても割れなかった。
+       見えない状態は保ちつつ innerText が読める opacity:0 にする。 */
+    box.style.cssText = "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none";
     box.innerHTML = html[i];
     document.body.appendChild(box);
-    var txt = ((box.innerText != null ? box.innerText : box.textContent) || "").replace(/\s+$/, "");
+    var txt = (box.innerText || box.textContent || "").replace(/\s+$/, "");
     document.body.removeChild(box);
     if (!txt.trim()) return null;               // 片方が空になる切り方はしない
     var copy = JSON.parse(JSON.stringify(o, function(k, v){
