@@ -952,6 +952,12 @@
     position:absolute;left:0;right:0;bottom:0;z-index:2;
     display:flex;align-items:flex-end;gap:4px;
     padding:16px 8px 7px;
+    /* ★帯がサムネ枠より高くなると、枠(4:3)からはみ出して
+       すぐ上/隣のカードに重なって描かれる。そうなると、目に見えている
+       題名や⋮の位置と、実際にその場所にある要素の持ち主がずれ、
+       「押した場所と開くページが違う」状態になる(報告の症状)。
+       題名が2行になっても枠の中に必ず収める。 */
+    box-sizing:border-box;max-height:100%;overflow:hidden;
     /* 下half を暗くして、明るいサムネでも白文字が読めるようにする */
     background:linear-gradient(to top,
       rgba(8,10,14,.88) 0%, rgba(8,10,14,.72) 45%, rgba(8,10,14,0) 100%);
@@ -1144,7 +1150,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.13">InkNote <small>v21.13</small></div>
+  <div class="brand" title="InkNote v21.14">InkNote <small>v21.14</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1730,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.13";
+var APP_VERSION = "21.14";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -8156,7 +8162,7 @@ function renderPageList() {
           setTimeout(function(){ renamePage(pg.id); }, 260);
         });
         card.addEventListener("pointercancel", function(){ holdCancel = true; holdFired = false; clearHold(); });
-        card.addEventListener("click", function(){
+        card.addEventListener("click", function(ev){
           markListBusy(2000);
           if (holdFired) { holdFired = false; return; }   // 長押しした時はページを開かない
           // 高さが変わっている最中は、指の下でカードが動くので開かない
@@ -8171,7 +8177,25 @@ function renderPageList() {
             return;
           }
           tapDownCard = tapUpCard = null;
-          switchPage(pg.id);
+          /* ★最終確認: 実際に指があった座標の「一番手前に見えているカード」を
+             調べ、そのカードを開く。
+             帯や枠が何らかの理由で隣のカードに重なって描かれていると、
+             イベントを受け取るのは重なった側のカードなので、
+             「見えている絵」と「開くページ」が食い違う。
+             見えているものを正とすれば、レイアウトが多少崩れても
+             ユーザーの意図どおりのページが開く。 */
+          var openId = pg.id;
+          try {
+            if (ev && ev.clientX != null && (ev.clientX || ev.clientY)) {
+              var hit = document.elementFromPoint(ev.clientX, ev.clientY);
+              var hitCard = hit && hit.closest ? hit.closest(".pp-card") : null;
+              if (hitCard) {
+                var hid = hitCard.getAttribute("data-pid");
+                if (hid && String(hid) !== String(pg.id)) openId = hid;
+              }
+            }
+          } catch (e) {}
+          switchPage(findPage(openId) ? openId : pg.id);
         });
         list.appendChild(card);
       } else {
@@ -8270,7 +8294,21 @@ function setToolsOpen(on) {
   $("#pagesPanel").classList.toggle("tools-open", toolsOpen);
   // 高さが変わっている間(アニメーション中)はカードが動くので、タップを受け付けない
   markListBusy(450);
+  /* ★以前は固定で400ms待つだけだった。実際の高さ変化は
+     #toolsWrap の max-height の遷移と、それに引きずられる #ppList の
+     再配置が終わるまで続き、端末が遅いとこの時間内に収まらない。
+     収まらないまま指を離すと、動いている最中のカードを押すことになり、
+     狙ったのと違うページが開く。実際の遷移の終わりを見て解除する。 */
   layoutSettleUntil = Date.now() + 400;
+  var tw = $("#toolsWrap");
+  var onEnd = function(){
+    tw.removeEventListener("transitionend", onEnd);
+    // 遷移後もブラウザの再配置が1〜2フレーム残るので、その分だけ足す
+    layoutSettleUntil = Date.now() + 120;
+  };
+  tw.addEventListener("transitionend", onEnd);
+  // 遷移イベントが来ない端末・環境のための保険
+  setTimeout(function(){ tw.removeEventListener("transitionend", onEnd); }, 1200);
   try { localStorage.setItem("inknote_tools_open", toolsOpen ? "1" : "0"); } catch (e) {}
 }
 $("#toolsToggle").onclick = function(){ setToolsOpen(!toolsOpen); };
