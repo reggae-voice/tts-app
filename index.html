@@ -1144,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.05">InkNote <small>v21.05</small></div>
+  <div class="brand" title="InkNote v21.07">InkNote <small>v21.07</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.05";
+var APP_VERSION = "21.07";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3677,19 +3677,40 @@ function stripCitationNoise(s) {
    そのままだと画面に \ が出たままになり、組版してもエラーになる。 */
 function fixBrokenTexDelims(s) {
   var t = String(s || "");
+  /* ★ちゃんと閉じている $$…$$ / \[…\] / \(…\) / $…$ は先によけておく。
+     よけないと、"\(\mu\)"のようにちゃんと囲まれている式でも、
+     閉じる方の "\)" の \ を「壊れた残骸の\」と誤認して
+     一緒に消してしまっていた(mu\ → mu)。すると\(…\)の対応が
+     崩れ、後工程の囲み除去が次の式の閉じ括弧まで暴走して読み込み、
+     間の文章ごと1つの式として飲み込まれる連鎖的な破損が起きていた。
+     (例: \(\mu\)：磁気モーメント、\(r\) → (mu)：磁気モーメント、\(r
+      のように、"r"の式まで巻き込まれて壊れる) */
+  var saved = [];
+  t = t.replace(/\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|\$[^\$\n]+?\$/g, function(m){
+    saved.push(m);
+    return "\uE003" + (saved.length - 1) + "\uE004";
+  });
   // 「\変数\」の形(前後をバックスラッシュで挟まれた短い変数名)を素の文字に戻す
   t = t.replace(/\\([A-Za-z][A-Za-z0-9]{0,2}(?:_\{?[A-Za-z0-9]+\}?)?)\\(?![A-Za-z])/g, "$1");
   // 「\gamma\」のように既知のコマンド名の直後に閉じ損ないの \ が残る形
   t = t.replace(/(\\[a-zA-Z]+)\\(?![a-zA-Z])/g, "$1");
+  t = t.replace(/\uE003(\d+)\uE004/g, function(m, i){ return saved[+i]; });
   return t;
 }
 /* ★整形の結果、読める文字(漢字・かな・英数字)が不自然に大きく
    減っていないかを確認する安全網。記号の置き換えで多少減るのは
    想定内だが、大きく減っていたら何かを壊した疑いがあるので、
    安全のため元の文章をそのまま使う(「文章はそのまま、中の式だけ
-   組版する」のはずが中身が消えてしまう事故を防ぐため)。 */
+   組版する」のはずが中身が消えてしまう事故を防ぐため)。
+   ★以前は英数字も一緒に数えていたため、\gamma→γ のような
+     正しい変換(5文字→1文字)が起こるたびに「大きく減った」と
+     誤検知し、正しく直った結果を捨てて壊れたままの原文に
+     戻してしまっていた(\mu や \r がそのまま残って見えたのは
+     これが原因)。記号・変数名の圧縮は正常な動作であり英数字側の
+     減少はいくらでも起こりうるので、安全網が見るべきなのは
+     「日本語の文章が消えていないか」だけに絞る。 */
 function meaningfulCharCount(s) {
-  var m = String(s || "").match(/[A-Za-z0-9\u3040-\u30FF\u4E00-\u9FFF]/g);
+  var m = String(s || "").match(/[\u3040-\u30FF\u4E00-\u9FFF]/g);
   return m ? m.length : 0;
 }
 function safeCleanText(raw) {
@@ -6297,6 +6318,13 @@ function deleteSelection() {
   pushUndo();
   removeObjects(sel.slice());
   setSelection([]);
+  /* ★削除で内容の範囲(contentBBox)が縮んでも、ここで画面位置を
+     作り直さないと「見た目はそのまま」なのに、次に拡大縮小や
+     スクロールをした瞬間だけclampViewが古い範囲との差分を
+     一気に詰めて、見当違いの位置へ飛んだように見えていた。
+     削除の直後にその場で範囲を作り直しておけば、次の操作で
+     急に位置が変わることはない。 */
+  clampView(); applyView();
   scheduleSave();
 }
 $("#ctxDel").onclick = deleteSelection;
@@ -9513,6 +9541,7 @@ function toggleAnchor() {
         fn: function(){
           pushUndo();
           o.anchLv = isTh ? 2 : 1;
+          if (o.anchLv === 1) ensureThemeSeq(o);
           inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
           setTimeout(function(){
             statusEl.textContent = isTh ? "単元の見出しにしました" : "テーマ(列)の見出しにしました";
@@ -9546,6 +9575,7 @@ function askAnchorName(o, lv) {
     pushUndo();
     o.anch = name;
     if (lv != null) o.anchLv = lv;
+    if (o.anchLv === 1) ensureThemeSeq(o);
     inkDirty = true;
     scheduleSave();
     renderTocPanel();
@@ -9819,11 +9849,16 @@ try {
 } catch (e) {}
 
 function isThemeAnchor(o) { return !!(o && o.anch && o.anchLv === 1); }
-/* テーマ(章)の一覧。上から下へ読む順に並べる。
-   ★以前は「置いてあるX座標」で所属を決めていたが、その方式だと
-     物を動かすだけで所属が変わり、整理のために動かす必要もあった。
-     いまは所属を o.anchTheme(親テーマのid)として明示的に持つので、
-     どこに置いてあっても構わない。 */
+/* テーマ(章)の一覧。「作った順」を正とする(o.themeSeq)。
+   ★以前は「置いてあるY座標→X座標」で並び順を決めていたが、
+     自由なキャンバスでは新しく足したテーマがたまたま既存より
+     上(や左)にあるだけで先頭の「1番」になってしまい、
+     並び順が予測できないバグになっていた。
+     いまは所属(o.anchTheme)だけでなく並び順そのものも位置と
+     切り離し、テーマを作った時に振る連番(themeSeq)で並べる。
+   ★古いノートにはthemeSeqが無いので、ここで一度だけ
+     「これまでの見た目の並び(上から下→左から右)」をそのまま
+     連番として割り当てる(見た目上の並びは変えない)。 */
 function themeAnchors() {
   var out = [];
   for (var i = 0; i < objects.length; i++) {
@@ -9831,8 +9866,28 @@ function themeAnchors() {
     var b = objBBox(objects[i]);
     out.push({ o: objects[i], name: String(objects[i].anch), x: b.x, y: b.y, b: b });
   }
-  out.sort(function(a, b2){ return (a.y - b2.y) || (a.x - b2.x); });
+  var withSeq = out.filter(function(t){ return typeof t.o.themeSeq === "number"; });
+  var noSeq = out.filter(function(t){ return typeof t.o.themeSeq !== "number"; });
+  if (noSeq.length) {
+    noSeq.sort(function(a, b2){ return (a.y - b2.y) || (a.x - b2.x); });
+    var nextSeq = withSeq.reduce(function(m, t){ return Math.max(m, t.o.themeSeq); }, -1) + 1;
+    for (var k = 0; k < noSeq.length; k++) noSeq[k].o.themeSeq = nextSeq++;
+  }
+  out.sort(function(a, b2){ return a.o.themeSeq - b2.o.themeSeq; });
   return out;
+}
+/* 次に新しいテーマへ振る連番。既存の最大値+1。 */
+function nextThemeSeq() {
+  var l = themeAnchors();
+  var mx = -1;
+  for (var i = 0; i < l.length; i++) mx = Math.max(mx, l[i].o.themeSeq);
+  return mx + 1;
+}
+/* このオブジェクトがまだテーマの連番を持っていなければ割り当てる。
+   (テーマに"格上げ"された瞬間に呼ぶ。既に持っていれば触らない=
+    名前変更などでは順番が変わらない) */
+function ensureThemeSeq(o) {
+  if (typeof o.themeSeq !== "number") o.themeSeq = nextThemeSeq();
 }
 /* いま開いているテーマ(直前に使ったもの)。単元を足す時の既定になる */
 var lastThemeId = null;
@@ -10841,7 +10896,7 @@ function importHtmlAsNewPage(html, title) {
         var hname = String(hd.textContent || "").trim().replace(/\s+/g, " ").slice(0, 40);
         if (hname) {
           o.anch = hname;
-          if (hd.tagName === "H1") { o.anchLv = 1; o.anchTheme = null; lastTheme = o.id; }
+          if (hd.tagName === "H1") { o.anchLv = 1; o.anchTheme = null; ensureThemeSeq(o); lastTheme = o.id; }
           else { o.anchLv = 2; o.anchTheme = lastTheme; }
         }
       }
@@ -11716,7 +11771,7 @@ function bindRichBar() {
     o.anch = name;
     o.anchLv = lv;
     o.anchTheme = (lv === 1) ? null : (themeId || null);
-    if (lv === 1) lastThemeId = o.id;
+    if (lv === 1) { ensureThemeSeq(o); lastThemeId = o.id; }
     else if (themeId) lastThemeId = themeId;
     inkDirty = true;
     scheduleSave();
@@ -13609,6 +13664,7 @@ function makeSelectedTheme() {
     if (!name) return;
     pushUndo();
     o.anch = name; o.anchLv = 1; o.anchTheme = null;
+    ensureThemeSeq(o);
     lastThemeId = o.id;
     inkDirty = true; scheduleSave(); renderTocPanel();
     statusEl.textContent = "テーマにしました: " + name;
