@@ -1144,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.10">InkNote <small>v21.10</small></div>
+  <div class="brand" title="InkNote v21.11">InkNote <small>v21.11</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.10";
+var APP_VERSION = "21.11";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -15481,8 +15481,137 @@ function refreshSyncPanel() {
     div("端末どうしで中身が食い違う時に押してください。全ページの本文を1枚ずつ突き合わせます。" +
         "枝分かれしていた分は消さずに版の控えへ残します。",
         "color:#7E8593;font-size:11px;line-height:1.8;padding:10px 6px 4px");
+
+    /* ★診断: 実際に何が起きているかを確かめる。
+       小さい画面でも全文が読めるよう、折り返し+スクロール+コピーを備える。 */
+    var b4 = document.createElement("button");
+    b4.className = "pp-tool";
+    b4.textContent = "🩺 同期の状態を調べる";
+    b4.style.cssText = "margin-top:14px;width:100%";
+    body.appendChild(b4);
+
+    var out = document.createElement("pre");
+    out.id = "syncDiagOut";
+    out.className = "scrollable";
+    out.style.cssText =
+      "display:none;margin-top:10px;max-height:40vh;overflow:auto;" +
+      "touch-action:pan-y;-webkit-overflow-scrolling:touch;" +
+      "white-space:pre-wrap;word-break:break-word;" +
+      "background:var(--ui-bg);border:1px solid var(--ui-line);border-radius:10px;" +
+      "padding:10px;font-size:11px;line-height:1.7;color:var(--ui-text);" +
+      "font-family:ui-monospace,Menlo,Consolas,monospace";
+    body.appendChild(out);
+
+    var copyRow = document.createElement("div");
+    copyRow.style.cssText = "display:none;margin-top:8px";
+    var bc = document.createElement("button");
+    bc.className = "pp-tool";
+    bc.textContent = "📋 結果をコピー";
+    bc.style.cssText = "width:100%";
+    bc.onclick = function(){
+      copyTextToClipboard(out.textContent || "", "診断結果をコピーしました");
+    };
+    copyRow.appendChild(bc);
+    body.appendChild(copyRow);
+
+    b4.onclick = function(){
+      b4.disabled = true;
+      out.style.display = "block";
+      copyRow.style.display = "block";
+      out.textContent = "調べています…";
+      runSyncDiagnostics(out, b4);
+    };
+    div("同期がうまくいかない時に押してください。ログイン状態・版番号・" +
+        "クラウドへの読み書きが実際にできるかをその場で確かめます。" +
+        "画面に入りきらない時は「📋 結果をコピー」で全文を取り出せます。",
+        "color:#7E8593;font-size:11px;line-height:1.8;padding:10px 6px 4px");
   }
 }
+/* =========================================================
+   🩺 同期の状態を調べる(診断)
+   ---------------------------------------------------------
+   ★同期されない原因を憶測で潰すのをやめ、実際に何が起きているかを
+     その場で確かめるための機能。両方の端末で実行して結果を見比べれば、
+     「送信していない」のか「送信したが拒否された」のか
+     「送れているが相手が取りに行っていない」のかが確定する。
+   ★Android等の小さい画面では長い文章が画面に収まりきらないため、
+     結果は必ず「📋 結果をコピー」できるようにし、
+     文字も折り返して全文がスクロールで読めるようにする。
+========================================================= */
+function runSyncDiagnostics(outEl, btn) {
+  var L = [];
+  function add(k, v) { L.push(k + ": " + v); }
+  function render(extra) {
+    outEl.textContent = L.join("\n") + (extra ? "\n" + extra : "");
+  }
+  L.push("===== InkNote 同期診断 =====");
+  add("実行時刻", new Date().toLocaleString());
+  add("この端末の版", "v" + APP_VERSION);
+  add("端末", (navigator.userAgent || "").slice(0, 90));
+  add("オンライン", navigator.onLine ? "はい" : "いいえ(オフライン)");
+  add("Firebase設定", FIREBASE_CONFIG.apiKey ? "あり" : "★なし(同期は動きません)");
+  var u = cloudUser();
+  add("ログイン", u ? ("はい / " + (u.email || "") ) : "★いいえ");
+  if (u) add("アカウントID", String(u.uid).slice(0, 10) + "…");
+  add("前回のアカウント", (lastUid() || "(なし)").slice(0, 10) + "…");
+  add("リアルタイム受信", realtimeActive() ? "接続中" : "★切れています");
+  add("同期処理中(syncing)", syncing ? "★はい(実行中のまま)" : "いいえ");
+  add("未保存(dirtySinceSave)", dirtySinceSave ? "あり" : "なし");
+  add("未送信(unsyncedEdits)", unsyncedEdits ? "★あり" : "なし");
+  add("編集中のBOX", editingObj ? "あり(確定前)" : "なし");
+  add("開いているページID", String(currentId));
+  add("ページ数(この端末)", pages.length);
+  add("このページの版(手元)", pageRev);
+  render("\n…クラウドに問い合わせ中…");
+  if (!u) { render("\n※ ログインしていないため、ここで終了します。"); if (btn) btn.disabled = false; return; }
+
+  /* 実際にFirestoreへ読みに行き、返ってきた版番号とエラーを記録する。
+     ここで権限拒否やオフラインが出れば、それが直接の原因。 */
+  var cloudPages = 0;
+  Promise.resolve()
+    .then(function(){
+      return fdb().collection("users").doc(u.uid).collection("meta").doc("index").get()
+        .then(function(snap){
+          var rp = (snap.exists && snap.data().pages) || [];
+          add("クラウドの一覧", snap.exists ? (rp.length + "ページ") : "★索引がありません");
+          cloudPages = rp.length;
+        })
+        .catch(function(e){ add("クラウドの一覧", "★読めません(" + ((e && e.code) || e) + ")"); });
+    })
+    .then(function(){
+      if (currentId == null) return;
+      return pageDocRef(currentId).get()
+        .then(function(snap){
+          if (!snap.exists) { add("このページ(クラウド)", "★存在しません=一度も届いていません"); return; }
+          var d = snap.data() || {};
+          add("このページの版(クラウド)", d.rev || 0);
+          add("クラウドの更新時刻", d.ts ? new Date(d.ts).toLocaleString() : "(不明)");
+          var lr = pageRev || 0, rr = d.rev || 0;
+          add("判定", rr > lr ? "★クラウドの方が新しい(取り込むべき)"
+                   : lr > rr ? "★手元の方が新しい(送るべき)" : "版は同じ");
+        })
+        .catch(function(e){ add("このページ(クラウド)", "★読めません(" + ((e && e.code) || e) + ")"); });
+    })
+    .then(function(){
+      /* 実際に書けるかを試す。読めても書けない(ルールで拒否)ことがあるため、
+         書き込み専用の小さな印を1つ置いて確かめる。 */
+      return fdb().collection("users").doc(u.uid).collection("meta").doc("diag")
+        .set({ at: Date.now(), from: APP_VERSION })
+        .then(function(){ add("書き込みテスト", "成功"); })
+        .catch(function(e){ add("書き込みテスト", "★失敗(" + ((e && e.code) || e) + ")"); });
+    })
+    .then(function(){
+      L.push("");
+      L.push("===== 見かた =====");
+      L.push("・「このページ(クラウド): 存在しません」→ この端末から一度も送れていません");
+      L.push("・「書き込みテスト: 失敗」→ Firestoreのルールで拒否されています");
+      L.push("・「リアルタイム受信: 切れています」→ 変更が自動で届きません");
+      L.push("・両方の端末で実行し、ページの版(手元/クラウド)を見比べてください");
+      render();
+      if (btn) btn.disabled = false;
+    });
+}
+
 function openSync() {
   refreshSyncPanel();
   $("#syncPanel").classList.add("show");
