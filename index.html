@@ -1144,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.07">InkNote <small>v21.07</small></div>
+  <div class="brand" title="InkNote v21.10">InkNote <small>v21.10</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.07";
+var APP_VERSION = "21.10";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3722,6 +3722,17 @@ function safeCleanText(raw) {
 function cleanPastedText(t) {
   if (!t) return "";
   var s = String(t);
+  /* ★AIチャットの回答をコピーすると、LaTeXが二重エスケープのまま
+     出てくることがある(本来 \mu であるべきものが \\mu、\( が \\( の
+     ように、バックスラッシュが2つ連なる)。以降のすべての処理は
+     「バックスラッシュは1つ」を前提に組んであるため、この状態のまま
+     渡すと$$…$$/\(…\)の対応が数え違い、片方の\だけが分離して
+     残ってしまう(fixBrokenTexDelimsで保護しても、保護の網の目が
+     \(1つ分)しか見ていないので二重には効かない)。
+     数式らしい文字(英字・括弧・波括弧・$)の直前でだけ二重を一重に
+     戻す(無関係な二重バックスラッシュ、例えばコード中のパス等を
+     誤って崩さないよう対象を絞る)。 */
+  s = s.replace(/\\\\(?=[A-Za-z(){}\[\]$])/g, "\\");
   s = stripCitationNoise(s);       // 引用マーカー・確実性タグを先に取り除く
   s = fixBrokenTexDelims(s);       // 壊れた数式の囲みの残骸を直す
   var hasTex = /[\\$]/.test(s);   // LaTeX由来かどうか(\ や $ を含むか)
@@ -14274,6 +14285,7 @@ document.addEventListener("paste", function(e){
 var fbReady = null;
 var authAttached = false;
 var syncing = false;
+var syncWatchdog = null;
 var cloudTimer = null;
 var lastSyncText = "";
 var CLOUD_CHUNK = 700000;
@@ -14854,6 +14866,22 @@ function pullIfStale(minMs) {
 (function(){
   document.addEventListener("visibilitychange", function(){
     if (document.visibilityState === "hidden") {
+      /* ★これが無いと「打っている最中に隠れる」だけで内容が消える。
+         入力のたびにscheduleSave()を呼ぶと重いので、onTextInputは
+         測定だけ行い、dirtySinceSave/unsyncedEditsはcommitText
+         (確定操作)で初めて立つ設計になっている。つまりBackspaceキー
+         やホーム画面へ戻る操作で確定(blur)が起きないまま隠れると、
+         「変更あり」の印自体が一度も立っておらず、次のsaveDocNow()が
+         「変更なし」と判断してまるごと素通りしていた
+         (Android特有のタイミング問題ではなく、確定前は常にこうなる)。
+         隠れる直前に、編集中のBOXがあればまずモデルへ同期してから
+         保存する。編集セッション自体は閉じないので、戻ってきた時も
+         そのまま続きを打てる。 */
+      if (editingObj) {
+        syncEditingObjFromDom();
+        dirtySinceSave = true;
+        unsyncedEdits = true;
+      }
       // 編集がある時だけ保存する。無条件だと更新時刻だけが新しくなり、
       // 実際には何も変わっていないのに他端末へ送り続けることになる
       if (dirtySinceSave) saveDocNow();
@@ -14892,6 +14920,7 @@ function pullIfStale(minMs) {
     }
   });
   window.addEventListener("pagehide", function(){
+    if (editingObj) { syncEditingObjFromDom(); dirtySinceSave = true; unsyncedEdits = true; }
     if (dirtySinceSave) saveDocNow();
     flushCloudPush(); setTimeout(flushCloudPush, 120);
   });
@@ -15066,6 +15095,19 @@ function syncAll() {
   if (!prev) setLastUid(u.uid);
   syncing = true;
   setSyncStatus("同期中…");
+  /* ★通信が固まる(オフライン化・Firestoreの持続化ロック競合など)と
+     syncingがtrueのまま戻らず、ページ一覧の「同期中…」表示が
+     永久に固まって見えることがあった。他の「固まったまま戻せない
+     状態」(armPinchWatchdog等)と同じく、時間切れで強制的に
+     解除する見張りを置く。正常に終わればこのタイマーは働かない。 */
+  clearTimeout(syncWatchdog);
+  syncWatchdog = setTimeout(function(){
+    if (syncing) {
+      syncing = false;
+      setSyncStatus("同期がタイムアウトしました(通信を確認してください)");
+      flushPendingSave();
+    }
+  }, 25000);
   /* ★ここで無条件にsaveDocNow()すると、何も編集していなくても
      更新時刻が「今」に書き換わり、常に「手元が最新」と判定されて
      他の端末の変更を取り込めなくなる(PCで開いても古いままの原因)。
@@ -15200,14 +15242,18 @@ function syncAll() {
       setSyncStatus("同期できません: 通信を確認してください");
     else
       setSyncStatus("同期エラー" + (code ? "(" + code + ")" : "(通信を確認)"));
-    if (booting) createFirstPage();     // クラウド不通でもアプリは使える
+    /* ★ここが例外を投げると(catchハンドラ自体の失敗)、直後の
+       syncing=falseへ辿り着けず、「同期中…」が永久に固まる経路に
+       なる。createFirstPageは元は保護されていなかったので、
+       他と同じくtry/catchで必ずこの先へ進めるようにする。 */
+    try { if (booting) createFirstPage(); } catch (e) {}     // クラウド不通でもアプリは使える
     /* ★失敗しても購読は始める。
        以前は成功経路にしか startRealtime() が無かったため、
        途中の1回の失敗(1ページの送信が拒否された等)で購読が始まらず、
        その端末はそれ以降ずっと「開いているページ以外は同期されない」
        状態に陥っていた。購読が生きていれば後から自力で追いつける。 */
     try { if (cloudUser()) startRealtime(); } catch (e) {}
-  }).then(function(){ syncing = false; flushPendingSave(); });
+  }).then(function(){ clearTimeout(syncWatchdog); syncing = false; flushPendingSave(); });
 }
 
 /* =========================================================
