@@ -1192,6 +1192,9 @@
      画面座標で描く。ノートを拡大縮小・スクロールしても、つまむ所の
      大きさが変わらないようにするため(世界座標に置くと拡大時に
      ハンドルが巨大化して押しづらくなる)。 */
+  /* 範囲を長方形で決める時の枠(投げ縄と同じ感覚で囲める) */
+  #gapPickBox{position:fixed;z-index:71;display:none;pointer-events:none;
+    border:2px dashed #4a6ef0;background:rgba(74,110,240,.14);border-radius:6px}
   #gapTool{position:fixed;inset:0;z-index:70;display:none}
   #gapTool.show{display:block}
   /* 対象になる範囲(この帯の中で、棒より下のものが動く)を薄く示す */
@@ -1217,7 +1220,8 @@
     background:#4a6ef0;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);
   }
   #gapHud{position:absolute;left:50%;transform:translateX(-50%);
-    display:flex;align-items:center;gap:8px;
+    display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+    justify-content:center;max-width:min(94vw, 420px);
     background:var(--ui-bg2,#232733);border:1px solid var(--ui-line,#3a4050);
     border-radius:12px;padding:7px 10px;box-shadow:0 6px 20px rgba(0,0,0,.45)}
   #gapHud #gapAmt{color:var(--ui-text,#e8eaf0);font-size:12px;font-weight:700;min-width:56px;text-align:center}
@@ -1242,15 +1246,17 @@ window.onerror = function(msg, src, line){
   <div id="world"></div>
 </div>
 <canvas id="ink"></canvas>
+<div id="gapPickBox"></div>
 <div id="gapTool" aria-hidden="true">
   <div id="gapBand"></div>
   <div id="gapBar">
     <div class="gap-h gap-l" id="gapL"></div>
-    <div class="gap-mid" id="gapMid">↕ 引いて下げる</div>
+    <div class="gap-mid" id="gapMid">↕ 引いて空ける / 詰める</div>
     <div class="gap-h gap-r" id="gapR"></div>
   </div>
   <div id="gapHud">
     <span id="gapAmt">0px</span>
+    <button id="gapFit">⇕ 空白を詰める</button>
     <button id="gapDone">✓ 確定</button>
     <button id="gapCancel">✕ やめる</button>
   </div>
@@ -1282,7 +1288,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.03">InkNote <small>v22.03</small></div>
+  <div class="brand" title="InkNote v22.04">InkNote <small>v22.04</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1778,8 +1784,8 @@ window.onerror = function(msg, src, line){
       <span style="color:var(--ui-dim);font-size:11px">だんだんズレた左端・行間を直す</span>
     </div>
     <div class="st-row"><span class="st-label">整列</span>
-      <button class="stybtn" id="gapOpenBtn">↕ すき間を空ける</button>
-      <span style="color:var(--ui-dim);font-size:11px">列を選んで、その位置から下だけをまとめて下げる</span>
+      <button class="stybtn" id="gapOpenBtn">↕ すき間を空ける / 詰める</button>
+      <span style="color:var(--ui-dim);font-size:11px">タップで列を自動判定、ドラッグで範囲を囲む。下げる・詰めるの両方できます</span>
     </div>
     <div class="st-row"><span class="st-label">整理</span>
       <button class="stybtn" id="grpOpenBtn">🗂 まとまりを整理</button>
@@ -1866,7 +1872,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.03";
+var APP_VERSION = "22.04";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4769,13 +4775,14 @@ selHandle.addEventListener("pointerdown", function(e){
 ========================================================= */
 var stageLastTap = 0;
 stage.addEventListener("pointerdown", function(e){
-  /* ★「↕ すき間を空ける」で場所待ちの時は、この1タップだけを
+  /* ★「↕ すき間を空ける/詰める」で場所待ちの時は、この操作だけを
      その指定に使う。道具は切り替えないので、終わったらそのまま
-     元の作業に戻れる。 */
+     元の作業に戻れる。
+     ・タップ = 列を自動で見つける(手軽)
+     ・ドラッグで長方形 = 範囲を自分で決める(確実) */
   if (window.__gapPickPending && window.__gapPickPending()) {
     e.preventDefault(); e.stopPropagation();
-    var gp = toWorld(e.clientX, e.clientY);
-    window.__gapPick(gp.x, gp.y);
+    window.__gapPickStart(e);
     return;
   }
   if (tool !== "select" && tool !== "text") return;
@@ -14857,6 +14864,55 @@ function gapHighlight(on) {
   }
   inkDirty = true;
 }
+/* =========================================================
+   詰められる限界(上へ動かせる量)
+   ---------------------------------------------------------
+   帯の中で「棒より上にある物の下端」のうち、いちばん下のものを探す。
+   そこまで詰めたら、それ以上は上の内容と重なってしまう。
+   ★重なりは元に戻すのが大変なので、機械的に止める。
+     少し余白(MIN_GAP)を残して止め、ぴったり接着しないようにする。
+========================================================= */
+var GAP_MIN = 12;                 // 詰めた時に必ず残す余白
+/* 帯の中で「棒より上にある物の下端」のうち、いちばん下のもの */
+function gapBottomAbove() {
+  var bottomAbove = null;
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.locked) continue;
+    var b = objBBox(o);
+    var cx = b.x + b.w / 2;
+    if (cx < gapX1 || cx > gapX2) continue;
+    if (b.y >= gapY) continue;                      // これは動く側(棒より下)
+    var bot = b.y + b.h;
+    if (bottomAbove === null || bot > bottomAbove) bottomAbove = bot;
+  }
+  return bottomAbove;
+}
+/* 動く側のいちばん上(=詰めると上へ近づいてくる先頭) */
+function gapTopOfTargets() {
+  var top = null;
+  for (var i = 0; i < gapTargets.length; i++) {
+    var b = objBBox(gapTargets[i]);
+    if (top === null || b.y < top) top = b.y;
+  }
+  return top;
+}
+/* 空白をちょうど詰める量。
+   「上の内容の下端」と「動く側の先頭」のあいだの空きから、
+   残したい余白を引いた分だけ上げれば、無駄な空白だけが消える。
+   ★ドラッグの限界もこれと同じ値にする。
+     以前は「棒の位置」を基準に限界を出していたため、
+     ボタンなら988px詰められるのに手で引くと88pxで止まる、という
+     食い違いが起きていた。ぶつかるのは棒ではなく中身なので、
+     中身どうしの隙間で決めるのが正しい。 */
+function gapAutoClose() {
+  var top = gapTopOfTargets();
+  if (top === null) return 0;
+  var bottomAbove = gapBottomAbove();
+  if (bottomAbove === null) bottomAbove = gapY;
+  return Math.max(0, top - bottomAbove - GAP_MIN);
+}
+function gapMaxUp() { return gapAutoClose(); }
 /* 画面に棒と帯を描き直す(ノート座標→画面座標) */
 function gapLayout() {
   if (!gapOn) return;
@@ -14879,6 +14935,17 @@ function gapLayout() {
 }
 window.__gapLayout = gapLayout;
 
+/* 範囲を自分で指定して開く(長方形で囲んだ場合) */
+function gapOpenRange(x1, x2, y) {
+  if (x2 - x1 < 20) { statusEl.textContent = "範囲が狭すぎます"; return; }
+  gapOn = true; gapDy = 0;
+  gapX1 = x1; gapX2 = x2; gapY = y;
+  gapTargets = gapCollect();
+  $("#gapTool").classList.add("show");
+  gapLayout(); gapHighlight(true);
+  statusEl.textContent = "囲んだ範囲の " + gapTargets.length +
+    " 個が対象です(上へ引くと詰まります)";
+}
 function gapOpen(wx, wy) {
   var col = gapDetectColumn(wx, wy);
   if (!col) { statusEl.textContent = "このページにはまだ内容がありません"; return; }
@@ -14907,7 +14974,8 @@ function gapCommit() {
   gapDy = 0;
   gapClose();
   inkDirty = true; scheduleSave(); updateSelUI();
-  statusEl.textContent = list.length + " 個を " + dy + "px 下げました(↩で戻せます)";
+  statusEl.textContent = list.length + " 個を " +
+    (dy > 0 ? (dy + "px 下げました") : (-dy + "px 詰めました")) + "(↩で戻せます)";
 }
 /* ドラッグ中は本体を動かさず、棒と帯だけを動かして予告する。
    ★実物を毎フレーム動かすと重く、途中でやめた時に戻せない。 */
@@ -14926,35 +14994,85 @@ function gapCommit() {
     e.preventDefault();
     if (gapDrag.kind === "move") {
       gapDy = gapDrag.y0 + (e.clientY - gapDrag.sy) / view.s;
-      if (gapDy < 0) gapDy = 0;                     // 上へは詰めない(重なり事故を防ぐ)
+      /* ★上へも動かせるようにした(すき間を詰める)。
+         ただし上の内容と重なる手前で必ず止める。重なりは元に戻すのが
+         大変なので、機械的に限界を作っておく。 */
+      var up = gapMaxUp();
+      if (gapDy < -up) gapDy = -up;
     } else {
       var dxw = (e.clientX - gapDrag.sx) / view.s;
       if (gapDrag.kind === "left")  gapX1 = Math.min(gapDrag.x1 + dxw, gapX2 - 20);
       else                          gapX2 = Math.max(gapDrag.x2 + dxw, gapX1 + 20);
       // 幅を変えたら対象を選び直す
       gapHighlight(false); gapTargets = gapCollect(); gapHighlight(true);
-      $("#gapMid").textContent = "↕ 引いて下げる(" + gapTargets.length + ")";
+      $("#gapMid").textContent = "↕ 空ける / 詰める(" + gapTargets.length + ")";
     }
     gapLayout();
   }, { passive: false });
   addEventListener("pointerup", function(){
     if (!gapDrag) return;
     gapDrag = null;
-    $("#gapMid").textContent = "↕ 引いて下げる";
+    $("#gapMid").textContent = "↕ 引いて空ける / 詰める";
   });
 })();
+$("#gapFit").onclick = function(e){
+  e.stopPropagation();
+  if (!gapOn) return;
+  var amt = gapAutoClose();
+  if (amt <= 0) { statusEl.textContent = "詰められる空白がありません"; return; }
+  gapDy = -amt;
+  gapLayout();
+  statusEl.textContent = "空白 " + Math.round(amt) + "px を詰めます(確定で反映)";
+};
 $("#gapDone").onclick = function(e){ e.stopPropagation(); gapCommit(); };
 $("#gapCancel").onclick = function(e){ e.stopPropagation(); gapClose(); statusEl.textContent = "やめました"; };
 $("#gapOpenBtn").onclick = function(){
   closeMenu();
   setTimeout(function(){
-    statusEl.textContent = "すき間を空けたい場所をタップしてください";
+    statusEl.textContent = "場所をタップ(列を自動判定)、または範囲をドラッグで囲んでください";
     gapPickNext = true;
   }, 80);
 };
 /* 次の1回のタップで場所を決める(専用ツールに切り替えないので、
    使い終わったら元の道具のまま作業を続けられる) */
 window.__gapPickPending = function(){ return gapPickNext; };
+/* 場所の指定。タップなら列を自動判定、長方形を描いたらその範囲を使う。
+   ★「投げ縄の長方形のように範囲を決めたい」という要望への対応。
+     自動判定は、はみ出した式が隣の列と橋渡しになると広がりすぎるので、
+     自分で囲めた方が確実な場面がある。 */
+window.__gapPickStart = function(e) {
+  var sx = e.clientX, sy = e.clientY;
+  var moved = false;
+  var box = document.getElementById("gapPickBox");
+  function upd(ev) {
+    var x1 = Math.min(sx, ev.clientX), x2 = Math.max(sx, ev.clientX);
+    var y1 = Math.min(sy, ev.clientY), y2 = Math.max(sy, ev.clientY);
+    if (!moved && (x2 - x1 > 12 || y2 - y1 > 12)) { moved = true; box.style.display = "block"; }
+    if (!moved) return;
+    box.style.left = x1 + "px"; box.style.top = y1 + "px";
+    box.style.width = (x2 - x1) + "px"; box.style.height = (y2 - y1) + "px";
+  }
+  function done(ev) {
+    removeEventListener("pointermove", upd, true);
+    removeEventListener("pointerup", done, true);
+    removeEventListener("pointercancel", done, true);
+    box.style.display = "none";
+    gapPickNext = false;
+    var a = toWorld(sx, sy);
+    var b = toWorld(ev.clientX, ev.clientY);
+    if (moved) {
+      /* 長方形の左右 = 対象の帯、上辺 = 押し下げ/詰めの境目。
+         上辺を境目にするのは、囲んだ中身がそのまま「動く側」に
+         なって直感に合うため。 */
+      gapOpenRange(Math.min(a.x, b.x), Math.max(a.x, b.x), Math.min(a.y, b.y));
+    } else {
+      gapOpen(a.x, a.y);
+    }
+  }
+  addEventListener("pointermove", upd, true);
+  addEventListener("pointerup", done, true);
+  addEventListener("pointercancel", done, true);
+};
 window.__gapPick = function(wx, wy){ gapPickNext = false; gapOpen(wx, wy); };
 
 $("#tidyOpenBtn").onclick = function(){ closeMenu(); setTimeout(openTidySheet, 120); };
