@@ -69,6 +69,11 @@
      セルの上にはみ出さないようにする */
   .obj-text img[data-latex]{
     max-height:1.2em;vertical-align:-0.2em;display:inline-block;
+    /* ★予防策: 長い式(CNRの定義式など)を行内に組むと、画像の幅が
+       テキストBOXの幅を超えて右へはみ出し、隣の列に食い込んでいた。
+       高さだけでなく幅も上限を付ける。縦横の比は保たれるので、
+       幅で引っかかった式は自動的に少し小さく収まる。 */
+    max-width:100%;
     /* ★組版した数式は画像なので、そのままだと指やマウスで
        つまんで運べてしまい、落とした先に複製が増える。
        画像としての持ち出しを禁止する(文字の選択には影響しない)。 */
@@ -408,6 +413,16 @@
   .toc-th .toc-name{font-weight:800;color:var(--ui-text)}
   .toc-th .toc-cnt{color:var(--ui-dim);font-size:11px;margin-left:auto}
   .toc-empty{color:var(--ui-dim);font-size:11px;padding:6px 0 6px 24px}
+  /* ===== 目次のドラッグ移動 =====
+     ★掴んでいる行は薄く、落とし先の行は光らせる。
+       指で操作するので「いまどこに落ちるか」が見えないと使えない。 */
+  .toc-drag{opacity:.45}
+  .toc-drop{outline:2px solid var(--accent);outline-offset:-2px;
+    background:rgba(76,111,255,.22) !important}
+  .toc-unfiled{background:rgba(255,255,255,.05);border-left:3px dashed var(--ui-dim)}
+  /* 指でつまむ間はスクロールに取られないようにする */
+  #tocList .toc-row, #tocList .toc-th{touch-action:pan-y}
+  #tocList.dragging .toc-row, #tocList.dragging .toc-th{touch-action:none}
   #zoomChip,#fitChip,#posChip{
     position:fixed;right:14px;
     background:rgba(32,36,43,.85);color:#cfd3da;font-size:11.5px;font-weight:600;
@@ -460,9 +475,18 @@
   body.mode-a4h #mapChip{bottom:calc(env(safe-area-inset-bottom) + 174px)}
   body.mode-a4h #posChip{bottom:calc(env(safe-area-inset-bottom) + 204px)}
   body.mode-a4h #topChip{bottom:calc(env(safe-area-inset-bottom) + 220px)}
+  /* ★A4縦のときだけ右のチップを逃がしていたが、無限モードでも
+     同じ右端スライダーが出るのに逃がしておらず、チップとつまみが
+     重なって干渉していた(無限=近すぎる の原因)。
+     一方でA4縦の48pxは離れすぎだったので、その中間の40pxに統一する。
+     無限モードはスライダーが出たり消えたりするので、
+     出ている時だけ寄せる(vscroll.onが付いている時)。 */
   body.mode-a4v #zoomChip,
   body.mode-a4v #fitChip,
-  body.mode-a4v #posChip{right:48px}
+  body.mode-a4v #posChip{right:40px}
+  body.has-vscroll-v #zoomChip,
+  body.has-vscroll-v #fitChip,
+  body.has-vscroll-v #posChip{right:40px}
   #vscroll.h #vsTrack{
     position:absolute;bottom:10px;left:0;right:0;height:4px;
     background:rgba(120,126,140,.18);border-radius:2px;
@@ -1150,6 +1174,44 @@
   /* 折りたたみを開いた時は、狭い画面でも2段に収まるよう折り返す */
   .pp-tools-grid{flex-wrap:wrap}
   .pp-tools-grid .pp-tool{flex:1 1 30%;min-width:96px}
+  /* ===== ↕ すき間を空ける(列を押し下げる) =====
+     画面座標で描く。ノートを拡大縮小・スクロールしても、つまむ所の
+     大きさが変わらないようにするため(世界座標に置くと拡大時に
+     ハンドルが巨大化して押しづらくなる)。 */
+  #gapTool{position:fixed;inset:0;z-index:70;display:none}
+  #gapTool.show{display:block}
+  /* 対象になる範囲(この帯の中で、棒より下のものが動く)を薄く示す */
+  #gapBand{position:absolute;background:rgba(90,130,255,.13);
+    border-left:1px dashed rgba(120,160,255,.75);
+    border-right:1px dashed rgba(120,160,255,.75);pointer-events:none}
+  #gapBar{position:absolute;display:flex;align-items:center;
+    height:44px;margin-top:-22px;touch-action:none}
+  #gapBar .gap-mid{
+    flex:1;height:44px;display:flex;align-items:center;justify-content:center;
+    color:#fff;font-size:12px;font-weight:700;letter-spacing:.02em;
+    background:linear-gradient(to bottom,rgba(70,110,240,0) 0%,
+      rgba(70,110,240,.92) 42%,rgba(70,110,240,.92) 58%,rgba(70,110,240,0) 100%);
+    cursor:ns-resize;text-shadow:0 1px 3px rgba(0,0,0,.5);
+  }
+  /* 左右のつまみ。指で押しやすいよう実寸を大きめに取る */
+  #gapBar .gap-h{
+    width:30px;height:44px;flex:0 0 auto;cursor:ew-resize;
+    display:flex;align-items:center;justify-content:center;
+  }
+  #gapBar .gap-h::before{
+    content:"";width:12px;height:28px;border-radius:5px;
+    background:#4a6ef0;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);
+  }
+  #gapHud{position:absolute;left:50%;transform:translateX(-50%);
+    display:flex;align-items:center;gap:8px;
+    background:var(--ui-bg2,#232733);border:1px solid var(--ui-line,#3a4050);
+    border-radius:12px;padding:7px 10px;box-shadow:0 6px 20px rgba(0,0,0,.45)}
+  #gapHud #gapAmt{color:var(--ui-text,#e8eaf0);font-size:12px;font-weight:700;min-width:56px;text-align:center}
+  #gapHud button{border:1px solid var(--ui-line,#3a4050);background:rgba(255,255,255,.06);
+    color:var(--ui-text,#e8eaf0);border-radius:9px;font-size:12px;padding:6px 10px;cursor:pointer}
+  #gapHud #gapDone{background:#4a6ef0;border-color:#4a6ef0;color:#fff;font-weight:700}
+  /* 動く対象を光らせる(何が動くか事前に分かるように) */
+  .gap-target-hl{outline:2px solid rgba(90,130,255,.9) !important;outline-offset:1px}
 </style>
 </head>
 <body>
@@ -1166,6 +1228,20 @@ window.onerror = function(msg, src, line){
   <div id="world"></div>
 </div>
 <canvas id="ink"></canvas>
+<div id="gapTool" aria-hidden="true">
+  <div id="gapBand"></div>
+  <div id="gapBar">
+    <div class="gap-h gap-l" id="gapL"></div>
+    <div class="gap-mid" id="gapMid">↕ 引いて下げる</div>
+    <div class="gap-h gap-r" id="gapR"></div>
+  </div>
+  <div id="gapHud">
+    <span id="gapAmt">0px</span>
+    <button id="gapDone">✓ 確定</button>
+    <button id="gapCancel">✕ やめる</button>
+  </div>
+</div>
+
 <div id="capture"></div>
 
 <div id="hint">
@@ -1192,7 +1268,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.17">InkNote <small>v21.17</small></div>
+  <div class="brand" title="InkNote v22.01">InkNote <small>v22.01</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1343,7 +1419,7 @@ window.onerror = function(msg, src, line){
 <button id="zoomChip">100%</button>
 <button id="fitChip">⛶ 20%</button>
 
-<button id="posChip">☆ 位置</button><button id="pasteChip">📋 貼り付け</button>
+<button id="posChip">☆ 単元</button><button id="pasteChip">📋 貼り付け</button>
 <button id="mapChip">🗺 マップ</button>
 <button id="topChip" style="display:none">⤒ 先頭</button>
 <div id="vscroll">
@@ -1687,6 +1763,10 @@ window.onerror = function(msg, src, line){
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
       <span style="color:var(--ui-dim);font-size:11px">だんだんズレた左端・行間を直す</span>
     </div>
+    <div class="st-row"><span class="st-label">整列</span>
+      <button class="stybtn" id="gapOpenBtn">↕ すき間を空ける</button>
+      <span style="color:var(--ui-dim);font-size:11px">列を選んで、その位置から下だけをまとめて下げる</span>
+    </div>
     <div class="st-row"><span class="st-label">整理</span>
       <button class="stybtn" id="grpOpenBtn">🗂 まとまりを整理</button>
       <span style="color:var(--ui-dim);font-size:11px">散らかった内容を塊ごとに整理</span>
@@ -1718,10 +1798,10 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="posPanel">
-  <div class="pp-head"><span>位置の記憶</span><button id="psClose">✕</button></div>
+  <div class="pp-head"><span>🗂 単元の整理</span><button id="psClose">✕</button></div>
   <div id="psList" class="scrollable" style="overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1;min-height:60px"></div>
   <div class="pp-foot">
-    <button id="psAdd">☆ 現在の位置を記憶</button>
+    <button id="psAdd">☆ ここを単元として記憶</button>
   </div>
 </div>
 
@@ -1772,7 +1852,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.17";
+var APP_VERSION = "22.01";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1970,12 +2050,25 @@ function sheetExtent() {
   var n = Math.max(1, Math.ceil(Math.max(used, 0) / SH) + 1);
   return n * SH;
 }
+/* ★拡大率の「100%」の基準。
+   以前は view.s をそのまま%にしていたため、同じ数字でも見え方が
+   モードで揃わず、特に無限モードは基準が1.0のまま=いきなり
+   100%と出て、実際にはかなり寄った状態になっていた
+   (「無限の100%がよく分からない、近すぎる」の原因)。
+   これからは「A4縦の紙の幅が画面にちょうど収まる大きさ」を
+   100%とし、どのモードでも同じ物差しで表す。 */
+function zoomBaseScale() {
+  return Math.max(0.2, Math.min(1.6, (innerWidth - 24) / A4W));
+}
 /* A4モードの基準倍率: 用紙の幅(A4横なら高さ)が画面にちょうど収まる大きさ。
    スマホなら約50%、タブレットならほぼ等倍になり、紙一枚を見渡せる。 */
 function sheetFitScale() {
-  if (canvasMode === "a4v") return Math.max(0.2, Math.min(1.6, (innerWidth - 24) / A4W));
+  if (canvasMode === "a4v") return zoomBaseScale();
   if (canvasMode === "a4h") return Math.max(0.2, Math.min(1.6, (innerHeight - 150) / A4W));
-  return 1;
+  /* ★無限モードも A4縦と同じ大きさを既定にする。
+     以前は 1 を返していたので、A4から無限へ切り替えた瞬間に
+     倍以上へ寄ってしまい、同じノートなのに別物の見え方になっていた。 */
+  return zoomBaseScale();
 }
 /* スクロールしてよい世界の範囲。
    用紙だけに限ると、用紙の外に置かれた内容へ永久に届かなくなる
@@ -2094,10 +2187,11 @@ function applyView() {
   world.style.transform = "translate(" + view.x + "px," + view.y + "px) scale(" + view.s + ")";
   world.style.setProperty("--ws", view.s);
   if (window.__syncVScroll) window.__syncVScroll();
-  var pct = view.s * 100;
+  var pct = view.s / zoomBaseScale() * 100;
   $("#zoomChip").textContent =
     (pct >= 10 ? Math.round(pct) : pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)) + "%";
   if (window.updateColBar) updateColBar();
+  if (window.__gapLayout) window.__gapLayout();   // 拡大縮小・スクロールに棒を追従させる
   inkDirty = true;
 }
 function toWorld(sx, sy) { return { x: (sx - view.x) / view.s, y: (sy - view.y) / view.s }; }
@@ -4653,6 +4747,15 @@ selHandle.addEventListener("pointerdown", function(e){
 ========================================================= */
 var stageLastTap = 0;
 stage.addEventListener("pointerdown", function(e){
+  /* ★「↕ すき間を空ける」で場所待ちの時は、この1タップだけを
+     その指定に使う。道具は切り替えないので、終わったらそのまま
+     元の作業に戻れる。 */
+  if (window.__gapPickPending && window.__gapPickPending()) {
+    e.preventDefault(); e.stopPropagation();
+    var gp = toWorld(e.clientX, e.clientY);
+    window.__gapPick(gp.x, gp.y);
+    return;
+  }
   if (tool !== "select" && tool !== "text") return;
   if (pinch) return;
   hintEl.style.opacity = 0;
@@ -5520,7 +5623,11 @@ $("#barToggle").onclick = function(){
   window.__syncVScroll = function() {
     if (canvasMode === "inf") {
       var cb0 = contentBBox();
-      if (!cb0) { vs.classList.remove("on"); return; }        // 何も置かれていない
+      if (!cb0) {                                             // 何も置かれていない
+        vs.classList.remove("on");
+        document.body.classList.remove("has-vscroll-v");
+        return;
+      }
       // ★内容が今の画面の中にすっぽり収まっているなら、動かす意味が無い。
       //   余白を含めた可動域(infExtentAndOrigin)ではなく、
       //   実際に画面外へはみ出しているかどうかで判定する。
@@ -5529,12 +5636,20 @@ $("#barToggle").onclick = function(){
       var hi0 = vert0 ? (cb0.y + cb0.h) : (cb0.x + cb0.w);
       var scrLo = -(vert0 ? view.y : view.x) / view.s;
       var scrHi = scrLo + (vert0 ? innerHeight : innerWidth) / view.s;
-      if (lo0 >= scrLo - 1 && hi0 <= scrHi + 1) { vs.classList.remove("on"); return; }
+      if (lo0 >= scrLo - 1 && hi0 <= scrHi + 1) {
+        vs.classList.remove("on");
+        document.body.classList.remove("has-vscroll-v");
+        return;
+      }
     }
     var vert = vertNow();
     vs.classList.add("on");
     vs.classList.toggle("v", vert);      // A4縦: 右端の縦スライダー
     vs.classList.toggle("h", !vert);     // A4横: 下端の横スライダー
+    /* ★右端に縦スライダーが出ている間だけ、右下のチップを左へ逃がす。
+       無限モードはスライダーが出たり消えたりするので、モードではなく
+       「いま出ているか」で判断する。 */
+    document.body.classList.toggle("has-vscroll-v", vert);
     var pos = 24 - (vert ? view.y : view.x);            // 0=先頭
     var ratio = Math.max(0, Math.min(1, pos / scrollRange()));
     if (vert) {
@@ -6963,15 +7078,15 @@ $("#fingerToggle").onclick = function(){
 $("#fingerToggle").classList.toggle("on", fingerDraws);
 $("#hlToggle").classList.toggle("on", !!pen.highlighter);
 $("#zoomChip").onclick = function(){
-  // 今見ている場所を中心にしたまま基準倍率へ(場所を見失わない)
-  // A4モードの基準は「用紙が画面にちょうど収まる大きさ」(スマホなら約50%)
-  var target = (canvasMode === "inf") ? 1 : sheetFitScale();
+  /* 今見ている場所を中心にしたまま100%へ(場所を見失わない)。
+     ★100% = A4縦の紙の幅が画面にちょうど収まる大きさ。
+       無限モードだけ等倍(1.0)へ戻していたため、同じ100%表示でも
+       A4より倍以上寄った状態になっていた。基準を揃える。 */
+  var target = sheetFitScale();
   var cx = innerWidth / 2, cy = innerHeight / 2;
   var wpt = toWorld(cx, cy);
-  animateView({ s: target, x: cx - wpt.x, y: cy - wpt.y });
-  statusEl.textContent = (canvasMode === "inf")
-    ? "100%(等倍)"
-    : "用紙全体が見える大きさ(" + Math.round(target * 100) + "%)";
+  animateView({ s: target, x: cx - wpt.x * target, y: cy - wpt.y * target });
+  statusEl.textContent = "100%(A4縦の紙の幅がちょうど収まる大きさ)";
 };
 
 /* ---------- ツールバーをドラッグで移動(位置は記憶) ---------- */
@@ -7538,6 +7653,7 @@ function loadPage(id, onReady) {
       rebuildScene(rec.json);
       if (rec.view) view = rec.view;
       bookmarks = rec.bookmarks || [];
+      migrateUnitsV22();
       // ノートに保存された用紙設定を復元(古いノートには無いので今の設定のまま)
       if (rec.canvasMode === "inf" || rec.canvasMode === "a4v" || rec.canvasMode === "a4h")
         canvasMode = rec.canvasMode;
@@ -7546,7 +7662,9 @@ function loadPage(id, onReady) {
       if (rec.colW >= 320 && rec.colW <= 2400) READ_W = rec.colW;
     } else {
       rebuildScene("[]");
-      view = { x: 0, y: 0, s: 1 };
+      // ★新しいページは100%(=A4縦の幅が収まる大きさ)から始める。
+      //   以前は等倍(1.0)だったので、無限モードでいきなり寄った状態だった。
+      view = { x: 0, y: 0, s: sheetFitScale() };
       bookmarks = [];
     }
     applyCanvasMode(true);        // 用紙表示を作り直す(保存された表示位置は保つ)
@@ -8964,7 +9082,7 @@ $("#wipePage").onclick = function(){
   if (!confirm("⚠ このページを完全に白紙にします。\nすべてのオブジェクト・位置の記憶が消え、元に戻せません。\nよろしいですか?")) return;
   rebuildScene("[]");
   bookmarks = [];
-  view = { x: 0, y: 0, s: 1 };
+  view = { x: 0, y: 0, s: sheetFitScale() };
   undoStack = []; redoStack = []; updateUndoUI();
   applyView();
   hintEl.style.opacity = "";
@@ -9036,77 +9154,191 @@ function fitAll() {
   });
 }
 $("#fitChip").onclick = function(){
-  // 今の場所を中心にしたまま俯瞰20%へ
+  /* 今の場所を中心にしたまま俯瞰へ。
+     ★「20%」は新しい物差し(A4縦の幅=100%)での20%。
+       以前は view.s を直接0.2にしていたので、表示中の%と
+       実際に飛ぶ倍率が食い違っていた。 */
   var cx = innerWidth / 2, cy = innerHeight / 2;
   var wpt = toWorld(cx, cy);
-  animateView({ s: 0.2, x: cx - wpt.x * 0.2, y: cy - wpt.y * 0.2 });
+  var s2 = zoomBaseScale() * 0.2;
+  animateView({ s: s2, x: cx - wpt.x * s2, y: cy - wpt.y * s2 });
 };
 
 /* ---------- 位置の記憶(ブックマーク) ---------- */
+/* =========================================================
+   🗂 単元の整理(旧「位置の記憶」)
+   ---------------------------------------------------------
+   ☆で貯めた単元を、ここでまとめてテーマに割り当てる。
+   ・未分類 と テーマ別 に分けて一覧
+   ・行を押すとその場所へ移動
+   ・📑でテーマを割り当て / 変更、✎で名前、🗑で削除
+   ・🎯で「印を付ける相手」を選び直せる(自動判定が外した時用)
+   単元は2種類ある:
+     物に紐づく単元  = o.anch/anchLv=2/anchTheme を持つオブジェクト
+     位置だけの単元  = bookmarks[] の項目(白紙の場所も覚えられる)
+   どちらも同じ一覧に混ぜて出す(使う側から見れば同じ「単元」なので)。
+========================================================= */
+/* 一覧に出す単元を、2種類まとめて集める */
+/* ★v22の移行: 単元まわりの作り直しにあたり、試作中だった
+     「単元」と「位置の記憶」は一度きれいにする。
+     テーマ(anchLv=1)は作った順(themeSeq)ごとそのまま残す。
+   ★印はページごとに持つ。アプリ全体で1回にすると、最初に開いた
+     ページだけが片付いて、他のページの古い単元が残ってしまう。
+     各ページを次に開いた時に、そのページの分が1回だけ片付く。 */
+function migrateUnitsV22() {
+  var key = "inknote_unit_mig_v22_" + currentId;
+  try { if (localStorage.getItem(key) === "1") return; } catch (e) {}
+  var n = 0;
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.anch && o.anchLv !== 1) { o.anch = null; o.anchLv = null; o.anchTheme = null; n++; }
+  }
+  if (bookmarks && bookmarks.length) { n += bookmarks.length; bookmarks = []; }
+  try { localStorage.setItem(key, "1"); } catch (e) {}
+  if (n) { inkDirty = true; scheduleSave(); }
+}
+function unitEntries() {
+  var out = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (!o.anch || o.anchLv !== 2) continue;
+    out.push({ kind: "obj", o: o, name: String(o.anch),
+               theme: o.anchTheme || null, id: o.id });
+  }
+  for (var b = 0; b < bookmarks.length; b++) {
+    var bm = bookmarks[b];
+    out.push({ kind: "pos", bm: bm, name: String(bm.name || ""),
+               theme: bm.theme || null, id: bm.id });
+  }
+  return out;
+}
+function unitThemeOf(e) { return e.theme || null; }
+function setUnitTheme(e, themeId) {
+  pushUndo();
+  if (e.kind === "obj") e.o.anchTheme = themeId;
+  else e.bm.theme = themeId;
+  scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
+}
+function gotoUnit(e) {
+  if (e.kind === "obj") { jumpToAnchor(e.o); }
+  else { animateView(e.bm.view); statusEl.textContent = "「" + e.name + "」へ移動しました"; }
+  closePos();
+}
+function renameUnit(e) {
+  askText("単元の名前", e.name, function(t){
+    if (t == null) return;
+    t = String(t).trim();
+    if (!t) return;
+    pushUndo();
+    if (e.kind === "obj") e.o.anch = t; else e.bm.name = t;
+    scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
+  });
+}
+function deleteUnit(e) {
+  pushUndo();
+  if (e.kind === "obj") { e.o.anch = null; e.o.anchLv = null; e.o.anchTheme = null; }
+  else bookmarks = bookmarks.filter(function(b){ return b.id !== e.id; });
+  inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
+}
+/* テーマ割り当てシート。「未分類に戻す」も必ず出す */
+function pickThemeFor(e) {
+  var themes = themeAnchors();
+  var opts = [];
+  for (var i = 0; i < themes.length; i++) {
+    (function(t){
+      opts.push({ label: (t.o.id === e.theme ? "✓ " : "📄 ") + t.name,
+                  fn: function(){ setUnitTheme(e, t.o.id); } });
+    })(themes[i]);
+  }
+  if (!themes.length) {
+    statusEl.textContent = "先にテーマを作ってください(文字を選んで🔖→新しいテーマ)";
+    return;
+  }
+  opts.push({ label: "— 未分類に戻す", fn: function(){ setUnitTheme(e, null); } });
+  opts.push({ label: "キャンセル", cancel: true });
+  showSheet("「" + e.name + "」をどのテーマに", opts);
+}
+/* 印を付ける相手を選び直す(自動判定が外した時の逃げ道) */
+function retargetUnit(e) {
+  if (sel.length !== 1) {
+    statusEl.textContent = "先に付けたい物を1つ選んでから🎯を押してください";
+    return;
+  }
+  var target = sel[0];
+  if (target.anch && target.anchLv === 1) {
+    statusEl.textContent = "テーマには単元を重ねられません";
+    return;
+  }
+  pushUndo();
+  var nm = e.name, th = e.theme;
+  if (e.kind === "obj") { e.o.anch = null; e.o.anchLv = null; e.o.anchTheme = null; }
+  else bookmarks = bookmarks.filter(function(b){ return b.id !== e.id; });
+  target.anch = nm; target.anchLv = 2; target.anchTheme = th;
+  inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
+  statusEl.textContent = "「" + nm + "」の印を選んだ物に付け替えました";
+}
 function renderPosList() {
   var list = $("#psList");
   list.innerHTML = "";
-  // 選択中オブジェクトへの移動(選択がある時のみ)
-  if (sel.length) {
-    var jrow = document.createElement("div");
-    jrow.className = "pp-row";
-    var jt = document.createElement("span");
-    jt.className = "pp-title";
-    jt.textContent = "▶ 選択中のオブジェクトへ移動";
-    jt.addEventListener("click", function(){
-      var b = selBBox();
-      animateView({
-        s: view.s,
-        x: innerWidth / 2 - (b.x + b.w / 2) * view.s,
-        y: innerHeight / 2 - (b.y + b.h / 2) * view.s
-      });
-      closePos();
-    });
-    jrow.appendChild(jt);
-    list.appendChild(jrow);
+  function mkRow(e, indent) {
+    var row = document.createElement("div");
+    row.className = "pp-row";
+    if (indent) row.style.paddingLeft = "20px";
+    var title = document.createElement("span");
+    title.className = "pp-title";
+    // 位置だけの単元は🔖が出ないので、一覧では☆で見分けられるようにする
+    title.textContent = (e.kind === "obj" ? "🔖 " : "☆ ") + e.name;
+    title.addEventListener("click", function(){ gotoUnit(e); });
+    var th = document.createElement("button");
+    th.textContent = "📑"; th.title = "テーマを割り当てる";
+    th.addEventListener("click", function(ev){ ev.stopPropagation(); pickThemeFor(e); });
+    var rt = document.createElement("button");
+    rt.textContent = "🎯"; rt.title = "選んだ物に印を付け替える";
+    rt.addEventListener("click", function(ev){ ev.stopPropagation(); retargetUnit(e); });
+    var ren = document.createElement("button");
+    ren.textContent = "✎"; ren.title = "名前を変更";
+    ren.addEventListener("click", function(ev){ ev.stopPropagation(); renameUnit(e); });
+    var del = document.createElement("button");
+    del.textContent = "🗑"; del.title = "削除";
+    del.addEventListener("click", function(ev){ ev.stopPropagation(); deleteUnit(e); });
+    row.appendChild(title); row.appendChild(th); row.appendChild(rt);
+    row.appendChild(ren); row.appendChild(del);
+    return row;
   }
-  if (!bookmarks.length) {
+  function mkHead(text) {
+    var h = document.createElement("div");
+    h.style.cssText = "color:var(--ui-dim);font-size:11px;padding:12px 8px 4px;font-weight:700";
+    h.textContent = text;
+    return h;
+  }
+  var entries = unitEntries();
+  if (!entries.length) {
     var empty = document.createElement("div");
     empty.className = "pp-row";
     empty.style.color = "#9AA1AD";
     empty.style.fontSize = "12.5px";
-    empty.textContent = "まだ記憶した位置がありません。「☆ 現在の位置を記憶」で追加できます。";
+    empty.textContent = "まだ単元がありません。「☆ 現在の位置を記憶」で追加できます。";
     list.appendChild(empty);
+    return;
   }
-  for (var i = 0; i < bookmarks.length; i++) {
-    (function(bm){
-      var row = document.createElement("div");
-      row.className = "pp-row";
-      var title = document.createElement("span");
-      title.className = "pp-title";
-      title.textContent = "☆ " + bm.name;
-      title.addEventListener("click", function(){
-        animateView(bm.view);
-        closePos();
-      });
-      var ren = document.createElement("button");
-      ren.textContent = "✎";
-      ren.title = "名前を変更";
-      ren.addEventListener("click", function(ev){
-        ev.stopPropagation();
-        askText("位置の名前", bm.name, function(t){
-          if (t && t.trim()) { bm.name = t.trim(); renderPosList(); scheduleSave(); }
-        });
-      });
-      var del = document.createElement("button");
-      del.textContent = "🗑";
-      del.title = "削除";
-      del.addEventListener("click", function(ev){
-        ev.stopPropagation();
-        bookmarks = bookmarks.filter(function(b){ return b.id !== bm.id; });
-        renderPosList();
-        scheduleSave();
-      });
-      row.appendChild(title);
-      row.appendChild(ren);
-      row.appendChild(del);
-      list.appendChild(row);
-    })(bookmarks[i]);
+  // 未分類を先に出す(ここを片付けるのがこのパネルの仕事なので)
+  var un = entries.filter(function(e){ return !unitThemeOf(e); });
+  if (un.length) {
+    list.appendChild(mkHead("未分類 (" + un.length + ")"));
+    for (var u = 0; u < un.length; u++) list.appendChild(mkRow(un[u], false));
+  }
+  var themes = themeAnchors();
+  for (var t = 0; t < themes.length; t++) {
+    var tid = themes[t].o.id;
+    var kids = entries.filter(function(e){ return unitThemeOf(e) === tid; });
+    list.appendChild(mkHead("📄 " + (t + 1) + ". " + themes[t].name + " (" + kids.length + ")"));
+    if (!kids.length) {
+      var e2 = document.createElement("div");
+      e2.style.cssText = "color:var(--ui-dim);font-size:11px;padding:4px 8px 4px 20px";
+      e2.textContent = "(まだありません)";
+      list.appendChild(e2);
+    }
+    for (var k = 0; k < kids.length; k++) list.appendChild(mkRow(kids[k], true));
   }
 }
 function openPos() {
@@ -9119,17 +9351,72 @@ function closePos() {
   if (!$("#pagesPanel").classList.contains("show"))
     $("#pagesScrim").classList.remove("show");
 }
+/* =========================================================
+   ☆ 単元として記憶する
+   ---------------------------------------------------------
+   書いている流れを止めないよう、ここでは「名前」だけ聞く。
+   どのテーマに属するかは後から「単元の整理」でまとめて決める。
+   対象の決め方(この順):
+     1. 何か選んでいれば、それに印を付ける(=事前指定)
+     2. 選択が無ければ、画面中央にいちばん近い物を自動で選ぶ
+     3. 近くに何も無ければ「位置だけの単元」にする(白紙も記憶できる)
+========================================================= */
+function unitNameSeed(o) {
+  if (o && o.type === "text") {
+    var t = String(o.text || "").replace(/\s+/g, " ").trim();
+    if (t) return t.slice(0, 30);
+  }
+  return "";
+}
+/* 画面中央にいちばん近い物。遠すぎる時はnull(=位置だけの単元) */
+function objNearCenter() {
+  var c = toWorld(innerWidth / 2, innerHeight / 2);
+  var best = null, bestD = Infinity;
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    var b = objBBox(o);
+    var dx = (c.x < b.x) ? b.x - c.x : (c.x > b.x + b.w) ? c.x - (b.x + b.w) : 0;
+    var dy = (c.y < b.y) ? b.y - c.y : (c.y > b.y + b.h) ? c.y - (b.y + b.h) : 0;
+    var d = Math.sqrt(dx * dx + dy * dy);
+    if (d < bestD) { bestD = d; best = o; }
+  }
+  // 画面の1/3より遠いなら「近くに何も無い」とみなす
+  var limit = Math.max(innerWidth, innerHeight) / (3 * view.s);
+  return (best && bestD <= limit) ? best : null;
+}
+function addUnitBookmark() {
+  var target = (sel.length === 1) ? sel[0] : objNearCenter();
+  var seed = unitNameSeed(target) || ("単元" + (bookmarks.length + anchorList().length + 1));
+  askText("単元の名前", seed, function(name){
+    if (name == null) return;
+    name = String(name).trim();
+    if (!name) return;
+    pushUndo();
+    if (target) {
+      // 物に紐づく単元。画面に🔖が出て、動かしても付いてくる
+      target.anch = name;
+      target.anchLv = 2;
+      if (target.anchTheme === undefined) target.anchTheme = null;
+      inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+      setTimeout(function(){
+        statusEl.textContent = "単元「" + name + "」を記憶しました(テーマは☆から割り当て)";
+      }, 40);
+    } else {
+      /* 近くに物が無い時は位置だけを覚える。
+         ★これが「白紙の場所も記憶したい」への答え。
+           🔖の印は出ないが、目次からは飛べる。 */
+      bookmarks.push({ id: Date.now(), name: name, theme: null,
+                       view: { x: view.x, y: view.y, s: view.s } });
+      scheduleSave(); renderTocPanel();
+      setTimeout(function(){
+        statusEl.textContent = "位置「" + name + "」を記憶しました(近くに内容が無いため位置のみ)";
+      }, 40);
+    }
+  });
+}
 $("#posChip").onclick = openPos;
 $("#psClose").onclick = closePos;
-$("#psAdd").onclick = function(){
-  askText("この位置の名前", "位置" + (bookmarks.length + 1), function(name){
-    if (!name || !name.trim()) return;
-    bookmarks.push({ id: Date.now(), name: name.trim(),
-                     view: { x: view.x, y: view.y, s: view.s } });
-    renderPosList();
-    scheduleSave();
-  });
-};
+$("#psAdd").onclick = addUnitBookmark;
 
 /* =========================================================
    容量対策: 画像圧縮 / 使用量表示
@@ -9628,34 +9915,46 @@ function anchorList() {
 function toggleAnchor() {
   if (sel.length !== 1) { statusEl.textContent = "1つだけ選んでから印を付けてください"; return; }
   var o = sel[0];
-  if (o.anch) {
-    var isTh = (o.anchLv === 1);
-    showSheet((isTh ? "テーマの見出し: " : "目次の印: ") + o.anch, [
-      { label: "✎ 名前を変える", fn: function(){ askAnchorName(o, o.anchLv); } },
-      { label: isTh ? "🔖 単元の見出しに変える" : "📑 テーマ(列)の見出しに変える",
-        fn: function(){
-          pushUndo();
-          o.anchLv = isTh ? 2 : 1;
-          if (o.anchLv === 1) ensureThemeSeq(o);
-          inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-          setTimeout(function(){
-            statusEl.textContent = isTh ? "単元の見出しにしました" : "テーマ(列)の見出しにしました";
-          }, 40);
-        } },
-      { label: "🔖 目次から外す", danger: true, fn: function(){
+  /* ★🔖はテーマ専用にした。
+     以前はここで「単元にする → どのテーマに入れますか」まで一気に
+     聞いていたが、書きながら毎回テーマを決めるのが煩雑だった。
+     単元は ☆(位置の記憶) で名前だけ付けて貯めておき、
+     テーマへの割り当ては後から「単元の整理」でまとめて行う。 */
+  if (o.anch && o.anchLv === 1) {
+    showSheet("テーマ: " + o.anch, [
+      { label: "✎ 名前を変える", fn: function(){ askAnchorName(o, 1); } },
+      { label: "📑 テーマをやめる(中身は残ります)", danger: true, fn: function(){
           pushUndo(); o.anch = null; o.anchLv = null; o.anchTheme = null;
           inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-          setTimeout(function(){ statusEl.textContent = "目次から外しました"; }, 40);
+          setTimeout(function(){ statusEl.textContent = "テーマをやめました"; }, 40);
         } },
       { label: "キャンセル", cancel: true }
     ]);
     return;
   }
-  /* まだ印が無い時は、どちらの見出しにするかを選ばせる。
-     テーマ = 横に並ぶ列の見出し、単元 = その列の中で縦に並ぶ見出し。 */
-  showSheet("どの見出しにしますか", [
-    { label: "🔖 単元の見出し(縦に並ぶ)", fn: function(){ askAnchorName(o, 2); } },
-    { label: "📑 テーマの見出し(横に並ぶ列)", fn: function(){ askAnchorName(o, 1); } },
+  if (o.anch && o.anchLv === 2) {
+    // 単元が付いている物を🔖で触った時は、整理パネルへ案内する
+    showSheet("単元: " + o.anch, [
+      { label: "✎ 名前を変える", fn: function(){ askAnchorName(o, 2); } },
+      { label: "🗂 単元の整理をひらく(テーマの割り当て)", fn: function(){ openPos(); } },
+      { label: "📑 これをテーマにする", fn: function(){
+          pushUndo(); o.anchLv = 1; o.anchTheme = null; ensureThemeSeq(o);
+          inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+          setTimeout(function(){ statusEl.textContent = "テーマにしました"; }, 40);
+        } },
+      { label: "🔖 単元をやめる", danger: true, fn: function(){
+          pushUndo(); o.anch = null; o.anchLv = null; o.anchTheme = null;
+          inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+          setTimeout(function(){ statusEl.textContent = "単元をやめました"; }, 40);
+        } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
+  }
+  // まだ印が無い物: 🔖はテーマを作る道具に絞る
+  showSheet("この場所を", [
+    { label: "📑 新しいテーマにする", fn: function(){ askAnchorName(o, 1); } },
+    { label: "☆ 単元として記憶する(テーマは後で)", fn: function(){ addUnitBookmark(); } },
     { label: "キャンセル", cancel: true }
   ]);
 }
@@ -12118,15 +12417,19 @@ function insertFormula(latex, replaceObj, anchor) {
   renderLatexToImage(latex, 26).then(function(r){
     pushUndo();
     if (replaceObj) {
-      replaceObj.src = r.src;
-      replaceObj.w = r.w; replaceObj.h = r.h;
-      replaceObj._mw = r.w; replaceObj._mh = r.h;
+      /* ★予防策: 作り直した式だけ幅の上限が効いておらず、
+         式を編集した拍子に本文の幅を超えて隣へはみ出すことがあった。
+         新規に置く時(下の else)と同じ上限をここでも適用する。 */
+      var rr = capFormulaSize(r, defaultPasteWidth());
+      replaceObj.src = rr.src;
+      replaceObj.w = rr.w; replaceObj.h = rr.h;
+      replaceObj._mw = rr.w; replaceObj._mh = rr.h;
       replaceObj.latex = latex;
       if (replaceObj.el) {
         var im = replaceObj.el.querySelector("img") || replaceObj.el;
-        if (im.tagName === "IMG") im.src = r.src;
-        replaceObj.el.style.width = r.w + "px";
-        replaceObj.el.style.height = r.h + "px";
+        if (im.tagName === "IMG") im.src = rr.src;
+        replaceObj.el.style.width = rr.w + "px";
+        replaceObj.el.style.height = rr.h + "px";
       }
       setSelection([replaceObj]);
     } else {
@@ -13516,123 +13819,280 @@ function openOpacity() {
 }
 function closeOpacity(){ $("#opaPanel").classList.remove("show"); }
 /* 目次の描画 */
+/* 目次のドラッグ移動の状態。
+   ★単元は別テーマへ、テーマは並び順そのものを入れ替えられる。
+     移動先はドロップした行から決める(指を離した所が正)。 */
+var tocDrag = null;
+
+function tocClearDropMarks() {
+  var rows = document.querySelectorAll("#tocList .toc-row, #tocList .toc-th");
+  for (var i = 0; i < rows.length; i++) rows[i].classList.remove("toc-drop", "toc-drag");
+}
+/* 単元を別のテーマへ移す */
+function tocMoveUnit(entry, themeId) {
+  if (unitThemeOf(entry) === themeId) return;
+  setUnitTheme(entry, themeId);
+  statusEl.textContent = "「" + entry.name + "」を移しました";
+}
+/* テーマの並び順を入れ替える。順番は themeSeq が持っているので、
+   移動後の並びで振り直すだけでよい。 */
+function tocReorderTheme(fromId, toId) {
+  if (fromId === toId) return;
+  var list = themeAnchors();
+  var order = list.map(function(t){ return t.o; });
+  var fi = -1, ti = -1;
+  for (var i = 0; i < order.length; i++) {
+    if (order[i].id === fromId) fi = i;
+    if (order[i].id === toId) ti = i;
+  }
+  if (fi < 0 || ti < 0) return;
+  pushUndo();
+  var moved = order.splice(fi, 1)[0];
+  order.splice(ti, 0, moved);
+  for (var k = 0; k < order.length; k++) order[k].themeSeq = k;
+  scheduleSave(); renderTocPanel(); renderPosList(); updateColBar();
+  statusEl.textContent = "テーマの順番を変えました";
+}
+
 function renderTocPanel() {
   var host = $("#tocList");
   if (!host) return;
   host.innerHTML = "";
-  var al = anchorList();
-  if (!al.length) {
+  var themes = themeAnchors();
+  var entries = unitEntries();
+  if (!themes.length && !entries.length) {
     var empty = document.createElement("div");
     empty.style.cssText = "color:var(--ui-dim);font-size:12px;text-align:center;padding:22px 8px;line-height:1.8";
-    empty.innerHTML = "🔖 まだ見出しがありません<br><span style='font-size:11px'>列に名前をつける: ⋯ →「📑 この列に名前をつける」<br>単元を足す: 文字を選んでバーの 🔖</span>";
+    empty.innerHTML = "🔖 まだ見出しがありません<br><span style='font-size:11px'>テーマを作る: 文字を選んで 🔖 →「新しいテーマ」<br>単元を足す: ☆ で名前を付けて記憶</span>";
     host.appendChild(empty);
     return;
   }
-  /* 単元(小見出し)の行 */
-  function unitRow(a) {
+  /* --- 単元の行(ドラッグで別テーマへ移せる) --- */
+  function unitRow(e) {
     var row = document.createElement("div");
     row.className = "toc-row";
     row.style.paddingLeft = "22px";
+    row.setAttribute("draggable", "true");
     var ic = document.createElement("span");
-    ic.className = "toc-ic"; ic.textContent = "🔖";
+    ic.className = "toc-ic";
+    ic.textContent = (e.kind === "obj") ? "🔖" : "☆";
     var nm = document.createElement("div");
-    nm.className = "toc-name"; nm.textContent = a.name;
+    nm.className = "toc-name"; nm.textContent = e.name;
     var ed = document.createElement("button");
     ed.className = "toc-btn"; ed.textContent = "✎";
     var dl = document.createElement("button");
     dl.className = "toc-btn del"; dl.textContent = "🗑";
-    ed.addEventListener("click", function(e){ e.stopPropagation(); askAnchorName(a.o, a.o.anchLv); });
-    dl.addEventListener("click", function(e){
-      e.stopPropagation();
-      pushUndo(); a.o.anch = null; a.o.anchLv = null; a.o.anchTheme = null;
-      inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+    ed.addEventListener("click", function(ev){ ev.stopPropagation(); renameUnit(e); });
+    dl.addEventListener("click", function(ev){ ev.stopPropagation(); deleteUnit(e); });
+    row.addEventListener("click", function(){ gotoUnit(e); });
+    row.addEventListener("dragstart", function(ev){
+      tocDrag = { type: "unit", entry: e };
+      row.classList.add("toc-drag");
+      try { ev.dataTransfer.setData("text/plain", e.name); ev.dataTransfer.effectAllowed = "move"; } catch (x) {}
     });
-    row.addEventListener("click", function(){ jumpToAnchor(a.o); closeToc(); });
+    row.addEventListener("dragend", function(){ tocDrag = null; tocClearDropMarks(); });
+    /* 指での操作用。この行が「何を掴んだことになるか」を持たせておく */
+    row.__tocDragData = { type: "unit", entry: e };
     row.appendChild(ic); row.appendChild(nm); row.appendChild(ed); row.appendChild(dl);
     return row;
   }
-  /* テーマ(列)の行。ここが目次の大見出しになる */
+  /* --- テーマの行(ドラッグで並び替え / 単元の受け皿) --- */
   function themeRow(t, idx, n) {
     var row = document.createElement("div");
     row.className = "toc-th";
+    row.setAttribute("draggable", "true");
     var ic = document.createElement("span");
-    ic.className = "toc-ic"; ic.textContent = "📑";
+    ic.className = "toc-ic"; ic.textContent = "📄";
     var nm = document.createElement("div");
     nm.className = "toc-name"; nm.textContent = (idx + 1) + ". " + t.name;
     var cnt = document.createElement("span");
     cnt.className = "toc-cnt"; cnt.textContent = n ? (n + "件") : "";
     var ed = document.createElement("button");
     ed.className = "toc-btn"; ed.textContent = "✎";
-    ed.addEventListener("click", function(e){ e.stopPropagation(); askAnchorName(t.o, 1); });
-    /* ★テーマ列をやめる。中身(文字や画像)は消さず、
-       「この列のテーマである」という指定だけを外す。
-       列をやめたいだけなのに内容まで消えては困るため。 */
+    ed.addEventListener("click", function(ev){ ev.stopPropagation(); askAnchorName(t.o, 1); });
     var rm = document.createElement("button");
     rm.className = "toc-btn del"; rm.textContent = "🗑";
-    rm.title = "テーマ列をやめる(中身は消えません)";
-    rm.addEventListener("click", function(e){
-      e.stopPropagation();
-      showSheet("テーマ列「" + t.name + "」をやめますか", [
-        { label: "📑 テーマ指定だけ外す(文字はそのまま残る)", fn: function(){
+    rm.title = "テーマをやめる(中身は消えません)";
+    rm.addEventListener("click", function(ev){
+      ev.stopPropagation();
+      showSheet("テーマ「" + t.name + "」をやめますか", [
+        { label: "📄 テーマ指定だけ外す(文字はそのまま残る)", fn: function(){
             pushUndo();
+            /* このテーマに属していた単元は未分類へ戻す
+               (親が消えたのに所属だけ残ると、目次から辿れなくなるため) */
+            var es = unitEntries();
+            for (var q = 0; q < es.length; q++) {
+              if (unitThemeOf(es[q]) !== t.o.id) continue;
+              if (es[q].kind === "obj") es[q].o.anchTheme = null; else es[q].bm.theme = null;
+            }
             t.o.anch = null; t.o.anchLv = null; t.o.anchTheme = null;
-            inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-            setTimeout(function(){
-              statusEl.textContent = "テーマ列をやめました(中身はそのままです)";
-            }, 40);
-          } },
-        { label: "🔖 単元の見出しに格下げする", fn: function(){
-            pushUndo();
-            t.o.anchLv = 2; t.o.anchTheme = null;
-            inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-            setTimeout(function(){ statusEl.textContent = "単元の見出しにしました"; }, 40);
+            inkDirty = true; scheduleSave(); renderTocPanel(); renderPosList(); updateColBar();
+            setTimeout(function(){ statusEl.textContent = "テーマをやめました(単元は未分類へ)"; }, 40);
           } },
         { label: "キャンセル", cancel: true }
       ]);
     });
     row.addEventListener("click", function(){ jumpToAnchor(t.o); closeToc(); });
+    row.addEventListener("dragstart", function(ev){
+      tocDrag = { type: "theme", id: t.o.id };
+      row.classList.add("toc-drag");
+      try { ev.dataTransfer.setData("text/plain", t.name); ev.dataTransfer.effectAllowed = "move"; } catch (x) {}
+    });
+    row.addEventListener("dragend", function(){ tocDrag = null; tocClearDropMarks(); });
+    row.addEventListener("dragover", function(ev){
+      if (!tocDrag) return;
+      ev.preventDefault();
+      row.classList.add("toc-drop");
+    });
+    row.addEventListener("dragleave", function(){ row.classList.remove("toc-drop"); });
+    row.addEventListener("drop", function(ev){
+      ev.preventDefault(); ev.stopPropagation();
+      row.classList.remove("toc-drop");
+      if (!tocDrag) return;
+      if (tocDrag.type === "unit") tocMoveUnit(tocDrag.entry, t.o.id);
+      else tocReorderTheme(tocDrag.id, t.o.id);
+      tocDrag = null;
+    });
+    /* 指での操作用。掴む対象と、落とし先の両方になる */
+    row.__tocDragData = { type: "theme", id: t.o.id };
+    row.__tocDropData = { themeId: t.o.id };
     row.appendChild(ic); row.appendChild(nm); row.appendChild(cnt);
     row.appendChild(ed); row.appendChild(rm);
     return row;
   }
-  var themes = themeAnchors();
-  if (!themes.length) {
-    // テーマ列がまだ無いノートは、これまでどおり平らな一覧
-    for (var i = 0; i < al.length; i++) host.appendChild(unitRow(al[i]));
-    return;
-  }
-  var used = {};
+  /* テーマごとに単元を並べる */
   for (var t = 0; t < themes.length; t++) {
-    /* ★座標ではなく、単元が持っている親テーマのidで束ねる */
     var tid = themes[t].o.id;
-    var kids = [];
-    for (var k = 0; k < al.length; k++) {
-      var a = al[k];
-      if (a.o.anchLv === 1) continue;
-      if ((a.o.anchTheme || null) !== tid) continue;
-      used[k] = 1; kids.push(a);
-    }
-    kids.sort(function(p, q){ return (p.y - q.y) || (p.x - q.x); });
+    var kids = entries.filter(function(e){ return unitThemeOf(e) === tid; });
     host.appendChild(themeRow(themes[t], t, kids.length));
     if (!kids.length) {
       var e2 = document.createElement("div");
       e2.className = "toc-empty";
-      e2.textContent = "(単元の見出しはまだありません)";
+      e2.textContent = "(単元はまだありません)";
       host.appendChild(e2);
     }
     for (var m = 0; m < kids.length; m++) host.appendChild(unitRow(kids[m]));
   }
-  var rest = [];
-  for (var r = 0; r < al.length; r++) if (!used[r] && al[r].o.anchLv !== 1) rest.push(al[r]);
-  if (rest.length) {
-    var hd = document.createElement("div");
-    hd.style.cssText = "color:var(--ui-dim);font-size:11px;padding:12px 8px 4px";
-    hd.textContent = "どのテーマにも入っていない見出し";
-    host.appendChild(hd);
-    for (var s2 = 0; s2 < rest.length; s2++) host.appendChild(unitRow(rest[s2]));
-  }
+  /* 未分類。ここも受け皿にして、テーマから外せるようにする */
+  var rest = entries.filter(function(e){ return !unitThemeOf(e); });
+  var hd = document.createElement("div");
+  hd.className = "toc-th toc-unfiled";
+  hd.style.cssText = "opacity:.85";
+  var hic = document.createElement("span");
+  hic.className = "toc-ic"; hic.textContent = "📥";
+  var hnm = document.createElement("div");
+  hnm.className = "toc-name"; hnm.textContent = "未分類";
+  var hcnt = document.createElement("span");
+  hcnt.className = "toc-cnt"; hcnt.textContent = rest.length ? (rest.length + "件") : "";
+  hd.appendChild(hic); hd.appendChild(hnm); hd.appendChild(hcnt);
+  hd.addEventListener("dragover", function(ev){
+    if (!tocDrag || tocDrag.type !== "unit") return;
+    ev.preventDefault(); hd.classList.add("toc-drop");
+  });
+  hd.addEventListener("dragleave", function(){ hd.classList.remove("toc-drop"); });
+  hd.addEventListener("drop", function(ev){
+    ev.preventDefault(); hd.classList.remove("toc-drop");
+    if (tocDrag && tocDrag.type === "unit") tocMoveUnit(tocDrag.entry, null);
+    tocDrag = null;
+  });
+  hd.__tocDropData = { themeId: null };     // 指での操作用(未分類へ戻す受け皿)
+  if (rest.length || themes.length) host.appendChild(hd);
+  for (var s2 = 0; s2 < rest.length; s2++) host.appendChild(unitRow(rest[s2]));
 }
+
 function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
+/* =========================================================
+   目次のドラッグ移動(指での操作)
+   ---------------------------------------------------------
+   ★HTML5のdragstart/dropはAndroidのタッチでは発火しないため、
+     指の操作は自前で処理する(長押しで掴む → 指の下の行を光らせる
+     → 離した所へ落とす)。マウス環境では上のdrag系がそのまま働く。
+   ★長押しで掴む方式にしているのは、ただのタップ(=その場所へ移動)と
+     区別するため。掴めたら短く振動させて知らせる。
+========================================================= */
+(function(){
+  var host = null;
+  var hold = null, holding = false, startY = 0, startX = 0, lastRow = null;
+
+  function rowInfo(el) {
+    while (el && el !== document.body) {
+      if (el.classList && (el.classList.contains("toc-row") || el.classList.contains("toc-th"))) return el;
+      el = el.parentNode;
+    }
+    return null;
+  }
+  function clearMarks() {
+    if (!host) return;
+    var rows = host.querySelectorAll(".toc-row, .toc-th");
+    for (var i = 0; i < rows.length; i++) rows[i].classList.remove("toc-drop", "toc-drag");
+    host.classList.remove("dragging");
+  }
+  function cancelHold() {
+    clearTimeout(hold); hold = null;
+    if (holding) { holding = false; tocDrag = null; clearMarks(); }
+    lastRow = null;
+  }
+  document.addEventListener("pointerdown", function(e){
+    if (e.pointerType === "mouse") return;            // マウスは標準のdragに任せる
+    host = document.getElementById("tocList");
+    if (!host || !host.contains(e.target)) return;
+    if (e.target.closest && e.target.closest(".toc-btn")) return;   // ✎🗑は普通に押せる
+    var row = rowInfo(e.target);
+    if (!row) return;
+    startY = e.clientY; startX = e.clientX;
+    clearTimeout(hold);
+    hold = setTimeout(function(){
+      /* 掴んだ対象を、いま描かれている行の並びから引き当てる。
+         行にはindexを持たせていないので、DOM上の順番で照合する。 */
+      var d = row.__tocDragData;
+      if (!d) return;
+      holding = true;
+      tocDrag = d;
+      row.classList.add("toc-drag");
+      host.classList.add("dragging");
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
+      statusEl.textContent = (d.type === "theme")
+        ? "テーマを動かしています(離した所へ入ります)"
+        : "単元を動かしています(テーマの行へ落とすと移ります)";
+    }, 420);
+  }, true);
+  document.addEventListener("pointermove", function(e){
+    if (!hold && !holding) return;
+    if (!holding) {
+      // 掴む前に指が動いたら、それはスクロールなので掴まない
+      if (Math.abs(e.clientY - startY) > 10 || Math.abs(e.clientX - startX) > 10) cancelHold();
+      return;
+    }
+    e.preventDefault();
+    var el = document.elementFromPoint(e.clientX, e.clientY);
+    var row = rowInfo(el);
+    if (lastRow && lastRow !== row) lastRow.classList.remove("toc-drop");
+    // 単元はテーマ行と未分類行だけに落とせる。テーマはテーマ行だけ。
+    if (row && !row.classList.contains("toc-drag")) {
+      var okTheme = row.classList.contains("toc-th");
+      var ok = (tocDrag.type === "theme")
+        ? (okTheme && !row.classList.contains("toc-unfiled"))
+        : okTheme;
+      if (ok) { row.classList.add("toc-drop"); lastRow = row; }
+      else lastRow = null;
+    } else lastRow = null;
+  }, { passive: false, capture: true });
+  document.addEventListener("pointerup", function(){
+    if (!holding) { cancelHold(); return; }
+    var target = lastRow;
+    var drag = tocDrag;
+    holding = false; clearTimeout(hold); hold = null;
+    clearMarks();
+    tocDrag = null; lastRow = null;
+    if (!target || !drag) return;
+    var td = target.__tocDropData;
+    if (!td) return;
+    if (drag.type === "unit") tocMoveUnit(drag.entry, td.themeId);
+    else if (td.themeId != null) tocReorderTheme(drag.id, td.themeId);
+  }, true);
+  document.addEventListener("pointercancel", cancelHold, true);
+})();
+
 function closeToc() { $("#tocPanel").classList.remove("show"); }
 $("#tocClose").onclick = closeToc;
 /* キーボードが出ている間も一覧が見えるよう、実際に見えている高さに合わせる */
@@ -14272,6 +14732,189 @@ function closeGroupPanel(){ $("#grpPanel").classList.remove("show"); }
 $("#grpClose").onclick = closeGroupPanel;
 $("#ctxGroup").onclick = function(e){ e.stopPropagation(); openGroupPanel(); };
 $("#grpOpenBtn").onclick = function(){ closeMenu(); setTimeout(openGroupPanel, 80); };
+
+/* =========================================================
+   ↕ すき間を空ける(列を押し下げる)
+   ---------------------------------------------------------
+   「数式を組んだらはみ出したので、その列だけ途中から下を下げたい」
+   ための道具。投げ縄で下を全部囲んで動かす代わりに、
+   ・押した所から「列」を自動で割り出し(横に重なるものを数珠つなぎに辿る)
+   ・その列の中で、棒より下にあるものだけを、引いた分だけ下げる
+   隣の列やページ全体には一切触らない。
+   自動判定がずれた時は、棒の左右のつまみで対象の幅を直せる。
+========================================================= */
+var gapOn = false;                 // 道具を出しているか
+var gapX1 = 0, gapX2 = 0;          // 対象の帯(ノート座標)
+var gapY = 0;                      // 押し下げの境目(ノート座標)
+var gapDy = 0;                     // いま何px下げているか(ノート座標)
+var gapTargets = [];               // 動かす対象
+var gapDrag = null;                // 進行中のドラッグ
+var gapPickNext = false;           // 次の1タップで場所を決める待ち
+
+/* 物の横の範囲。これが重なるもの同士を「同じ列」とみなす */
+function gapSpanOf(o) {
+  var b = objBBox(o);
+  return { o: o, x1: b.x, x2: b.x + b.w, y: b.y, y2: b.y + b.h };
+}
+/* 押した点を含む「列」の左右の端を求める。
+   横の範囲が重なる物を次々に繋げていき(連結成分)、広がった範囲を返す。
+   ★段組みのノートでは列と列の間に必ず余白があるので、
+     「重なっているか」だけで十分に切り分けられる。 */
+function gapDetectColumn(wx, wy) {
+  var sp = [];
+  for (var i = 0; i < objects.length; i++) {
+    if (objects[i].locked) continue;
+    sp.push(gapSpanOf(objects[i]));
+  }
+  if (!sp.length) return null;
+  // 押した点にいちばん近い物を種にする
+  var seed = null, best = Infinity;
+  for (var j = 0; j < sp.length; j++) {
+    var s = sp[j];
+    var dx = (wx < s.x1) ? s.x1 - wx : (wx > s.x2) ? wx - s.x2 : 0;
+    var dy = (wy < s.y) ? s.y - wy : (wy > s.y2) ? wy - s.y2 : 0;
+    var d = dx * dx + dy * dy;
+    if (d < best) { best = d; seed = s; }
+  }
+  if (!seed) return null;
+  // 種から横に重なるものを繋げて広げる
+  var x1 = seed.x1, x2 = seed.x2, grew = true, guard = 0;
+  while (grew && guard++ < 200) {
+    grew = false;
+    for (var k = 0; k < sp.length; k++) {
+      var t = sp[k];
+      if (t.x2 <= x1 || t.x1 >= x2) continue;      // 重なっていない
+      if (t.x1 < x1) { x1 = t.x1; grew = true; }
+      if (t.x2 > x2) { x2 = t.x2; grew = true; }
+    }
+  }
+  var pad = Math.max(6, (x2 - x1) * 0.02);
+  return { x1: x1 - pad, x2: x2 + pad };
+}
+/* いま動かす対象を洗い出す。
+   帯の中に「中心が入っている」かどうかで判定する。
+   ★端がわずかに帯へ食い込んだだけの隣の列を巻き込まないため、
+     重なりではなく中心で見る。 */
+function gapCollect() {
+  var out = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.locked) continue;
+    var b = objBBox(o);
+    var cx = b.x + b.w / 2;
+    if (cx < gapX1 || cx > gapX2) continue;
+    if (b.y < gapY) continue;                       // 境目より上は動かさない
+    out.push(o);
+  }
+  return out;
+}
+function gapHighlight(on) {
+  for (var i = 0; i < gapTargets.length; i++) {
+    var el = gapTargets[i].el;
+    if (el && el.classList) el.classList.toggle("gap-target-hl", !!on);
+  }
+  inkDirty = true;
+}
+/* 画面に棒と帯を描き直す(ノート座標→画面座標) */
+function gapLayout() {
+  if (!gapOn) return;
+  var sx1 = gapX1 * view.s + view.x;
+  var sx2 = gapX2 * view.s + view.x;
+  var sy  = (gapY + gapDy) * view.s + view.y;
+  var band = $("#gapBand"), bar = $("#gapBar"), hud = $("#gapHud");
+  band.style.left = sx1 + "px";
+  band.style.width = Math.max(2, sx2 - sx1) + "px";
+  band.style.top = sy + "px";
+  band.style.height = Math.max(0, innerHeight - sy) + "px";
+  bar.style.left = sx1 + "px";
+  bar.style.width = Math.max(60, sx2 - sx1) + "px";
+  bar.style.top = sy + "px";
+  hud.style.left = ((sx1 + sx2) / 2) + "px";
+  var hy = sy + 30;
+  if (hy > innerHeight - 70) hy = sy - 62;          // 画面外に出るなら上に出す
+  hud.style.top = Math.max(8, hy) + "px";
+  $("#gapAmt").textContent = (gapDy >= 0 ? "+" : "") + Math.round(gapDy) + "px";
+}
+window.__gapLayout = gapLayout;
+
+function gapOpen(wx, wy) {
+  var col = gapDetectColumn(wx, wy);
+  if (!col) { statusEl.textContent = "このページにはまだ内容がありません"; return; }
+  gapOn = true; gapDy = 0;
+  gapX1 = col.x1; gapX2 = col.x2; gapY = wy;
+  gapTargets = gapCollect();
+  $("#gapTool").classList.add("show");
+  gapLayout(); gapHighlight(true);
+  statusEl.textContent = "この帯の中で、棒より下の " + gapTargets.length +
+    " 個が対象です(左右のつまみで幅を直せます)";
+}
+function gapClose() {
+  gapHighlight(false);
+  gapOn = false; gapTargets = []; gapDrag = null;
+  $("#gapTool").classList.remove("show");
+}
+/* 確定: 対象をまとめて下げる。1回のUndoで戻せる */
+function gapCommit() {
+  if (!gapOn) return;
+  var dy = Math.round(gapDy);
+  if (!dy) { gapClose(); statusEl.textContent = "変わりませんでした"; return; }
+  var list = gapTargets.slice();
+  gapHighlight(false);
+  pushUndo();
+  for (var i = 0; i < list.length; i++) moveObjBy(list[i], 0, dy);
+  gapDy = 0;
+  gapClose();
+  inkDirty = true; scheduleSave(); updateSelUI();
+  statusEl.textContent = list.length + " 個を " + dy + "px 下げました(↩で戻せます)";
+}
+/* ドラッグ中は本体を動かさず、棒と帯だけを動かして予告する。
+   ★実物を毎フレーム動かすと重く、途中でやめた時に戻せない。 */
+(function(){
+  function startDrag(kind, ev) {
+    ev.preventDefault(); ev.stopPropagation();
+    gapDrag = { kind: kind, sx: ev.clientX, sy: ev.clientY,
+                y0: gapDy, x1: gapX1, x2: gapX2 };
+    try { ev.target.setPointerCapture(ev.pointerId); } catch (e) {}
+  }
+  $("#gapMid").addEventListener("pointerdown", function(e){ startDrag("move", e); });
+  $("#gapL").addEventListener("pointerdown", function(e){ startDrag("left", e); });
+  $("#gapR").addEventListener("pointerdown", function(e){ startDrag("right", e); });
+  addEventListener("pointermove", function(e){
+    if (!gapDrag || !gapOn) return;
+    e.preventDefault();
+    if (gapDrag.kind === "move") {
+      gapDy = gapDrag.y0 + (e.clientY - gapDrag.sy) / view.s;
+      if (gapDy < 0) gapDy = 0;                     // 上へは詰めない(重なり事故を防ぐ)
+    } else {
+      var dxw = (e.clientX - gapDrag.sx) / view.s;
+      if (gapDrag.kind === "left")  gapX1 = Math.min(gapDrag.x1 + dxw, gapX2 - 20);
+      else                          gapX2 = Math.max(gapDrag.x2 + dxw, gapX1 + 20);
+      // 幅を変えたら対象を選び直す
+      gapHighlight(false); gapTargets = gapCollect(); gapHighlight(true);
+      $("#gapMid").textContent = "↕ 引いて下げる(" + gapTargets.length + ")";
+    }
+    gapLayout();
+  }, { passive: false });
+  addEventListener("pointerup", function(){
+    if (!gapDrag) return;
+    gapDrag = null;
+    $("#gapMid").textContent = "↕ 引いて下げる";
+  });
+})();
+$("#gapDone").onclick = function(e){ e.stopPropagation(); gapCommit(); };
+$("#gapCancel").onclick = function(e){ e.stopPropagation(); gapClose(); statusEl.textContent = "やめました"; };
+$("#gapOpenBtn").onclick = function(){
+  closeMenu();
+  setTimeout(function(){
+    statusEl.textContent = "すき間を空けたい場所をタップしてください";
+    gapPickNext = true;
+  }, 80);
+};
+/* 次の1回のタップで場所を決める(専用ツールに切り替えないので、
+   使い終わったら元の道具のまま作業を続けられる) */
+window.__gapPickPending = function(){ return gapPickNext; };
+window.__gapPick = function(wx, wy){ gapPickNext = false; gapOpen(wx, wy); };
+
 $("#tidyOpenBtn").onclick = function(){ closeMenu(); setTimeout(openTidySheet, 120); };
 $("#grpAuto").onclick = function(){ pushUndo(); autoGroup(); renderGroupPanel(); };
 $("#grpLink").onclick = function(){ linkSelection(); };
