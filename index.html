@@ -1144,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.11">InkNote <small>v21.11</small></div>
+  <div class="brand" title="InkNote v21.12">InkNote <small>v21.12</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.11";
+var APP_VERSION = "21.12";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3719,20 +3719,24 @@ function safeCleanText(raw) {
   if (before > 0 && after < before - 3 && after < before * 0.85) return raw;
   return cleaned;
 }
+/* ★AIチャットの回答をコピーすると、LaTeXが二重エスケープのまま
+   出てくることがある(本来 \mu であるべきものが \\mu、\( が \\( の
+   ように、バックスラッシュが2つ連なる)。しかも実物は
+   「区切りだけ二重・中の命令は一重」(\\(\mu\\)) のように
+   混在することがあり、この状態だと splitMathBlocks が
+   \( の1つ目の \ を地の文とみなし、式の中身を "\mu\" と
+   読み違える(画面に \mu / \r が残る直接の原因)。
+   以降の処理はすべて「バックスラッシュは1つ」を前提にしているので、
+   貼り付けの入口で一度だけ一重に戻しておく。
+   数式らしい文字(英字・括弧・波括弧・$)の直前だけを対象にして、
+   無関係な二重バックスラッシュ(コード中のパス等)は壊さない。
+   既に一重の文字列に対しては何も起きない(何度通しても安全)。 */
+function unescapeDoubleTex(s) {
+  return String(s == null ? "" : s).replace(/\\\\(?=[A-Za-z(){}\[\]$])/g, "\\");
+}
 function cleanPastedText(t) {
   if (!t) return "";
-  var s = String(t);
-  /* ★AIチャットの回答をコピーすると、LaTeXが二重エスケープのまま
-     出てくることがある(本来 \mu であるべきものが \\mu、\( が \\( の
-     ように、バックスラッシュが2つ連なる)。以降のすべての処理は
-     「バックスラッシュは1つ」を前提に組んであるため、この状態のまま
-     渡すと$$…$$/\(…\)の対応が数え違い、片方の\だけが分離して
-     残ってしまう(fixBrokenTexDelimsで保護しても、保護の網の目が
-     \(1つ分)しか見ていないので二重には効かない)。
-     数式らしい文字(英字・括弧・波括弧・$)の直前でだけ二重を一重に
-     戻す(無関係な二重バックスラッシュ、例えばコード中のパス等を
-     誤って崩さないよう対象を絞る)。 */
-  s = s.replace(/\\\\(?=[A-Za-z(){}\[\]$])/g, "\\");
+  var s = unescapeDoubleTex(t);
   s = stripCitationNoise(s);       // 引用マーカー・確実性タグを先に取り除く
   s = fixBrokenTexDelims(s);       // 壊れた数式の囲みの残骸を直す
   var hasTex = /[\\$]/.test(s);   // LaTeX由来かどうか(\ や $ を含むか)
@@ -12694,7 +12698,12 @@ function openTableInput() {
    数式画像として組版されるようにする(文中の変数名だけの短い
    \T\ 等は fixBrokenTexDelims の方で素の文字に整形される)。 */
 function restoreLostMathDelims(s) {
-  var t = String(s || "");
+  /* ★ここは splitMathBlocks の入口。貼り付け経路は
+     cleanPastedText を通る前にまず splitMathBlocks で式を切り出すため、
+     二重エスケープの解除をここでも行わないと、
+     「区切りだけ二重」(\\(\mu\\)) の文字列で式の範囲を読み違え、
+     \mu / \r が画面に残ったままになる。 */
+  var t = unescapeDoubleTex(s);
   /* ★「\(\frac{1}{2}\)」のように、既にちゃんと囲まれている本物の式の
      中にも \frac のような命令(バックスラッシュ)が入っている。
      これを見分けずに処理すると、本物の式の中の \ まで
@@ -13093,7 +13102,9 @@ function insertRichPaste(raw) {
   /* ★図やコード(文字の位置で意味が決まるもの)は、そのまま等幅で置く。
      文章と混ざっている場合は、段落ごとに分けて図の部分だけ等幅にする。 */
   /* ★空行が無い長い文書でも図だけを取り出せるよう、行単位で切り分ける */
-  var paras = splitArtBlocks(String(raw || ""));
+  /* ★図・表の切り分けも二重エスケープの影響を受ける(「**\」だけの行が
+     残るなど)ため、いちばん外側のここで一度だけ一重に戻してから配る。 */
+  var paras = splitArtBlocks(unescapeDoubleTex(raw));
   if (paras.some(function(p){ return p.t === "art"; })) {
     pushUndo();
     var Wp = defaultPasteWidth();
