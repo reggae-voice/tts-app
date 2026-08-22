@@ -1090,7 +1090,21 @@
     border-radius:18px;padding:12px;z-index:61;
     box-shadow:0 -8px 30px rgba(10,12,16,.45);
     transition:transform .2s ease;
+    /* ★項目が増えると画面の上へはみ出して、上の方が押せなくなっていた。
+       高さに上限を付けて、収まらない分はシートの中でスクロールさせる。
+       題名とキャンセルは端に固定し、真ん中だけが動くようにする。 */
+    max-height:calc(100vh - env(safe-area-inset-top) - 80px);
+    display:flex;flex-direction:column;
   }
+  #asTitle{flex:0 0 auto}
+  #asBody{display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+  /* 項目の入れ物。ここだけがスクロールする */
+  #asItems{
+    overflow-y:auto;overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;touch-action:pan-y;
+    flex:1 1 auto;min-height:0;
+  }
+  #asFoot{flex:0 0 auto}
   #actionSheet.show{transform:translateX(-50%) translateY(0)}
   #asTitle{
     color:var(--ui-dim);font-size:12px;font-weight:700;
@@ -1268,7 +1282,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.01">InkNote <small>v22.01</small></div>
+  <div class="brand" title="InkNote v22.03">InkNote <small>v22.03</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1511,7 +1525,7 @@ window.onerror = function(msg, src, line){
 <div id="sheetScrim"></div>
 <div id="actionSheet">
   <div id="asTitle"></div>
-  <div id="asBody"></div>
+  <div id="asBody"><div id="asItems"></div><div id="asFoot"></div></div>
 </div>
 <div id="inputDlg">
   <div id="idLabel"></div>
@@ -1852,7 +1866,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.01";
+var APP_VERSION = "22.03";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2322,19 +2336,27 @@ function renderInk() {
   }
   // 目次アンカーの印(🔖)
   if (showAnchors) {
-    var al2 = anchorList();
+    /* ★番号は目次と同じ順番で振る。
+       以前はここだけ「置いてある座標(上→下)」で番号を振っていたため、
+       目次で1番のテーマと、画面で「1」が付くテーマが食い違い、
+       先頭のはずの印が別の場所に付いて見えていた。
+       目次はテーマを作った順(themeSeq)で並べるので、こちらも合わせる。
+       単元はそのテーマの下に、上から順に続き番号で入れる。 */
+    var al2 = tocOrderedAnchors();
     for (var ai = 0; ai < al2.length; ai++) {
       var ab = al2[ai].b;
+      var isTh2 = (al2[ai].o.anchLv === 1);
       var bw = 20 / view.s, bh = 16 / view.s;
       var bx = ab.x + ab.w - bw / 2, by = ab.y - bh / 2;
-      ictx.fillStyle = "rgba(232,163,23,.95)";
+      // テーマは濃い橙、単元は淡い橙にして、どちらの印か見て分かるようにする
+      ictx.fillStyle = isTh2 ? "rgba(232,163,23,.95)" : "rgba(232,163,23,.62)";
       roundRectPath(ictx, bx, by, bw, bh, 4 / view.s);
       ictx.fill();
       ictx.fillStyle = "#fff";
       ictx.font = "700 " + (10 / view.s) + "px system-ui, sans-serif";
       ictx.textAlign = "center";
       ictx.textBaseline = "middle";
-      ictx.fillText(String(ai + 1), bx + bw / 2, by + bh / 2);
+      ictx.fillText(al2[ai].no, bx + bw / 2, by + bh / 2);
       ictx.textAlign = "start";
       ictx.textBaseline = "alphabetic";
     }
@@ -5650,7 +5672,15 @@ $("#barToggle").onclick = function(){
        無限モードはスライダーが出たり消えたりするので、モードではなく
        「いま出ているか」で判断する。 */
     document.body.classList.toggle("has-vscroll-v", vert);
-    var pos = 24 - (vert ? view.y : view.x);            // 0=先頭
+    /* ★無限モードは「内容のある範囲」を基準(origin)にして動かしている。
+       つまみ→ビュー(applyFromRatio)はoriginを足しているのに、
+       こちら(ビュー→つまみ)は足しておらず、往復で食い違っていた。
+       内容が原点より上(y<0)にあるほどズレが大きくなり、
+       実際は途中を見ているのにつまみは一番上に張り付き、
+       そこから上へ動かせなくなる(報告の症状)。同じ式に揃える。 */
+    var org = 0;
+    if (canvasMode === "inf") org = infExtentAndOrigin(vert).origin * view.s;
+    var pos = -org + 24 - (vert ? view.y : view.x);     // 0=先頭
     var ratio = Math.max(0, Math.min(1, pos / scrollRange()));
     if (vert) {
       thumb.style.top = (ratio * trackLen()) + "px";
@@ -7869,8 +7899,13 @@ function deletePageNow(id) {
 function showSheet(title, items) {
   var sc = $("#sheetScrim"), sh = $("#actionSheet");
   $("#asTitle").textContent = title || "";
-  var body = $("#asBody");
-  body.innerHTML = "";
+  /* ★項目が多い時にシートが画面からはみ出さないよう、
+     「スクロールする項目欄」と「固定のキャンセル欄」に分ける。
+     キャンセルが常に見えていれば、長い一覧でもスクロールせずに閉じられる。 */
+  var itemsBox = $("#asItems"), foot = $("#asFoot");
+  itemsBox.innerHTML = "";
+  foot.innerHTML = "";
+  itemsBox.scrollTop = 0;
   function close() {
     sh.classList.remove("show");
     sc.classList.remove("show");
@@ -7884,7 +7919,7 @@ function showSheet(title, items) {
       close();
       if (it.fn) setTimeout(it.fn, 30);
     });
-    body.appendChild(b);
+    (it.cancel ? foot : itemsBox).appendChild(b);
   });
   sc.onclick = close;
   sc.classList.add("show");
@@ -9897,6 +9932,42 @@ function openTidySheet() {
 var showAnchors = true;      // アンカーの印を画面に出すか
 
 /* 目次の並び順: まとまり番号 → 上から下 → 左から右(書き出しと同じ順) */
+/* 画面の印と目次で、同じ番号が同じものを指すようにするための並び。
+   目次と全く同じ順序(テーマ=作った順、単元=そのテーマの中で上から)で
+   返し、番号も目次の見え方(1 / 1-1 / 1-2 …)に合わせる。
+   ★ここを目次と別々に計算していたのが、印の番号がずれた原因。 */
+function tocOrderedAnchors() {
+  var out = [];
+  var themes = themeAnchors();
+  var units = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (!o.anch || o.anchLv !== 2) continue;
+    var b0 = objBBox(o);
+    units.push({ o: o, name: String(o.anch), b: b0, x: b0.x, y: b0.y });
+  }
+  var used = {};
+  for (var t = 0; t < themes.length; t++) {
+    var th = themes[t];
+    out.push({ o: th.o, name: th.name, b: th.b, no: String(t + 1) });
+    var kids = [];
+    for (var k = 0; k < units.length; k++) {
+      if ((units[k].o.anchTheme || null) !== th.o.id) continue;
+      used[k] = 1; kids.push(units[k]);
+    }
+    kids.sort(function(p, q){ return (p.y - q.y) || (p.x - q.x); });
+    for (var m = 0; m < kids.length; m++)
+      out.push({ o: kids[m].o, name: kids[m].name, b: kids[m].b,
+                 no: (t + 1) + "-" + (m + 1) });
+  }
+  // どのテーマにも属さない単元は、続けて番号なしの印にする
+  var rest = [];
+  for (var r = 0; r < units.length; r++) if (!used[r]) rest.push(units[r]);
+  rest.sort(function(p, q){ return (p.y - q.y) || (p.x - q.x); });
+  for (var s2 = 0; s2 < rest.length; s2++)
+    out.push({ o: rest[s2].o, name: rest[s2].name, b: rest[s2].b, no: "・" });
+  return out;
+}
 function anchorList() {
   var out = [];
   for (var i = 0; i < objects.length; i++) {
@@ -14530,41 +14601,12 @@ function openMoreSheet() {
       });
     } });
   }
-  /* 見出し(テーマ)にする操作は、対象を選んで行うのでこちらに置く */
-  if (sel.length === 1 && sel[0].type === "text") {
-    items.push({ label: sel[0].anchLv === 1 ? "📑 テーマ名を変える" : "📑 これをテーマにする",
-                 fn: makeSelectedTheme });
-  }
-  /* ★カーソルを使わずに分ける道も用意する。
-     編集中の操作が端末の都合で効かない時の逃げ道。
-     選んだ箱を、見えている行の境目で2つに割る。 */
-  if (sel.length === 1 && sel[0].type === "text" && sel[0].el) {
-    items.push({ label: "✂ この文章を上下に分ける…", fn: function(){
-      var o = sel[0], b = objBBox(o);
-      var opts = [];
-      [[0.25, "上から1/4"], [0.5, "まん中"], [0.75, "上から3/4"]].forEach(function(q){
-        opts.push({ label: "✂ " + q[1] + "あたりで分ける", fn: function(){
-          var two = splitTextObjectAtWorldY(o, b.y + b.h * q[0]);
-          if (!two) { statusEl.textContent = "そこでは分けられませんでした"; return; }
-          var idx = objects.indexOf(o);
-          if (idx < 0) return;
-          pushUndo();
-          if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
-          objects.splice(idx, 1, two[0], two[1]);
-          two[0].x = b.x; two[0].y = b.y;
-          makeTextEl(two[0]); measureObj(two[0]);
-          two[1].x = b.x;
-          two[1].y = two[0].y + Math.max(20, objBBox(two[0]).h) + 12;
-          makeTextEl(two[1]); measureObj(two[1]);
-          inkDirty = true; refreshMeasures();
-          setSelection([two[1]]);
-          scheduleSave();
-          statusEl.textContent = "2つに分けました(下側を選択中)";
-        } });
-      });
-      opts.push({ label: "キャンセル", cancel: true });
-      showSheet("どのあたりで分けますか", opts);
-    } });
+  /* 見出し(テーマ)にする操作は、対象を選んで行うのでこちらに置く。
+     ★「テーマ名を変える」はここには出さない。すぐ下の🔖から同じことが
+       でき、⋯の項目が増えて画面からはみ出す原因になっていた。
+       まだテーマでない物を「テーマにする」入口だけ残す。 */
+  if (sel.length === 1 && sel[0].type === "text" && sel[0].anchLv !== 1) {
+    items.push({ label: "📑 これをテーマにする", fn: makeSelectedTheme });
   }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
   if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
