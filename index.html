@@ -1144,7 +1144,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.12">InkNote <small>v21.12</small></div>
+  <div class="brand" title="InkNote v21.13">InkNote <small>v21.13</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1724,7 +1724,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.12";
+var APP_VERSION = "21.13";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -12303,18 +12303,28 @@ function isSepRow(line) {
   return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
 }
 /* 続いている表の行を1つの表に変換。表でなければ null */
+/* ★Markdownの表では、セル内の改行を <br> で書くのが慣例。
+   これまでは esc() でHTMLとして無害化した時点で &lt;br&gt; になり、
+   画面に「<br>」という文字がそのまま出ていた(報告の症状)。
+   無害化した後に、この <br> だけを本物の改行タグへ戻す。
+   ・先に esc() を通しているので、他のタグは文字のまま(安全)
+   ・BRはRICH_TAGSで既に許可済みなので、確定・保存後も残る
+   ・<br/> <br /> <BR> の書き方の揺れも受け付ける */
+function cellHtml(s) {
+  return esc(cleanPastedText(s || "")).replace(/&lt;\s*br\s*\/?\s*&gt;/gi, "<br>");
+}
 function mdTableToHtml(lines) {
   if (!lines || lines.length < 2) return null;
   if (!isSepRow(lines[1])) return null;
   var head = splitRow(lines[0]);
   var html = "<table><thead><tr>";
-  for (var i = 0; i < head.length; i++) html += "<th>" + esc(cleanPastedText(head[i])) + "</th>";
+  for (var i = 0; i < head.length; i++) html += "<th>" + cellHtml(head[i]) + "</th>";
   html += "</tr></thead><tbody>";
   for (var r = 2; r < lines.length; r++) {
     var cells = splitRow(lines[r]);
     html += "<tr>";
     for (var c = 0; c < head.length; c++)
-      html += "<td>" + esc(cleanPastedText(cells[c] || "")) + "</td>";
+      html += "<td>" + cellHtml(cells[c] || "") + "</td>";
     html += "</tr>";
   }
   return html + "</tbody></table>";
