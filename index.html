@@ -902,7 +902,12 @@
     /* 幅に応じて列数が増える。minの2つ目を min(184px,100%) にして、
        画像の固有幅がトラックを押し広げて1列に溢れるのを防ぐ */
     grid-template-columns:repeat(auto-fill, minmax(min(158px, 100%), 1fr));
-    gap:14px;align-content:start;align-items:start;padding:2px;
+    /* ★以前は align-items:start だった。これだと各カードが「自分の中身の
+       高さ」で置かれるため、題名が1行のカードと2行のカードで高さが変わり、
+       左右の列が下へ行くほどズレていく(報告の症状)。ズレた結果、帯が
+       隣や上のカードの上に乗り、⋮の見た目の位置と持ち主が食い違う。
+       stretch にして、同じ行のカードは必ず同じ高さに揃える。 */
+    gap:14px;align-content:start;align-items:stretch;padding:2px;
   }
   /* grid/flexの子が固有幅で膨らまないよう、カードと中身に最小幅0を効かせる */
   .pp-card{min-width:0}
@@ -940,8 +945,12 @@
     object-fit:cover; display:block;
     background:#F4EFE2;border:none;
   }
-  /* サムネ枠は縮まない(重ねた帯ごと保持される) */
-  .pp-card-media{flex:0 0 auto}
+  /* サムネ枠は縮まない(重ねた帯ごと保持される)
+     ★flex:0 0 auto だけだと、親(.pp-card)がstretchで引き伸ばされた時に
+       サムネ枠だけが元の高さのまま残り、カード下部に空白ができる。
+       枠がカードいっぱいに広がるようにして、帯(枠の下端に固定)が
+       必ずカードの下端に来るようにする。 */
+  .pp-card-media{flex:1 1 auto;min-height:0}
   div.pp-thumb{
     display:flex;align-items:center;justify-content:center;
     color:#b9b2a0;font-size:26px;
@@ -978,6 +987,12 @@
     display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
     overflow:hidden;word-break:break-word;
     text-shadow:0 1px 3px rgba(0,0,0,.6);
+    /* ★題名が1行か2行かで帯の高さが変わると、カードの高さも変わり、
+       左右の列が下へ行くほどズレていく。行数にかかわらず常に2行分の
+       高さを確保して、どのカードの帯も必ず同じ高さにする
+       (1行の題名は下に余白ができるだけで、見た目の破綻はない)。
+       line-clampが効かない環境でも溢れないよう max-height も併記する。 */
+    height:2.64em;max-height:2.64em;
   }
   .pp-card-date{
     font-size:10px;color:rgba(255,255,255,.72);
@@ -1150,7 +1165,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.14">InkNote <small>v21.14</small></div>
+  <div class="brand" title="InkNote v21.15">InkNote <small>v21.15</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1730,7 +1745,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.14";
+var APP_VERSION = "21.15";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
