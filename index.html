@@ -881,9 +881,12 @@
   #ppSearch::placeholder{color:var(--ui-dim)}
   #ppSearch::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
   /* ★書き出しを開いても一覧が潰れないよう、最低限の高さを確保する
-     (潰れるとカードが切れて狙ったページを押せなくなる) */
+     (潰れるとカードが切れて狙ったページを押せなくなる)
+     ★1枚を大きくした分、min-heightも上げてカード2行分は必ず見えるように
+       する。入りきらない分はスクロールで見る方が、無理に詰め込んで
+       1枚ずつが小さくなるより探しやすい。 */
   #ppList{overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;
-    flex:1 1 auto;min-height:180px}
+    flex:1 1 auto;min-height:300px}
   .pp-row{display:flex;align-items:center;gap:6px;padding:11px 10px;border-radius:12px;color:var(--ui-text);font-size:14px}
   .pp-row.current{background:var(--accent-soft)}
   .pp-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
@@ -899,16 +902,23 @@
      互換性が高く、確実に効く)に変え、枠の高さのばらつき自体を無くした。 */
   #ppList.grid{
     display:grid;
-    /* 幅に応じて列数が増える。minの2つ目を min(184px,100%) にして、
-       画像の固有幅がトラックを押し広げて1列に溢れるのを防ぐ */
-    grid-template-columns:repeat(auto-fill, minmax(min(158px, 100%), 1fr));
-    /* ★以前は align-items:start だった。これだと各カードが「自分の中身の
-       高さ」で置かれるため、題名が1行のカードと2行のカードで高さが変わり、
-       左右の列が下へ行くほどズレていく(報告の症状)。ズレた結果、帯が
-       隣や上のカードの上に乗り、⋮の見た目の位置と持ち主が食い違う。
-       stretch にして、同じ行のカードは必ず同じ高さに揃える。 */
-    gap:14px;align-content:start;align-items:stretch;padding:2px;
+    /* ★以前は auto-fill で「入るだけ詰める」方式だったため、画面が広い
+       ほど列が増え、1枚あたりが小さくなってサムネがほとんど読めなかった。
+       列数を画面幅で決め打ちにして、1枚を大きく保ち、あとは
+       スクロールで見てもらう方が探しやすい。
+       スマホ=2列。広い画面でだけ3〜4列に増やす。 */
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+    /* ★列がズレる原因は「題名の行数でカードの高さが変わること」だった。
+       題名の高さを常に2行分に固定した(.pp-card-title)ので、
+       どのカードも 枠(4:3) だけの同じ高さになり、列はズレない。
+       v21.15では stretch にして揃えようとしたが、これは
+       「行の高さに合わせてカードを伸縮させる」指定なので、
+       一覧が狭まった時にカードを潰す副作用があった(題名が消える原因)。
+       高さが元から揃っている以上、伸縮は不要なので start に戻す。 */
+    gap:14px;align-content:start;align-items:start;padding:2px;
   }
+  @media (min-width: 620px){ #ppList.grid{ grid-template-columns:repeat(3, minmax(0, 1fr)); } }
+  @media (min-width: 900px){ #ppList.grid{ grid-template-columns:repeat(4, minmax(0, 1fr)); } }
   /* grid/flexの子が固有幅で膨らまないよう、カードと中身に最小幅0を効かせる */
   .pp-card{min-width:0}
   .pp-card > *{min-width:0;max-width:100%}
@@ -939,18 +949,35 @@
      サムネ(画像/プレースホルダ)はその中いっぱいに絶対配置で敷き詰める。
      こうすると画像の実寸やaspect-ratioの対応状況に関係なく、
      どのカードも必ず同じ高さになる。 */
-  .pp-card-media::before{ content:""; display:block; padding-top:75%; }  /* 4:3 = 3/4 */
+  /* ★サムネ枠の高さの作り方。
+     以前は ::before の padding-top:75% だけに頼っていたが、
+     先頭の全体リセット( *{margin:0;padding:0} )は擬似要素にも効くため、
+     読み込み順や指定の強さ次第でこのpaddingが打ち消され、枠の高さが
+     ほぼ0になる(カードが平たい帯になり、サムネがほとんど見えない)。
+     いまは aspect-ratio を主に使い、::before は対応していない環境の
+     控えとして残す。min-heightも入れて、どちらも効かない最悪の場合でも
+     カードが潰れないようにする。 */
+  .pp-card-media::before{ content:""; display:block; padding-top:75% !important; }
+  .pp-card-media{ aspect-ratio:4/3; min-height:112px; }
+  /* aspect-ratioが使える環境では、控えの::beforeは高さを作らない
+     (二重に高さが足されないようにする) */
+  @supports (aspect-ratio:4/3){
+    .pp-card-media::before{ display:none; }
+  }
   .pp-thumb{
     position:absolute; left:0; top:0; width:100%; height:100%;
     object-fit:cover; display:block;
     background:#F4EFE2;border:none;
   }
   /* サムネ枠は縮まない(重ねた帯ごと保持される)
-     ★flex:0 0 auto だけだと、親(.pp-card)がstretchで引き伸ばされた時に
-       サムネ枠だけが元の高さのまま残り、カード下部に空白ができる。
-       枠がカードいっぱいに広がるようにして、帯(枠の下端に固定)が
-       必ずカードの下端に来るようにする。 */
-  .pp-card-media{flex:1 1 auto;min-height:0}
+     ★v21.15で flex:1 1 auto にしたが、これは誤りだった。
+       縮める余地を与えると、「書き出し・バックアップ」を開いて一覧の
+       高さが減った時にカードごと潰され、帯(下端に固定)から題名が
+       上へはみ出して切り取られ、日付だけが残る(報告の症状)。
+       枠の高さは ::before の 75% で決まる固定値のままにする。
+       題名の高さを常に2行分に固定した時点で、どのカードも同じ高さに
+       なるので、縮める余地は元から不要。 */
+  .pp-card-media{flex:0 0 auto}
   div.pp-thumb{
     display:flex;align-items:center;justify-content:center;
     color:#b9b2a0;font-size:26px;
@@ -1165,7 +1192,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v21.15">InkNote <small>v21.15</small></div>
+  <div class="brand" title="InkNote v21.17">InkNote <small>v21.17</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1745,7 +1772,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "21.15";
+var APP_VERSION = "21.17";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
