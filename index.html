@@ -861,7 +861,11 @@
     max-height:70%;display:flex;flex-direction:column;
   }
   /* ノート一覧は一覧性が命なので、既定でも高く取る */
-  #pagesPanel{max-height:86%;transition:transform .22s ease, max-height .2s ease}
+  /* ★以前は86%までしか開かず、書き出しを開くと一覧の取り分が減って
+     カードが押し込まれていた。「全部見えていて構わない」ので、
+     最初からほぼ全画面まで使う。一覧が広ければ畳んだ時の圧迫も減る。 */
+  #pagesPanel{max-height:calc(100% - env(safe-area-inset-top) - 6px);
+    transition:transform .22s ease, max-height .2s ease}
   /* つまみを上へドラッグ/タップで、ほぼ全画面まで広がる */
   #pagesPanel.tall{
     max-height:calc(100% - env(safe-area-inset-top) - 6px);
@@ -1285,7 +1289,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.07">InkNote <small>v22.07</small></div>
+  <div class="brand" title="InkNote v22.08">InkNote <small>v22.08</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1873,7 +1877,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.07";
+var APP_VERSION = "22.08";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -8449,6 +8453,47 @@ function renderPageList() {
                     : "📝 まだノートがありません<br><span style='font-size:11px'>下の「＋ 新しいページ」から始めましょう</span>");
     list.appendChild(empty);
   }
+  sizePageCards();
+}
+/* =========================================================
+   カードの高さを実測して px で固定する
+   ---------------------------------------------------------
+   ★CSSの指定(padding-topの比率 / aspect-ratio / min-height)は、
+     端末やWebViewによって効き方が変わり、パネルが畳まれた時に
+     カードが縦に潰れる現象が直せなかった。
+     宣言に頼るのをやめ、実際の列幅をJSで測って高さをpxで直接与える。
+     こうするとブラウザの解釈のばらつきに一切左右されない。
+   ★高さは「幅の75%(4:3)」。ただし帯(題名2行+日付)が必ず収まるよう
+     下限を設ける。カード自身にも同じ高さを与えて、
+     グリッドの行が縮もうとしても潰れないようにする。 */
+function sizePageCards() {
+  var list = $("#ppList");
+  if (!list || !list.classList.contains("grid")) return;
+  var cards = list.querySelectorAll(".pp-card");
+  if (!cards.length) return;
+  var w = cards[0].clientWidth;
+  if (!w) {                       // まだ描画前なら次のフレームで測り直す
+    requestAnimationFrame(sizePageCards);
+    return;
+  }
+  var BAND_MIN = 76;              // 帯(題名2行+日付+余白)が収まる最低限
+  var h = Math.max(BAND_MIN + 34, Math.round(w * 0.75));
+  for (var i = 0; i < cards.length; i++) {
+    var c = cards[i];
+    c.style.height = h + "px";
+    var m = c.querySelector(".pp-card-media");
+    if (m) m.style.height = h + "px";
+  }
+}
+/* 画面の向きや幅が変わったら測り直す */
+addEventListener("resize", function(){ sizePageCards(); });
+/* パネルの高さが変わる操作(書き出しの開閉)の後にも測り直す。
+   ★畳まれた瞬間に潰れるのがまさに今回の症状なので、
+     アニメーションの途中と終了後の両方で当て直す。 */
+function resizePageCardsSoon() {
+  sizePageCards();
+  setTimeout(sizePageCards, 120);
+  setTimeout(sizePageCards, 320);
 }
 $("#printWhiteToggle").onclick = function(){
   printWhite = !printWhite;
@@ -8519,10 +8564,12 @@ function setToolsOpen(on) {
     tw.removeEventListener("transitionend", onEnd);
     // 遷移後もブラウザの再配置が1〜2フレーム残るので、その分だけ足す
     layoutSettleUntil = Date.now() + 120;
+    sizePageCards();                  // 高さが変わり終わったら測り直す
   };
   tw.addEventListener("transitionend", onEnd);
   // 遷移イベントが来ない端末・環境のための保険
   setTimeout(function(){ tw.removeEventListener("transitionend", onEnd); }, 1200);
+  if (window.resizePageCardsSoon) resizePageCardsSoon();
   try { localStorage.setItem("inknote_tools_open", toolsOpen ? "1" : "0"); } catch (e) {}
 }
 $("#toolsToggle").onclick = function(){ setToolsOpen(!toolsOpen); };
