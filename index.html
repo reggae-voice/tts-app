@@ -1288,7 +1288,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.04">InkNote <small>v22.04</small></div>
+  <div class="brand" title="InkNote v22.06">InkNote <small>v22.06</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1780,6 +1780,10 @@ window.onerror = function(msg, src, line){
       <span style="color:var(--ui-dim);font-size:11px">貼り付けの初期幅と、⋯の「幅をそろえる」に使う幅</span>
     </div>
     <div class="st-row"><span class="st-label">整列</span>
+      <button class="stybtn" id="tidyWidthAllBtn">⇔ 全体の幅をそろえる</button>
+      <span style="color:var(--ui-dim);font-size:11px">選ばなくてもページ全部を、列ごとに幅と左端をそろえる</span>
+    </div>
+    <div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
       <span style="color:var(--ui-dim);font-size:11px">だんだんズレた左端・行間を直す</span>
     </div>
@@ -1872,7 +1876,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.04";
+var APP_VERSION = "22.06";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5606,9 +5610,20 @@ $("#barToggle").onclick = function(){
      内容が無い/小さい時はスライダーを出さない(動かす意味が無いため)。 */
   function infExtentAndOrigin(vert) {
     var cb = contentBBox();
-    var lo = 0, hi = (vert ? innerHeight : innerWidth) / (view.s || 1);
+    var screenLen = (vert ? innerHeight : innerWidth);
+    var lo = 0, hi = screenLen / (view.s || 1);
     if (cb) {
-      var M = 200;                                     // 端に少し余裕を持たせる
+      /* ★端に持たせる余裕(遊び)。
+         以前は world座標で固定200pxだった。これは画面px換算だと
+         倍率に比例して縮み、50%表示で48px・20%俯瞰では18pxしか
+         余らず、内容の端でほぼ動かせなくなっていた
+         (「ギリギリすぎて足りない」の原因)。
+         A4モードは必ず用紙1ページ分の余白が付くので余裕がある。
+         同じ考え方で、無限モードも「画面ほぼ1つ分」を余裕として
+         上下(左右)に持たせる。こうすると倍率が変わっても
+         見た目の余裕が一定になり、何も書いていない場所へも
+         スクロールして書き足しに行ける。 */
+      var M = Math.max(300, (screenLen / (view.s || 1)) * 0.9);
       lo = Math.min(lo, (vert ? cb.y : cb.x) - M);
       hi = Math.max(hi, (vert ? (cb.y + cb.h) : (cb.x + cb.w)) + M);
     }
@@ -10433,6 +10448,63 @@ function moveObjBy(o, dx, dy) {
    ★以前は「列の帯」に合わせる作りだったが、所属を座標で決める
      設計をやめたので、帯の概念も不要になった。
 ========================================================= */
+/* =========================================================
+   ページ全体の幅をそろえる
+   ---------------------------------------------------------
+   ★ページ全体を一度に、と言っても「すべてを同じ左端に寄せる」のは
+     間違い。段組みのノートでは列が全部1本に潰れてしまう。
+     まず横の重なりで列にまとめ、列ごとに
+     「その列の左端」へそろえる。列と列は動かさない。
+========================================================= */
+function columnGroups() {
+  var items = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.locked) continue;
+    if (o.type !== "text" && o.type !== "image") continue;
+    var b = objBBox(o);
+    items.push({ o: o, x1: b.x, x2: b.x + b.w });
+  }
+  if (!items.length) return [];
+  // 左端の順に見て、横が重なっているあいだは同じ列としてつなげる
+  items.sort(function(a, b){ return a.x1 - b.x1; });
+  var groups = [], cur = [items[0]], curX2 = items[0].x2;
+  for (var k = 1; k < items.length; k++) {
+    var it = items[k];
+    if (it.x1 < curX2) {                 // 重なっている = 同じ列
+      cur.push(it);
+      if (it.x2 > curX2) curX2 = it.x2;
+    } else {
+      groups.push(cur);
+      cur = [it]; curX2 = it.x2;
+    }
+  }
+  groups.push(cur);
+  return groups;
+}
+function tidyWidthsAll() {
+  var groups = columnGroups();
+  if (!groups.length) { statusEl.textContent = "そろえる内容がありません"; return; }
+  var total = 0;
+  for (var g = 0; g < groups.length; g++) total += groups[g].length;
+  showSheet("ページ全体の幅をそろえますか", [
+    { label: "⇔ " + groups.length + "列 / " + total + "個をそろえる(" + READ_W + "px)",
+      fn: function(){
+        pushUndo();                       // 1回で全部戻せるよう、ここでだけ積む
+        var n = 0;
+        for (var i = 0; i < groups.length; i++) {
+          var list = [];
+          for (var j = 0; j < groups[i].length; j++) list.push(groups[i][j].o);
+          n += tidyWidthsOn(list);
+        }
+        inkDirty = true; refreshMeasures(); scheduleSave(); updateSelUI();
+        statusEl.textContent = n
+          ? (groups.length + "列 " + n + "個の幅をそろえました(↩で戻せます)")
+          : "すでにそろっています";
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
 function tidyWidths() {
   var targets = [];
   for (var i = 0; i < sel.length; i++) {
@@ -10444,10 +10516,19 @@ function tidyWidths() {
     statusEl.textContent = "幅をそろえたいものを選んでから実行してください";
     return;
   }
-  // 左端は「選んだ中でいちばん左」に合わせる(勝手に別の場所へ動かさない)
+  pushUndo();
+  var n = tidyWidthsOn(targets);
+  inkDirty = true; refreshMeasures(); scheduleSave();
+  statusEl.textContent = n ? (n + "個の幅をそろえました(" + READ_W + "px)")
+                           : "すでにそろっています";
+}
+/* 幅そろえの本体。渡された物だけを対象にする。
+   ★Undoと後始末は呼ぶ側が行う(ページ全体版は列ごとに何度も呼ぶので、
+     ここでpushUndoすると1列ごとに戻し履歴が積まれてしまう)。 */
+function tidyWidthsOn(targets) {
+  // 左端は「渡された中でいちばん左」に合わせる(勝手に別の場所へ動かさない)
   var left = Infinity;
   for (var j = 0; j < targets.length; j++) left = Math.min(left, objBBox(targets[j]).x);
-  pushUndo();
   var n = 0;
   for (var k = 0; k < targets.length; k++) {
     var t = targets[k], changed = false;
@@ -10504,9 +10585,7 @@ function tidyWidths() {
     }
     if (changed) n++;
   }
-  inkDirty = true; refreshMeasures(); scheduleSave();
-  statusEl.textContent = n ? (n + "個の幅をそろえました(" + READ_W + "px)")
-                           : "すでにそろっています";
+  return n;
 }
 function unstackSelection(gap) {
   gap = (gap == null) ? 16 : gap;
@@ -14320,6 +14399,7 @@ function makeSelectedTheme() {
     statusEl.textContent = "テーマにしました: " + name;
   });
 }
+$("#tidyWidthAllBtn").onclick = function(){ closeMenu(); setTimeout(tidyWidthsAll, 120); };
 $("#colWidthBtn").onclick = function(){
   closeMenu();
   setTimeout(function(){
