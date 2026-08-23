@@ -973,21 +973,18 @@
      サムネ(画像/プレースホルダ)はその中いっぱいに絶対配置で敷き詰める。
      こうすると画像の実寸やaspect-ratioの対応状況に関係なく、
      どのカードも必ず同じ高さになる。 */
-  /* ★サムネ枠の高さの作り方。
-     以前は ::before の padding-top:75% だけに頼っていたが、
-     先頭の全体リセット( *{margin:0;padding:0} )は擬似要素にも効くため、
-     読み込み順や指定の強さ次第でこのpaddingが打ち消され、枠の高さが
-     ほぼ0になる(カードが平たい帯になり、サムネがほとんど見えない)。
-     いまは aspect-ratio を主に使い、::before は対応していない環境の
-     控えとして残す。min-heightも入れて、どちらも効かない最悪の場合でも
-     カードが潰れないようにする。 */
-  .pp-card-media::before{ content:""; display:block; padding-top:75% !important; }
-  .pp-card-media{ aspect-ratio:4/3; min-height:112px; }
-  /* aspect-ratioが使える環境では、控えの::beforeは高さを作らない
-     (二重に高さが足されないようにする) */
-  @supports (aspect-ratio:4/3){
-    .pp-card-media::before{ display:none; }
-  }
+  /* ★枠の高さは padding-top(昔ながらのやり方)だけで作る。
+     v21.17で「全体リセット *{padding:0} がこれを打ち消している」と考えて
+     aspect-ratio を主にしたが、これは私の誤りだった。
+     詳細度は * が(0,0,0)、.pp-card-media::before が(0,1,1)なので、
+     リセットがこの指定を打ち消すことはない。
+     そのうえ aspect-ratio は端末やWebViewによって効き方にばらつきがあり
+     (上のコメントで一度そう判断して padding-top に決めた経緯がある)、
+     効かない端末では枠の高さが作られず、カードが平たく潰れて
+     帯どうしが重なって見える。元のやり方に戻す。
+     min-height は、それでも高さが出ない最悪の場合の下支え。 */
+  .pp-card-media::before{ content:""; display:block; padding-top:75%; }
+  .pp-card-media{ min-height:112px; }
   .pp-thumb{
     position:absolute; left:0; top:0; width:100%; height:100%;
     object-fit:cover; display:block;
@@ -1288,7 +1285,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.06">InkNote <small>v22.06</small></div>
+  <div class="brand" title="InkNote v22.07">InkNote <small>v22.07</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1876,7 +1873,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.06";
+var APP_VERSION = "22.07";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
