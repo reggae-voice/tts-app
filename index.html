@@ -1289,7 +1289,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.08">InkNote <small>v22.08</small></div>
+  <div class="brand" title="InkNote v22.09">InkNote <small>v22.09</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1569,7 +1569,7 @@ window.onerror = function(msg, src, line){
   <div class="pp-tools">
     <div class="pp-search">
       <span class="pp-search-ic">🔍</span>
-      <input id="ppSearch" type="search" placeholder="ノートを検索">
+      <input id="ppSearch" type="search" placeholder="ノート名・中身を検索">
     </div>
     <button class="pp-ctrl" id="ppSort" title="並び順">🕒 変更順</button>
     <button class="pp-ctrl icon" id="ppView" title="表示切替">▦</button>
@@ -1877,7 +1877,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.08";
+var APP_VERSION = "22.09";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -8277,7 +8277,9 @@ function updateCardThumb(pid) {
     else media.insertBefore(im, media.firstChild);
   }).catch(function(){});
 }
-function renderPageList() {
+/* skipContent: 題名の絞り込みだけを反映し、中身の検索は走らせない
+   (入力のたびに全ノートを読み直さないため) */
+function renderPageList(skipContent) {
   renderFolderTabs();
   var list = $("#ppList");
   list.innerHTML = "";
@@ -8454,6 +8456,49 @@ function renderPageList() {
     list.appendChild(empty);
   }
   sizePageCards();
+  if (!skipContent) renderListContentHits();
+}
+/* =========================================================
+   ノートを検索 = マップの「探す」と同じ中身を出す
+   ---------------------------------------------------------
+   ★以前はノートの「題名」しか見ておらず、中身に書いてある言葉では
+     見つけられなかった。マップの🔍探すは全ノートの本文を見て
+     前後の文つきで一覧を出し、押すとその場所まで飛べる。
+     探し方が2種類あると使い分けを覚える必要が出るので、
+     こちらもそのまま同じ仕組みを使う。
+   ★題名の一致(カード)は今までどおり即座に出し、
+     そのすぐ下に本文の一致を足す。題名で足りる時は待たされない。 */
+var listFindToken = 0;
+function renderListContentHits() {
+  var list = $("#ppList");
+  if (!list) return;
+  var q = (listQuery || "").trim();
+  var old = document.getElementById("ppFindWrap");
+  if (old) old.parentNode.removeChild(old);
+  if (!q) return;
+  var wrap = document.createElement("div");
+  wrap.id = "ppFindWrap";
+  wrap.style.cssText = "grid-column:1/-1;margin-top:6px";
+  var head = document.createElement("div");
+  head.style.cssText = "color:var(--ui-dim);font-size:11px;font-weight:700;padding:10px 2px 6px;border-top:1px solid var(--ui-line)";
+  head.textContent = "ノートの中身から探しています…";
+  wrap.appendChild(head);
+  var body = document.createElement("div");
+  wrap.appendChild(body);
+  list.appendChild(wrap);
+
+  var token = ++listFindToken;
+  searchAllPages(q).then(function(hits){
+    if (token !== listFindToken) return;        // もっと新しい入力が来ていたら捨てる
+    head.textContent = hits.length
+      ? "ノートの中身の一致 " + hits.length + "件(押すとその場所へ)"
+      : "ノートの中身には見つかりませんでした";
+    renderFindList(hits.length ? hits : [], body, q);
+    if (!hits.length) body.innerHTML = "";
+  }).catch(function(){
+    if (token !== listFindToken) return;
+    head.textContent = "中身の検索に失敗しました";
+  });
 }
 /* =========================================================
    カードの高さを実測して px で固定する
@@ -8521,9 +8566,16 @@ $("#homeToggle").onclick = function(){
     ? "起動時にノート一覧を表示します" : "起動時は前回のノートを直接開きます";
 };
 $("#homeToggle").classList.toggle("on", openListOnStart);
+/* ★1文字ごとに全ノートの本文を走査すると重い。
+   題名でのカード絞り込みは打つそばから反映し、
+   中身の検索だけ入力が止まってから走らせる。 */
+var ppSearchTimer = null;
 $("#ppSearch").addEventListener("input", function(){
   listQuery = this.value || "";
-  renderPageList();
+  listFindToken++;                     // 走っている途中の結果は捨てる
+  renderPageList(true);                // 題名だけ即座に絞り込む
+  clearTimeout(ppSearchTimer);
+  ppSearchTimer = setTimeout(function(){ renderListContentHits(); }, 260);
 });
 $("#ppView").onclick = function(){
   listView = (listView === "grid") ? "list" : "grid";
@@ -10759,6 +10811,12 @@ function updateColBar() {
 }
 window.updateColBar = updateColBar;
 function gotoHit(h) {
+  /* ★ページ一覧の「ノートを検索」からも呼ばれる。
+     そちらから来た時は一覧が開いたままなので、閉じないと
+     移動先が隠れて「押しても何も起きない」ように見える。 */
+  try {
+    if ($("#pagesPanel").classList.contains("show")) closePages();
+  } catch (e) {}
   function focusIt() {
     for (var i = 0; i < objects.length; i++) {
       if (objects[i].id !== h.objId) continue;
@@ -14332,8 +14390,13 @@ function closeFind() {
   $("#sheetScrim").onclick = null;
   if (!anySheetOpen()) $("#sheetScrim").classList.remove("show");
 }
-function renderFindList(hits) {
-  var host = $("#findList");
+/* 結果一覧の描画。
+   ★ページ一覧の「ノートを検索」からも同じ物を使えるよう、
+     出す場所(host)を差し替えられるようにした。
+     検索の中身も見え方も一本化して、探し方が2種類ある状態をなくす。 */
+function renderFindList(hits, host, q) {
+  host = host || $("#findList");
+  var qq = (q != null) ? q : findQuery;
   host.innerHTML = "";
   if (hits === null) {
     var n0 = document.createElement("div");
@@ -14346,7 +14409,7 @@ function renderFindList(hits) {
   if (!hits.length) {
     var n1 = document.createElement("div");
     n1.className = "find-note";
-    n1.textContent = "「" + findQuery + "」は見つかりませんでした";
+    n1.textContent = "「" + qq + "」は見つかりませんでした";
     host.appendChild(n1);
     return;
   }
@@ -14363,15 +14426,15 @@ function renderFindList(hits) {
     var sn = document.createElement("div");
     sn.className = "find-sn";
     // 一致した所だけ印を付ける(前後は普通の文字のまま)
-    var t = h.snip, ql = findQuery.toLowerCase();
+    var t = h.snip, ql = qq.toLowerCase();
     var at = t.toLowerCase().indexOf(ql);
     if (at === -1) sn.textContent = t;
     else {
       sn.appendChild(document.createTextNode(t.slice(0, at)));
       var mk = document.createElement("mark");
-      mk.textContent = t.slice(at, at + findQuery.length);
+      mk.textContent = t.slice(at, at + qq.length);
       sn.appendChild(mk);
-      sn.appendChild(document.createTextNode(t.slice(at + findQuery.length)));
+      sn.appendChild(document.createTextNode(t.slice(at + qq.length)));
     }
     row.appendChild(pg); row.appendChild(sn);
     row.addEventListener("click", function(){ gotoHit(h); });
