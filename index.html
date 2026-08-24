@@ -443,6 +443,7 @@
     top:calc(env(safe-area-inset-top) + 90px);
     bottom:calc(env(safe-area-inset-bottom) + 120px);
   }
+  :root{ --vsTop:90px; }
   #vscroll.v #vsTrack{
     position:absolute;right:10px;top:0;bottom:0;width:4px;
     background:rgba(120,126,140,.18);border-radius:2px;
@@ -506,7 +507,13 @@
     box-shadow:0 4px 14px rgba(15,18,24,.4);display:none;
   }
   #vscroll.drag #vsPage{display:block}
-  body.editing-mode #vscroll{display:none !important}
+  /* ★編集中もスライダーは残す。
+     以前は隠していたため、長い文章を編集していて画面の上の方を
+     直したい時に、いちど編集を閉じて位置を変えてから開き直す
+     必要があった。文字に触れずに動かせる唯一の手段なので残す。
+     キーボードに埋もれないよう、下端はキーボードの上まで縮める。 */
+  body.editing-mode #vscroll{z-index:26}
+  body.editing-mode #vscroll.v{bottom:auto;height:var(--kbTop, 52%)}
   #topChip{
     position:fixed;left:14px;
     bottom:calc(env(safe-area-inset-bottom) + 176px);
@@ -1289,7 +1296,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.09">InkNote <small>v22.09</small></div>
+  <div class="brand" title="InkNote v22.10">InkNote <small>v22.10</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1877,7 +1884,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.09";
+var APP_VERSION = "22.10";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3273,15 +3280,28 @@ var touchPts = {};   // pointerId -> {x,y}
 var pinch = null;
 document.addEventListener("pointerdown", function(e){
   if (e.pointerType !== "touch") return;
-  /* ★文字を編集している最中に、そのテキストの上や選択ハンドル、
-     装飾バーを触った指はピンチの数に入れない。
-     iPadは選択ハンドルを操作する時に指を2本と数えることがあり、
-     これをピンチと誤認すると、範囲を広げようとした瞬間に
-     画面がズームしてしまい選択できなくなる。 */
+  /* ★文字を編集している最中の指の扱い。
+     装飾バーを触った指は操作に使わない(ボタンなので)。
+     テキストの上の指は、1本なら文字の選択に譲り、2本そろって
+     初めて画面の移動・拡大として扱う。
+     ※iPadは選択ハンドルを操作する時に指を2本と数えることがあり、
+       その場合は範囲を広げようとして画面が動いてしまう可能性が残る。
+       ただ「長い文章の上の方へ行けない」不便の方が実害が大きいので、
+       2本指は操作として通す。もし選択しづらくなるようなら、
+       スライダー(下で編集中も残すようにした)だけを移動手段にして
+       ここは元に戻す。 */
   if (editingObj && e.target) {
     var inEditing = (editingObj.el && editingObj.el.contains(e.target));
     var inRichBar = (rbEl() && rbEl().contains(e.target));
-    if (inEditing || inRichBar) return;
+    if (inRichBar) return;
+    if (inEditing) {
+      /* ★1本指は文字の選択に譲る(ここで画面を動かすと選べなくなる)。
+         ただし2本指は選択の操作ではないので、画面の移動・拡大に使う。
+         これが無いと、長い文章を編集している最中に上の方へ行けず、
+         いちど編集を閉じて位置を変えてから開き直す必要があった。 */
+      touchPts[e.pointerId] = { x: e.clientX, y: e.clientY };
+      if (Object.keys(touchPts).length < 2) return;
+    }
   }
   touchPts[e.pointerId] = { x: e.clientX, y: e.clientY };
   var ids = Object.keys(touchPts);
@@ -3345,6 +3365,10 @@ document.addEventListener("visibilitychange", function(){
 /* ---------- Androidの引っ張って更新などブラウザ既定動作を全停止 ---------- */
 document.addEventListener("touchmove", function(e){
   var t = e.target;
+  /* ★2本指の操作中(画面の移動・拡大)は、編集中の文字の上でも
+     ブラウザ既定の選択・スクロールに渡さない。渡すと、指を動かした分が
+     文字の選択に食われて画面が動かない。 */
+  if (pinch && e.touches && e.touches.length >= 2) { e.preventDefault(); return; }
   // UI(ボタン・パネル類)はブラウザ既定に任せる。
   // Apple Pencilはタップ時に微小なtouchmoveを発するため、ここで
   // preventDefaultするとSafariがタップをキャンセルしclickが発火しなくなる。
@@ -4143,6 +4167,18 @@ function ensureEditingVisible() {
   positionEditHandle();
 }
 if (window.visualViewport) {
+  /* ★編集中のスライダーがキーボードに埋もれないよう、
+     実際に見えている高さから縦スライダーの下端を決める。 */
+  var syncKbTop = function(){
+    var vv = window.visualViewport;
+    var top = parseInt(getComputedStyle(document.documentElement)
+                .getPropertyValue("--vsTop") || "0", 10) || 90;
+    var h = Math.max(120, (vv.offsetTop + vv.height) - top - 24);
+    document.documentElement.style.setProperty("--kbTop", h + "px");
+  };
+  window.visualViewport.addEventListener("resize", syncKbTop);
+  window.visualViewport.addEventListener("scroll", syncKbTop);
+  syncKbTop();
   // キーボードが開く/閉じる/サイズが変わるたびに位置を再調整
   window.visualViewport.addEventListener("resize", function(){
     if (editingObj) ensureEditingVisible();
