@@ -1304,7 +1304,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.13">InkNote <small>v22.13</small></div>
+  <div class="brand" title="InkNote v22.15">InkNote <small>v22.15</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1893,7 +1893,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.13";
+var APP_VERSION = "22.15";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -9557,9 +9557,29 @@ function pickThemeFor(e) {
   showSheet("「" + e.name + "」をどのテーマに", opts);
 }
 /* 印を付ける相手を選び直す(自動判定が外した時の逃げ道) */
+/* 位置だけの記憶を「いま見えている表示」で覚え直す。
+   細かく位置を詰めたい時のための更新。 */
+function updateBookmarkView(e) {
+  if (e.kind !== "pos") return;
+  showSheet("「" + e.name + "」の位置を更新", [
+    { label: "📍 いま見えている位置で覚え直す", fn: function(){
+        pushUndo();
+        e.bm.view = { x: view.x, y: view.y, s: view.s };
+        scheduleSave(); renderPosList();
+        statusEl.textContent = "「" + e.name + "」の位置を更新しました";
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+/* 印を別の物へ移す。
+   ★「押したら単元が消えた」という報告を受けて作り直した。
+     実際には消えておらず、選んでいた物へ印が移っただけだったが、
+     移った先が画面の外だと消えたようにしか見えない。
+     何に移るのかを名前で確認し、移った後はその場所へ移動して
+     結果が目に見えるようにする。 */
 function retargetUnit(e) {
   if (sel.length !== 1) {
-    statusEl.textContent = "先に付けたい物を1つ選んでから🎯を押してください";
+    statusEl.textContent = "先に、印を付けたい物を1つ選んでから「🎯付替」を押してください";
     return;
   }
   var target = sel[0];
@@ -9567,13 +9587,23 @@ function retargetUnit(e) {
     statusEl.textContent = "テーマには単元を重ねられません";
     return;
   }
-  pushUndo();
-  var nm = e.name, th = e.theme;
-  if (e.kind === "obj") { e.o.anch = null; e.o.anchLv = null; e.o.anchTheme = null; }
-  else bookmarks = bookmarks.filter(function(b){ return b.id !== e.id; });
-  target.anch = nm; target.anchLv = 2; target.anchTheme = th;
-  inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
-  statusEl.textContent = "「" + nm + "」の印を選んだ物に付け替えました";
+  var desc = (target.type === "text")
+    ? String(target.text || "").replace(/\s+/g, " ").trim().slice(0, 24)
+    : (target.type === "image" ? "画像" : "手書き");
+  showSheet("「" + e.name + "」の印を移しますか", [
+    { label: "🎯 「" + (desc || "選んだもの") + "」に移す", fn: function(){
+        pushUndo();
+        var nm = e.name, th = e.theme;
+        if (e.kind === "obj") { e.o.anch = null; e.o.anchLv = null; e.o.anchTheme = null; }
+        else bookmarks = bookmarks.filter(function(b){ return b.id !== e.id; });
+        target.anch = nm; target.anchLv = 2; target.anchTheme = th;
+        inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
+        closePos();
+        jumpToAnchor(target);        // 移った先を見せる(消えたと誤解しないように)
+        statusEl.textContent = "「" + nm + "」の印をここに移しました(↩で戻せます)";
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
 }
 function renderPosList() {
   var list = $("#psList");
@@ -9587,20 +9617,29 @@ function renderPosList() {
     // 位置だけの単元は🔖が出ないので、一覧では☆で見分けられるようにする
     title.textContent = (e.kind === "obj" ? "🔖 " : "☆ ") + e.name;
     title.addEventListener("click", function(){ gotoUnit(e); });
-    var th = document.createElement("button");
-    th.textContent = "📑"; th.title = "テーマを割り当てる";
-    th.addEventListener("click", function(ev){ ev.stopPropagation(); pickThemeFor(e); });
-    var rt = document.createElement("button");
-    rt.textContent = "🎯"; rt.title = "選んだ物に印を付け替える";
-    rt.addEventListener("click", function(ev){ ev.stopPropagation(); retargetUnit(e); });
-    var ren = document.createElement("button");
-    ren.textContent = "✎"; ren.title = "名前を変更";
-    ren.addEventListener("click", function(ev){ ev.stopPropagation(); renameUnit(e); });
-    var del = document.createElement("button");
-    del.textContent = "🗑"; del.title = "削除";
-    del.addEventListener("click", function(ev){ ev.stopPropagation(); deleteUnit(e); });
-    row.appendChild(title); row.appendChild(th); row.appendChild(rt);
-    row.appendChild(ren); row.appendChild(del);
+    /* ★絵文字だけだと何のボタンか分からないという指摘を受け、
+       すべて「絵文字+短い言葉」にする。押す前に用途が読めるように。 */
+    function mkBtn(label, tip, fn) {
+      var b = document.createElement("button");
+      b.textContent = label; b.title = tip;
+      b.style.cssText = "font-size:11px;padding:5px 7px;white-space:nowrap";
+      b.addEventListener("click", function(ev){ ev.stopPropagation(); fn(); });
+      return b;
+    }
+    row.appendChild(title);
+    row.appendChild(mkBtn("📑テーマ", "この単元をどのテーマに入れるか決める",
+                          function(){ pickThemeFor(e); }));
+    /* 位置だけの記憶は「いまの表示位置で覚え直す」ができる。
+       物に付いた印は物と一緒に動くので、その必要がない。 */
+    if (e.kind === "pos")
+      row.appendChild(mkBtn("📍更新", "いま見えている位置で覚え直す",
+                            function(){ updateBookmarkView(e); }));
+    else
+      row.appendChild(mkBtn("🎯付替", "いま選んでいる物に印を移す(先に対象を1つ選ぶ)",
+                            function(){ retargetUnit(e); }));
+    row.appendChild(mkBtn("✎名前", "名前を変える", function(){ renameUnit(e); }));
+    row.appendChild(mkBtn("🗑削除", "この単元を消す(内容は消えません)",
+                          function(){ deleteUnit(e); }));
     return row;
   }
   function mkHead(text) {
@@ -9615,10 +9654,15 @@ function renderPosList() {
     empty.className = "pp-row";
     empty.style.color = "#9AA1AD";
     empty.style.fontSize = "12.5px";
-    empty.textContent = "まだ単元がありません。「☆ 現在の位置を記憶」で追加できます。";
+    empty.textContent = "まだ単元がありません。「☆ ここを単元として記憶」で追加できます。";
     list.appendChild(empty);
     return;
   }
+  // 記号の意味を最初に出しておく(押す前に分かるように)
+  var legend = document.createElement("div");
+  legend.style.cssText = "color:var(--ui-dim);font-size:10.5px;line-height:1.7;padding:2px 8px 8px";
+  legend.textContent = "🔖=内容に付いた印(動かすと付いてくる) / ☆=場所だけの記憶(白紙でも可)";
+  list.appendChild(legend);
   // 未分類を先に出す(ここを片付けるのがこのパネルの仕事なので)
   var un = entries.filter(function(e){ return !unitThemeOf(e); });
   if (un.length) {
@@ -13856,7 +13900,11 @@ function insertRichPasteInner(raw, left, top, W, done) {
       });
     });
   });
-  chain.then(function(){ done(made, y); });
+  /* ★途中で失敗しても必ず仕上げまで進む。
+     以前はcatchが無かったため、数式の組版などが1つ失敗しただけで
+     この先が実行されず、貼り付けたはずの物が画面に出ないまま
+     終わっていた(「貼り付けられない」の有力な原因)。 */
+  chain.catch(function(){}).then(function(){ done(made, y); });
 }
 
 /* 貼り付けを「文章」と「組版する式」に振り分けて、縦に並べて置く */
@@ -13891,7 +13939,7 @@ function insertRichHtml(html) {
       });
     });
   });
-  chain.then(function(){
+  chain.catch(function(){}).then(function(){
     inkDirty = true;
     refreshMeasures();
     switchTool("select");
@@ -13914,7 +13962,23 @@ function insertRichHtml(html) {
   return true;
 }
 
+/* ★貼り付けの入口。ここから先で万一つまずいても、
+     何も起きずに終わる(=貼り付けられない)ことだけは避ける。
+     凝った整形に失敗したら、素の文字としてそのまま置く。
+     内容が入らないより、飾りが付かない方がまだよい。 */
 function insertRichPaste(raw) {
+  try {
+    return insertRichPasteSafe(raw);
+  } catch (e) {
+    try {
+      insertTextAtCenter(String(raw || ""));
+      statusEl.textContent = "整形できなかったので、そのまま貼り付けました";
+    } catch (e2) {
+      statusEl.textContent = "貼り付けに失敗しました";
+    }
+  }
+}
+function insertRichPasteSafe(raw) {
   /* ★図やコード(文字の位置で意味が決まるもの)は、そのまま等幅で置く。
      文章と混ざっている場合は、段落ごとに分けて図の部分だけ等幅にする。 */
   /* ★空行が無い長い文書でも図だけを取り出せるよう、行単位で切り分ける */
@@ -14144,8 +14208,12 @@ function commitPasteCatcher() {
   var raw = "", html = "";
   if (area) {
     html = area.innerHTML || "";
-    raw = area.textContent || "";
-    if (!raw.trim() && area.innerText) raw = area.innerText;
+    /* ★innerTextを先に使う。
+       textContentは<p>や<div>の切れ目を改行にしないため、
+       段落の多い文章を貼ると全部が1行に繋がってしまっていた
+       (「貼り付けたのにおかしくなる」の一因)。 */
+    raw = (area.innerText != null && area.innerText.trim()) ? area.innerText
+                                                           : (area.textContent || "");
   }
   if (area) { area.innerHTML = ""; area.textContent = ""; }
   closePasteCatcher();
@@ -14197,7 +14265,15 @@ function pasteFromClipboard() {
         }
       })(items[n]);
     }
-    if (!handled) openPasteCatcher("画像/テキストが読み取れませんでした。枠に貼り付けてください");
+    if (!handled) { openPasteCatcher("画像/テキストが読み取れませんでした。枠に貼り付けてください"); return; }
+    /* ★これが無いと、読み取りの途中で失敗しても誰も気づけない。
+       chainは組み立てるだけで結果を見ていなかったため、
+       途中で例外が出ると何のメッセージも出ないまま
+       「押しても何も起きない」状態になっていた。
+       失敗したら手動の受け皿に切り替える。 */
+    chain.catch(function(err){
+      openPasteCatcher("自動の読み取りに失敗しました。枠に貼り付けてください");
+    });
   }).catch(function(){
     // iPadで拒否された場合はここに来る。端末標準の貼り付けに切り替える
     openPasteCatcher("枠を長押しして「ペースト」を選ぶか、⌘Vで貼り付けてください");
@@ -15116,7 +15192,8 @@ function renderGroupPanel() {
          整理しながら名前を決めたのに、単元にするにはもう一度
          対象を選び直して☆を押す必要があった。 */
       var ed = document.createElement("button");
-      ed.className = "grp-mv"; ed.textContent = "✎"; ed.title = "題名を付けて単元にする";
+      ed.className = "grp-mv"; ed.textContent = "☆";
+      ed.title = "この場所を位置ブックマークとして登録する";
       ed.addEventListener("click", function(e){
         e.stopPropagation();
         nameGroupAsUnit(g);
@@ -15130,34 +15207,40 @@ function renderGroupPanel() {
     })(gl[i], i);
   }
 }
-/* まとまりに題名を付け、その場で単元として登録する。
-   印は「そのまとまりの中で一番上にある文字」に付ける。
-   ★見出しに当たる物に付けたいので、いちばん上を選ぶ。
-     すでに単元が付いている物があれば、それを付け替える。 */
+/* =========================================================
+   まとまり → 位置ブックマーク(単元)として登録
+   ---------------------------------------------------------
+   ★「まとまり」と「テーマ/単元」は別のデータにする。
+     以前はオブジェクトに直接 anch(単元の印)を書き込んでいたため、
+     自動整理でまとまりが組み替わると印の付き先も一緒に動き、
+     2つの仕組みが同じ場所を取り合っていた。
+     ここでは bookmarks[](位置だけの記憶)に登録する。
+     bookmarks はオブジェクトに何も書かないので、
+     まとまりをどう組み替えても影響を受けない。
+   ★「そこを起点に少しずらして」の要望どおり、まとまりの左上を
+     画面の少し内側に置く表示位置として記録する。 */
+var GROUP_BM_MARGIN = 60;          // まとまりの左上を画面の端からどれだけ内へ置くか
+function viewForWorldPoint(wx, wy, margin) {
+  var m = (margin == null) ? GROUP_BM_MARGIN : margin;
+  return { x: m - wx * view.s, y: m - wy * view.s, s: view.s };
+}
 function nameGroupAsUnit(g) {
-  var target = null, best = null;
-  for (var i = 0; i < g.items.length; i++) {
-    var o = g.items[i];
-    if (o.anch && o.anchLv === 2) { target = o; break; }   // 既にある単元を優先
-    if (o.type !== "text") continue;
-    var b = objBBox(o);
-    if (best === null || b.y < best) { best = b.y; target = o; }
-  }
-  if (!target) { statusEl.textContent = "このまとまりには文字がありません"; return; }
-  var def = String(target.anch || g.label || "").split("\n")[0].slice(0, 40) || "単元";
-  askText("題名(単元として登録します)", def, function(name){
+  var b = g.bbox || { x: 0, y: 0, w: 0, h: 0 };
+  var def = String(g.label || "").split("\n")[0].slice(0, 40) || "位置";
+  askText("この場所の名前(位置ブックマーク)", def, function(name){
     if (name == null) return;
     name = String(name).trim();
     if (!name) return;
     pushUndo();
-    target.anch = name;
-    target.anchLv = 2;
-    if (target.anchTheme === undefined) target.anchTheme = null;
-    inkDirty = true; scheduleSave();
-    renderGroupPanel(); renderTocPanel(); updateColBar();
+    bookmarks.push({
+      id: Date.now(), name: name, theme: null,
+      view: viewForWorldPoint(b.x, b.y)
+    });
+    scheduleSave();
+    renderGroupPanel(); renderTocPanel();
     if (window.renderPosList) renderPosList();
     setTimeout(function(){
-      statusEl.textContent = "単元「" + name + "」にしました(テーマは☆の整理で割り当て)";
+      statusEl.textContent = "位置「" + name + "」を登録しました(☆単元の整理でテーマへ割り当て)";
     }, 40);
   });
 }
