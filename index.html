@@ -1304,7 +1304,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.15">InkNote <small>v22.15</small></div>
+  <div class="brand" title="InkNote v22.17">InkNote <small>v22.17</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1893,7 +1893,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.15";
+var APP_VERSION = "22.17";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6921,6 +6921,32 @@ $("#editSplit").addEventListener("pointerdown", function(e){
    ★組版した数式は<img>になっているので、そのままでは文字にならない。
      コピー・切り取り時と同じ考え方で、元のLaTeXに戻してから取り出す。
    ★画面のDOMから読むので、まだ確定していない打ちかけの内容も入る。 */
+/* 選んだものの文字をまとめてクリップボードへ。
+   ★投げ縄で離れた場所を複数囲んだ時のための機能。
+     並び順は「画面で読む順」= 上から下、同じ高さなら左から右。
+     選んだ順ではないのは、囲んだ順序と読む順序は普通ちがうため。
+   ★間は空行で区切る。別々のBOXだったことが分かるようにし、
+     貼り付け先でも段落として扱われるようにする。 */
+function copySelectedText() {
+  var list = sel.filter(function(o){ return o && o.type === "text"; });
+  if (!list.length) { statusEl.textContent = "文字が選ばれていません"; return; }
+  list = list.slice().sort(function(a, b){
+    var ba = objBBox(a), bb = objBBox(b);
+    var dy = ba.y - bb.y;
+    // 高さがほぼ同じなら同じ行とみなして左から順に
+    if (Math.abs(dy) > Math.min(ba.h, bb.h) * 0.5) return dy;
+    return ba.x - bb.x;
+  });
+  var parts = [];
+  for (var i = 0; i < list.length; i++) {
+    var t = editBoxPlainText(list[i]);
+    if (t && t.trim()) parts.push(t.replace(/\s+$/, ""));
+  }
+  if (!parts.length) { statusEl.textContent = "コピーする文字がありませんでした"; return; }
+  var out = parts.join("\n\n");
+  copyTextToClipboard(out, "コピーしました");
+  statusEl.textContent = parts.length + "個の文字をまとめてコピーしました(" + out.length + "文字)";
+}
 function editBoxPlainText(o) {
   if (!o) return "";
   var el = o.el;
@@ -14237,7 +14263,41 @@ function pasteFromClipboard() {
         var imgType = null;
         for (var i = 0; i < item.types.length; i++)
           if (item.types[i].indexOf("image/") === 0) imgType = item.types[i];
-        if (imgType) {
+        var hasText = (item.types.indexOf("text/plain") !== -1 ||
+                       item.types.indexOf("text/html") !== -1);
+        if (imgType && hasText) {
+          /* ★1回のコピーに画像と文字の両方が入っていることがある
+             (Webページの表や図を選ぶと、多くのブラウザが両方を載せる)。
+             これまでは黙って画像を優先していたため、文字をコピーした
+             つもりが画像で貼られ、「別の物が優先される」ように見えていた。
+             どちらを貼るかは見た目で決められないので、その場で選んでもらう。 */
+          handled = true;
+          chain = chain.then(function(){
+            return new Promise(function(res){
+              showSheet("画像と文字の両方がコピーされています", [
+                { label: "🖼 画像として貼る", fn: function(){
+                    item.getType(imgType).then(function(blob){ addImageFiles([blob]); })
+                      .then(res, res);
+                  } },
+                { label: "📝 文字として貼る", fn: function(){
+                    var tt = (item.types.indexOf("text/plain") !== -1) ? "text/plain" : "text/html";
+                    item.getType(tt).then(function(b){ return b.text(); })
+                      .then(function(txt){
+                        if (!txt || !txt.trim()) return;
+                        if (tt === "text/html") {
+                          if (htmlHasTable(txt) && insertRichHtml(txt)) return;
+                          var bx = document.createElement("div");
+                          bx.innerHTML = txt;
+                          txt = (bx.innerText || bx.textContent || "");
+                        }
+                        if (txt.trim()) insertRichPaste(txt.trim());
+                      }).then(res, res);
+                  } },
+                { label: "キャンセル", cancel: true, fn: res }
+              ]);
+            });
+          });
+        } else if (imgType) {
           handled = true;
           chain = chain.then(function(){ return item.getType(imgType); })
             .then(function(blob){ addImageFiles([blob]); });
@@ -14817,7 +14877,11 @@ function clipCopy(cut) {
   if (!sel.length) return false;
   var items = [];
   for (var i = 0; i < sel.length; i++) items.push(cloneObjForClip(sel[i]));
-  appClip = { items: items, cut: !!cut };
+  /* ★いつコピーしたかを覚える。
+     これが無いと、何日も前にノート内でコピーした物と、
+     たった今よそでコピーした物の新旧が判断できず、
+     常に古い方(ノート内)を先頭に出していた。 */
+  appClip = { items: items, cut: !!cut, ts: Date.now() };
   if (cut) {
     pushUndo();
     for (var j = 0; j < sel.length; j++) {
@@ -15050,6 +15114,13 @@ function openMoreSheet() {
                  fn: function(){ pressCtx("ctxAnchor"); } });
 
   // --- 取り出す ---
+  /* ★選んだものの文字をまとめて外部へ。
+     投げ縄で離れた場所をいくつも囲んだ時、1つずつ開いてコピーするのは
+     現実的でないので、選択ぶんを上から順に繋げて渡す。 */
+  var textish = sel.filter(function(x){ return x.type === "text"; });
+  if (textish.length)
+    items.push({ label: "📋 選んだ文字をまとめてコピー(" + textish.length + "個)",
+                 fn: copySelectedText });
   if (ctxVisible("ctxCopy") || ctxVisible("ctxSave"))
     items.push({ label: "🖼 画像として取り出す…", fn: openExportSelSheet });
 
@@ -15614,15 +15685,33 @@ $("#findLost").onclick = function(){
     { label: "キャンセル", cancel: true }
   ]);
 };
+/* 「◯分前」の言い方に直す */
+function agoText(ts) {
+  if (!ts) return "";
+  var d = Math.max(0, Date.now() - ts);
+  var m = Math.floor(d / 60000);
+  if (m < 1) return "たった今";
+  if (m < 60) return m + "分前";
+  var h = Math.floor(m / 60);
+  if (h < 24) return h + "時間前";
+  return Math.floor(h / 24) + "日前";
+}
 $("#pasteChip").onclick = function(){
   // ノート内でコピー/切り取りしたものがあれば、どちらを貼るか選ばせる
   if (clipHas()) {
-    showSheet("貼り付け", [
-      { label: "📄 ノート内でコピーしたもの(" + appClip.items.length + "個)",
-        fn: function(){ clipPaste(); } },
-      { label: "📋 外部からコピーした文字や画像", fn: function(){ pasteFromClipboard(); } },
-      { label: "キャンセル", cancel: true }
-    ]);
+    var ago = agoText(appClip.ts);
+    var fresh = appClip.ts && (Date.now() - appClip.ts) < 60000;   // 1分以内なら新しい
+    var inNote = { label: "📄 ノート内でコピーしたもの(" + appClip.items.length +
+                          "個・" + ago + ")",
+                   fn: function(){ clipPaste(); } };
+    var outside = { label: "📋 よそでコピーした文字や画像", fn: function(){ pasteFromClipboard(); } };
+    /* ★新しい方を上に出す。
+       以前はノート内の控えを必ず先頭に置いていたため、
+       直前によそでコピーしても古い方が優先されているように見えた。
+       ノート内のコピーが1分以内なら、それが直前の操作なので上。
+       そうでなければ、よそでコピーした方が新しいとみて上に出す。 */
+    showSheet("貼り付け", fresh ? [inNote, outside, { label: "キャンセル", cancel: true }]
+                                : [outside, inNote, { label: "キャンセル", cancel: true }]);
     return;
   }
   pasteFromClipboard();
