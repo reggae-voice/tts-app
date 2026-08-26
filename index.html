@@ -1304,7 +1304,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.17">InkNote <small>v22.17</small></div>
+  <div class="brand" title="InkNote v22.18">InkNote <small>v22.18</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1893,7 +1893,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.17";
+var APP_VERSION = "22.18";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6928,7 +6928,17 @@ $("#editSplit").addEventListener("pointerdown", function(e){
    ★間は空行で区切る。別々のBOXだったことが分かるようにし、
      貼り付け先でも段落として扱われるようにする。 */
 function copySelectedText() {
-  var list = sel.filter(function(o){ return o && o.type === "text"; });
+  /* ★間に挟まった組版済みの数式も一緒に集める。
+     組版した式は文字BOXではなく独立した画像(o.latex付き)なので、
+     type==="text" だけを見ていると、文章と文章の間から式だけが
+     ごっそり抜け落ちる。書き出し機能と同じ約束で $$…$$ にして
+     並べれば、貼り直した時に組版へ戻せるし、AIにも式として届く。 */
+  var list = sel.filter(function(o){
+    if (!o) return false;
+    if (o.type === "text") return true;
+    if (o.type === "image" && o.latex) return true;      // 組版した数式
+    return false;
+  });
   if (!list.length) { statusEl.textContent = "文字が選ばれていません"; return; }
   list = list.slice().sort(function(a, b){
     var ba = objBBox(a), bb = objBBox(b);
@@ -6939,13 +6949,24 @@ function copySelectedText() {
   });
   var parts = [];
   for (var i = 0; i < list.length; i++) {
-    var t = editBoxPlainText(list[i]);
+    var o = list[i];
+    var t = (o.type === "image" && o.latex)
+      ? ("$$" + String(o.latex).trim() + "$$")
+      : editBoxPlainText(o);
     if (t && t.trim()) parts.push(t.replace(/\s+$/, ""));
   }
   if (!parts.length) { statusEl.textContent = "コピーする文字がありませんでした"; return; }
   var out = parts.join("\n\n");
   copyTextToClipboard(out, "コピーしました");
-  statusEl.textContent = parts.length + "個の文字をまとめてコピーしました(" + out.length + "文字)";
+  /* ★文字にできない物(写真・手書き)は入らない。
+     黙って落とすと「一部だけ貼られた」と誤解されるので、
+     何個ぶんが入らなかったかまで伝える。 */
+  var skipped = sel.length - list.length;
+  var nMath = list.filter(function(o){ return o.type === "image" && o.latex; }).length;
+  statusEl.textContent =
+    "まとめてコピーしました(" + (list.length - nMath) + "個の文字" +
+    (nMath ? " + 数式" + nMath + "個" : "") + "・計" + out.length + "文字)" +
+    (skipped > 0 ? " ※写真・手書き " + skipped + "個は文字にできないため含みません" : "");
 }
 function editBoxPlainText(o) {
   if (!o) return "";
@@ -15117,10 +15138,16 @@ function openMoreSheet() {
   /* ★選んだものの文字をまとめて外部へ。
      投げ縄で離れた場所をいくつも囲んだ時、1つずつ開いてコピーするのは
      現実的でないので、選択ぶんを上から順に繋げて渡す。 */
-  var textish = sel.filter(function(x){ return x.type === "text"; });
-  if (textish.length)
-    items.push({ label: "📋 選んだ文字をまとめてコピー(" + textish.length + "個)",
+  var nText = sel.filter(function(x){ return x.type === "text"; }).length;
+  var nMathSel = sel.filter(function(x){ return x.type === "image" && x.latex; }).length;
+  if (nText || nMathSel) {
+    /* 内訳を素直に読める言い方にする(「0個 + 数式1」のような表示を避ける) */
+    var part = [];
+    if (nText) part.push("文字" + nText);
+    if (nMathSel) part.push("数式" + nMathSel);
+    items.push({ label: "📋 まとめてコピー(" + part.join(" + ") + ")",
                  fn: copySelectedText });
+  }
   if (ctxVisible("ctxCopy") || ctxVisible("ctxSave"))
     items.push({ label: "🖼 画像として取り出す…", fn: openExportSelSheet });
 
