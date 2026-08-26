@@ -915,17 +915,12 @@
     color:var(--ui-text);line-height:1.15;
   }
   .pp-sub{font-size:11.5px;font-weight:600;color:var(--ui-dim);white-space:nowrap}
-  /* いま開いているノートの名前。押すと一覧の中のその位置へ飛ぶ */
+  /* いま開いているノートの名前。見えていれば十分なので、ただの表示 */
   .pp-now{
-    display:block;margin-top:3px;max-width:62vw;
-    border:none;background:none;padding:0;text-align:left;cursor:pointer;
+    margin-top:3px;max-width:62vw;
     font-size:11.5px;font-weight:700;color:var(--accent);
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   }
-  /* 一覧の中で「今開いているカード」を一瞬光らせる */
-  @keyframes ppFlash{0%,100%{box-shadow:inset 0 0 0 3px var(--accent)}
-                     50%{box-shadow:inset 0 0 0 3px transparent}}
-  .pp-card.flash{animation:ppFlash .5s ease 3}
   .pp-tools{display:flex;align-items:center;gap:8px;padding-bottom:10px;flex:0 0 auto}
   .pp-search{
     flex:1;min-width:0;display:flex;align-items:center;gap:6px;
@@ -1334,7 +1329,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.21">InkNote <small>v22.21</small></div>
+  <div class="brand" title="InkNote v22.22">InkNote <small>v22.22</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1607,7 +1602,7 @@ window.onerror = function(msg, src, line){
     <div class="pp-brand">
       <div class="pp-app">InkNote</div>
       <div class="pp-sub" id="ppCount">ノート</div>
-      <button class="pp-now" id="ppNow" title="開いているノートを一覧内で探す"></button>
+      <div class="pp-now" id="ppNow"></div>
     </div>
     <button id="ppSync" title="クラウドと同期">☁ 同期</button>
     <button id="ppClose" title="閉じる">✕</button>
@@ -1924,7 +1919,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.21";
+var APP_VERSION = "22.22";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -8572,7 +8567,7 @@ function renderPageList(skipContent) {
   /* ★いま開いているノートの名前を見出しに出す。
      一覧を全画面まで広げると後ろのノートが完全に隠れてしまい、
      どれを開いていたのか分からなくなるため。
-     押すとそのノートのカードまでスクロールして光らせる。 */
+     名前が読めれば足りるので、押せるようにはしない。 */
   var nowEl = $("#ppNow");
   if (nowEl) {
     var cur = findPage(currentId);
@@ -8855,23 +8850,6 @@ $("#homeToggle").classList.toggle("on", openListOnStart);
    題名でのカード絞り込みは打つそばから反映し、
    中身の検索だけ入力が止まってから走らせる。 */
 var ppSearchTimer = null;
-/* 見出しの「📖 開いている:」を押したら、一覧の中のそのカードまで送る */
-$("#ppNow").onclick = function(){
-  var card = document.querySelector('#ppList .pp-card[data-pid="' + currentId + '"]');
-  if (!card) {
-    // 検索やフォルダで絞り込まれていて一覧に出ていない場合は、絞り込みを解除する
-    listQuery = ""; listFolder = "";
-    var box = $("#ppSearch"); if (box) box.value = "";
-    renderPageList();
-    card = document.querySelector('#ppList .pp-card[data-pid="' + currentId + '"]');
-  }
-  if (!card) { statusEl.textContent = "一覧の中に見つかりませんでした"; return; }
-  try { card.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
-  card.classList.remove("flash");
-  void card.offsetWidth;                 // アニメーションを付け直す
-  card.classList.add("flash");
-  setTimeout(function(){ card.classList.remove("flash"); }, 1800);
-};
 $("#ppSearch").addEventListener("input", function(){
   listQuery = this.value || "";
   listFindToken++;                     // 走っている途中の結果は捨てる
