@@ -1198,7 +1198,13 @@
     flex:0 0 auto;overflow:hidden;max-height:0;
     transition:max-height .2s ease;
   }
-  #toolsWrap.open{max-height:220px}
+  /* ★中身は4行(11ボタン)で約224px必要なのに、上限が220px固定だった。
+     わずかに足りず、いちばん下の行(復元・消えたページを探す)が
+     切れて見えなくなっていた。
+     ボタンが増えても切れないよう余裕を持たせ、
+     それでも収まらない場合はこの中でスクロールできるようにする。 */
+  #toolsWrap.open{max-height:min(340px, 42vh);overflow-y:auto;
+    touch-action:pan-y;-webkit-overflow-scrolling:touch}
   /* 書き出しを開いた時はパネル自体を高くして、一覧の面積を保つ */
   #pagesPanel.tools-open{max-height:calc(100% - env(safe-area-inset-top) - 6px)}
   /* 折りたたみを開いた時は、狭い画面でも2段に収まるよう折り返す */
@@ -1304,7 +1310,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.18">InkNote <small>v22.18</small></div>
+  <div class="brand" title="InkNote v22.19">InkNote <small>v22.19</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1893,7 +1899,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.18";
+var APP_VERSION = "22.19";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -8238,16 +8244,41 @@ function renderFolderTabs() {
     b.className = "pf-tab" + (listFolder === val ? " sel" : "");
     b.textContent = label;
     b.addEventListener("click", function(){
+      if (b.__longFired) { b.__longFired = false; return; }         // 長押しで開いた直後は無視
       if (val && listFolder === val) { folderMenu(val); return; }  // 選択中を再タップ=管理
       listFolder = val;
       renderPageList();
     });
+    /* ★フォルダの名前変更・削除は「選択中のタブをもう一度タップ」でしか
+       開けず、気づきようがなかった(削除できないという指摘)。
+       どのタブでも長押しで開けるようにする。 */
+    if (val) {
+      b.title = "長押しで名前変更・削除";
+      var lt = null;
+      var startLong = function(){
+        clearTimeout(lt);
+        lt = setTimeout(function(){
+          b.__longFired = true;
+          if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
+          folderMenu(val);
+        }, 500);
+      };
+      var cancelLong = function(){ clearTimeout(lt); };
+      b.addEventListener("pointerdown", startLong);
+      b.addEventListener("pointerup", cancelLong);
+      b.addEventListener("pointerleave", cancelLong);
+      b.addEventListener("pointercancel", cancelLong);
+      b.addEventListener("contextmenu", function(ev){ ev.preventDefault(); });
+    }
     wrap.appendChild(b);
   };
   mk("すべて", "");
   for (var i = 0; i < fl.length; i++) mk("📁 " + fl[i], fl[i]);
-  // フォルダが多い時は「📂」から一覧シートで選べる(横スクロール地獄の回避)
-  if (fl.length >= 4) {
+  /* 「📂」から一覧と整理ができる。
+     ★以前は4つ以上ある時だけ出していたが、この入口が
+       名前変更・削除への唯一の分かりやすい導線でもあるため、
+       フォルダが1つでもあれば出す。 */
+  if (fl.length >= 1) {
     var all = document.createElement("button");
     all.className = "pf-tab";
     all.textContent = "📂";
@@ -8260,6 +8291,13 @@ function renderFolderTabs() {
           listFolder = f; renderPageList();
         }});
       });
+      items.push({ label: "⚙ フォルダの名前変更・削除…", fn: function(){
+        var sub = fl.map(function(f){
+          return { label: "📁 " + f, fn: function(){ folderMenu(f); } };
+        });
+        sub.push({ label: "キャンセル", cancel: true });
+        showSheet("どのフォルダを整理しますか", sub);
+      }});
       items.push({ label: "キャンセル", cancel: true });
       showSheet("フォルダを選択", items);
     });
@@ -8634,7 +8672,7 @@ function renderPageList(skipContent) {
     empty.style.cssText = "grid-column:1/-1;color:var(--ui-dim);font-size:12.5px;text-align:center;padding:34px 8px;line-height:1.7";
     empty.innerHTML = q
       ? "🔍 一致するノートがありません"
-      : (listFolder ? "📂 このフォルダは空です<br><span style='font-size:11px'>ノートの ⋮ から移動できます</span>"
+      : (listFolder ? "📂 このフォルダは空です<br><span style='font-size:11px'>ノートの ⋮ から移動できます<br>フォルダ名の変更・削除は、上のタブを長押し(またはもう一度タップ)</span>"
                     : "📝 まだノートがありません<br><span style='font-size:11px'>下の「＋ 新しいページ」から始めましょう</span>");
     list.appendChild(empty);
   }
@@ -11305,7 +11343,15 @@ function collectPageText(srcList) {
       if (!isText && !isMath && !isPic && !o.anch) continue;
       var b = objBBox(o);
       var body = "";
-      if (isText) body = String(o.text).replace(/\s+$/, "");
+      if (isText) {
+        body = String(o.text).replace(/\s+$/, "");
+        /* ★等幅(図・コード・文字表)は ``` で囲む。
+           Markdownは連続した空白を1つに詰めてしまうため、
+           そのまま書き出すと桁揃えが崩れ、せっかくの図が
+           ただの文字の羅列になっていた(等倍が維持されない件)。
+           ``` の中は入力どおりに保たれる。 */
+        if (o.mono && body) body = "```\n" + body + "\n```";
+      }
       // ★数式はLaTeXのまま書き出す($$で囲む)。
       //   こうしておけば貼り直した時に組版に戻せるし、NotebookLM等も数式として読める。
       else if (isMath) body = "$$" + String(o.latex).trim() + "$$";
@@ -12098,7 +12144,20 @@ $("#exClose").onclick = closeExp;
 $("#expPng").onclick = function(){ closePages(); exportFmt = "png"; openExp(); };
 $("#expMd").onclick = function(){
   closeExp();
-  setTimeout(exportMarkdown, 80);
+  /* ★ファイルに落とす以外に、そのまま貼れる形も選べるようにする。
+     AIに渡すだけならファイル経由は遠回りなので。 */
+  setTimeout(function(){
+    var md = buildMarkdown();
+    if (!md) { statusEl.textContent = "書き出せるテキストがありません(手書きはPDF書出を使ってください)"; return; }
+    showSheet("テキスト書き出し(" + md.length + "文字)", [
+      { label: "📋 クリップボードにコピー", fn: function(){
+          copyTextToClipboard(md, "コピーしました");
+          statusEl.textContent = "テキストをコピーしました(" + md.length + "文字)";
+        } },
+      { label: "💾 ファイルに保存(.md)", fn: exportMarkdown },
+      { label: "キャンセル", cancel: true }
+    ]);
+  }, 80);
 };
 $("#expStudy").onclick = function(){
   closeExp();
