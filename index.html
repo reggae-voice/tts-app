@@ -881,6 +881,11 @@
      最初からほぼ全画面まで使う。一覧が広ければ畳んだ時の圧迫も減る。 */
   #pagesPanel{max-height:calc(100% - env(safe-area-inset-top) - 6px);
     transition:transform .22s ease, max-height .2s ease}
+  /* ★最後の保険。画面がよほど低い時(横持ちなど)は、
+     一覧を下限まで縮めても収まらないことがある。
+     その場合はパネルごとスクロールできるようにして、
+     どのボタンにも必ず指が届くようにする。 */
+  #pagesPanel{overflow-y:auto;overscroll-behavior:contain}
   /* つまみを上へドラッグ/タップで、ほぼ全画面まで広がる */
   #pagesPanel.tall{
     max-height:calc(100% - env(safe-area-inset-top) - 6px);
@@ -910,6 +915,17 @@
     color:var(--ui-text);line-height:1.15;
   }
   .pp-sub{font-size:11.5px;font-weight:600;color:var(--ui-dim);white-space:nowrap}
+  /* いま開いているノートの名前。押すと一覧の中のその位置へ飛ぶ */
+  .pp-now{
+    display:block;margin-top:3px;max-width:62vw;
+    border:none;background:none;padding:0;text-align:left;cursor:pointer;
+    font-size:11.5px;font-weight:700;color:var(--accent);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  /* 一覧の中で「今開いているカード」を一瞬光らせる */
+  @keyframes ppFlash{0%,100%{box-shadow:inset 0 0 0 3px var(--accent)}
+                     50%{box-shadow:inset 0 0 0 3px transparent}}
+  .pp-card.flash{animation:ppFlash .5s ease 3}
   .pp-tools{display:flex;align-items:center;gap:8px;padding-bottom:10px;flex:0 0 auto}
   .pp-search{
     flex:1;min-width:0;display:flex;align-items:center;gap:6px;
@@ -928,8 +944,16 @@
      ★1枚を大きくした分、min-heightも上げてカード2行分は必ず見えるように
        する。入りきらない分はスクロールで見る方が、無理に詰め込んで
        1枚ずつが小さくなるより探しやすい。 */
+  /* ★一覧の高さの下限。
+     v21.17で300pxにしたが、これが「最下部が隠れて届かない」の原因だった。
+     パネルは縦に積んだ入れ物で、書き出しを開くと中身の合計が
+     画面の高さを超える。その時に一覧が縮んで場所を譲れないと、
+     あふれた分がそのまま下の子(書き出しの最終行・使用容量)を
+     画面の外へ押し出してしまい、スクロールもできない。
+     一覧は自前でスクロールできるので、譲れる方が都合がよい。
+     カード約1行分だけ残して、あとは譲る。 */
   #ppList{overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;
-    flex:1 1 auto;min-height:300px}
+    flex:1 1 auto;min-height:120px}
   .pp-row{display:flex;align-items:center;gap:6px;padding:11px 10px;border-radius:12px;color:var(--ui-text);font-size:14px}
   .pp-row.current{background:var(--accent-soft)}
   .pp-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
@@ -1310,7 +1334,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.19">InkNote <small>v22.19</small></div>
+  <div class="brand" title="InkNote v22.21">InkNote <small>v22.21</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1583,6 +1607,7 @@ window.onerror = function(msg, src, line){
     <div class="pp-brand">
       <div class="pp-app">InkNote</div>
       <div class="pp-sub" id="ppCount">ノート</div>
+      <button class="pp-now" id="ppNow" title="開いているノートを一覧内で探す"></button>
     </div>
     <button id="ppSync" title="クラウドと同期">☁ 同期</button>
     <button id="ppClose" title="閉じる">✕</button>
@@ -1899,7 +1924,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.19";
+var APP_VERSION = "22.21";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5753,10 +5778,21 @@ $("#barToggle").onclick = function(){
       var total2 = info.extent * view.s;
       return Math.max(1, total2 - (vert ? innerHeight : innerWidth) + 48);
     }
-    // world座標での可動域: 先頭(24) 〜 末尾
-    var total = sheetExtent() * view.s;                 // 画面px換算の総延長
-    var span = total - (vert ? innerHeight : innerWidth) + 48;
+    /* A4モード: 実際に動ける範囲(clampViewが許す範囲)と一致させる。
+       ★以前は sheetExtent()(=用紙0から下へ何ページ分か)だけで
+         決めていたため、原点より上(y<0)にある内容を勘定に入れて
+         いなかった。無限ノートで上方向に書いたページをA4へ切り替えると、
+         上端がy=0付近で頭打ちになり、先頭まで戻れなくなっていた。 */
+    var vb = viewBounds();
+    var lo = vert ? vb.y1 : vb.x1;
+    var hi = vert ? vb.y2 : vb.x2;
+    var span = (hi - lo) * view.s - (vert ? innerHeight : innerWidth) + 48;
     return Math.max(1, span);
+  }
+  /* A4モードでの「先頭」の位置(world座標)。上に内容があればそこが先頭 */
+  function sheetOrigin(vert) {
+    var vb = viewBounds();
+    return vert ? vb.y1 : vb.x1;
   }
   function trackLen() {
     // つまみが動ける距離(縦は高さ、横は幅ベース)
@@ -5804,8 +5840,11 @@ $("#barToggle").onclick = function(){
        内容が原点より上(y<0)にあるほどズレが大きくなり、
        実際は途中を見ているのにつまみは一番上に張り付き、
        そこから上へ動かせなくなる(報告の症状)。同じ式に揃える。 */
-    var org = 0;
-    if (canvasMode === "inf") org = infExtentAndOrigin(vert).origin * view.s;
+    /* つまみの位置も、動かす側と同じ「先頭」を基準にする。
+       片方だけ基準が違うと往復で食い違い、途中で止まって見える。 */
+    var org = (canvasMode === "inf")
+      ? infExtentAndOrigin(vert).origin * view.s
+      : sheetOrigin(vert) * view.s;
     var pos = -org + 24 - (vert ? view.y : view.x);     // 0=先頭
     var ratio = Math.max(0, Math.min(1, pos / scrollRange()));
     if (vert) {
@@ -5842,8 +5881,8 @@ $("#barToggle").onclick = function(){
       var info = infExtentAndOrigin(vert);
       if (vert) view.y = -info.origin * view.s + 24 - pos;
       else view.x = -info.origin * view.s + 24 - pos;
-    } else if (vert) view.y = 24 - pos;
-    else view.x = 24 - pos;
+    } else if (vert) view.y = -sheetOrigin(true) * view.s + 24 - pos;
+    else view.x = -sheetOrigin(false) * view.s + 24 - pos;
     if (canvasMode !== "inf") clampView();              // 無限モードは範囲固定しない(自由に動ける)
     applyView();
     updateSelUI();
@@ -8223,7 +8262,18 @@ function sortedPages() {
   var arr = pages.slice();
   if (listSort === "name") arr.sort(function(a,b){ return (a.title||"").localeCompare(b.title||"", "ja"); });
   else if (listSort === "created") arr.sort(function(a,b){ return a.id - b.id; });
-  else arr.sort(function(a,b){ return (b.ts||0) - (a.ts||0); });   // 変更順(新しい順)
+  else {
+    /* 変更順(新しい順)。
+       ★いま開いているノートは必ず先頭に置く。
+         保存のタイミング次第では、開いて見ているだけの時に
+         更新時刻が上がらず、他のノートに先を越されて
+         一覧のどこにいるか分からなくなるため。 */
+    arr.sort(function(a,b){
+      if (a.id === currentId) return -1;
+      if (b.id === currentId) return 1;
+      return (b.ts||0) - (a.ts||0);
+    });
+  }
   return arr;
 }
 function folderList() {
@@ -8519,6 +8569,20 @@ function renderPageList(skipContent) {
       : (listFolder ? "📁 " + listFolder + " · " + arr.length + " 件"
                     : pages.length + " 件のノート");
   }
+  /* ★いま開いているノートの名前を見出しに出す。
+     一覧を全画面まで広げると後ろのノートが完全に隠れてしまい、
+     どれを開いていたのか分からなくなるため。
+     押すとそのノートのカードまでスクロールして光らせる。 */
+  var nowEl = $("#ppNow");
+  if (nowEl) {
+    var cur = findPage(currentId);
+    if (cur) {
+      nowEl.textContent = "📖 開いている: " + (cur.title || "無題");
+      nowEl.style.display = "";
+    } else {
+      nowEl.style.display = "none";
+    }
+  }
 
   for (var i = 0; i < arr.length; i++) {
     (function(pg){
@@ -8791,6 +8855,23 @@ $("#homeToggle").classList.toggle("on", openListOnStart);
    題名でのカード絞り込みは打つそばから反映し、
    中身の検索だけ入力が止まってから走らせる。 */
 var ppSearchTimer = null;
+/* 見出しの「📖 開いている:」を押したら、一覧の中のそのカードまで送る */
+$("#ppNow").onclick = function(){
+  var card = document.querySelector('#ppList .pp-card[data-pid="' + currentId + '"]');
+  if (!card) {
+    // 検索やフォルダで絞り込まれていて一覧に出ていない場合は、絞り込みを解除する
+    listQuery = ""; listFolder = "";
+    var box = $("#ppSearch"); if (box) box.value = "";
+    renderPageList();
+    card = document.querySelector('#ppList .pp-card[data-pid="' + currentId + '"]');
+  }
+  if (!card) { statusEl.textContent = "一覧の中に見つかりませんでした"; return; }
+  try { card.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+  card.classList.remove("flash");
+  void card.offsetWidth;                 // アニメーションを付け直す
+  card.classList.add("flash");
+  setTimeout(function(){ card.classList.remove("flash"); }, 1800);
+};
 $("#ppSearch").addEventListener("input", function(){
   listQuery = this.value || "";
   listFindToken++;                     // 走っている途中の結果は捨てる
@@ -11316,6 +11397,32 @@ function focusGroup(no) {
 /* ===== NotebookLM等との連携: テキスト書き出し・学習用コピー =====
    ノート内のテキストオブジェクトを読み順(上→下、同じ行は左→右)に
    集めてMarkdownにする。手書きは含まれない(そちらはPDF/PNGで)。 */
+/* =========================================================
+   Markdownとして壊れない形に整える小道具
+========================================================= */
+/* 中身が ``` を含んでいても閉じない、十分に長い囲みを返す */
+function fenceFor(body) {
+  var runs = String(body || "").match(/`+/g) || [];
+  var max = 0;
+  for (var i = 0; i < runs.length; i++) max = Math.max(max, runs[i].length);
+  var n = Math.max(3, max + 1);
+  var f = "";
+  while (f.length < n) f += "`";
+  return f;
+}
+/* 数式の中の $$ を無害化する($ 単体は数式内で意味を持つので触らない) */
+function safeLatex(tex) {
+  return String(tex || "").trim().replace(/\$\$+/g, "\\$\\$");
+}
+/* 見出し・目印など「1行の中に埋め込む文字」を無害化する。
+   改行が混ざると行の構造が壊れるので1行に畳む。 */
+function mdInline(t) {
+  return String(t == null ? "" : t)
+    .replace(/[\r\n]+/g, " ")
+    .replace(/[\[\]]/g, "")        // リンク記法と誤読される角括弧を落とす
+    .replace(/\s+/g, " ")
+    .trim();
+}
 function collectPageText(srcList) {
   /* ★srcListを渡すと、今開いていないページの内容も書き出せる
      (複数ページのまとめ書き出し用)。省略時は今開いているページ。 */
@@ -11348,19 +11455,27 @@ function collectPageText(srcList) {
         /* ★等幅(図・コード・文字表)は ``` で囲む。
            Markdownは連続した空白を1つに詰めてしまうため、
            そのまま書き出すと桁揃えが崩れ、せっかくの図が
-           ただの文字の羅列になっていた(等倍が維持されない件)。
-           ``` の中は入力どおりに保たれる。 */
-        if (o.mono && body) body = "```\n" + body + "\n```";
+           ただの文字の羅列になっていた。``` の中は入力どおりに保たれる。
+           ★中身自体が ``` を含んでいると囲みが途中で閉じてしまい、
+             そこから先のMarkdownが総崩れになる。
+             中で使われているより長い ``` を使って囲む。 */
+        if (o.mono && body) body = fenceFor(body) + "\n" + body + "\n" + fenceFor(body);
       }
       // ★数式はLaTeXのまま書き出す($$で囲む)。
       //   こうしておけば貼り直した時に組版に戻せるし、NotebookLM等も数式として読める。
-      else if (isMath) body = "$$" + String(o.latex).trim() + "$$";
+      /* ★式の中に $$ が混ざっていると、そこで数式が閉じたと解釈され、
+           以降の本文まで数式扱いになって崩れる。安全な形に直す。 */
+      else if (isMath) body = "$$\n" + safeLatex(o.latex) + "\n$$";
       /* ★図に付けた検索用のことばも書き出す。
          AIに渡した時、図の中身の手がかりになる。 */
-      else if (isPic) body = "[画像 #" + (o.id || 0) +
-                             (o.note ? ": " + String(o.note) : "") + "]";
+      /* ★[...] の直後に ( が来るとMarkdownがリンク記法とみなし、
+           画像の目印と次の文がまとめて壊れたリンクになる。
+           記法として解釈されない書き方にする。 */
+      else if (isPic) body = "〔画像 #" + (o.id || 0) +
+                             (o.note ? ": " + mdInline(o.note) : "") + "〕";
       // 目次の印が付いたものは見出し(##)として書き出す → NotebookLMで構造が効く
-      var t2 = o.anch ? ("## " + String(o.anch) + (body ? "\n\n" + body : "")) : body;
+      // 見出しは1行でなければならない(改行が入ると以降が本文に化ける)
+      var t2 = o.anch ? ("## " + mdInline(o.anch) + (body ? "\n\n" + body : "")) : body;
       texts.push({ y: b.y, x: b.x, t: t2 });
     }
     texts.sort(function(a, b){
@@ -11383,7 +11498,7 @@ function collectPageText(srcList) {
 }
 function buildMarkdown() {
   var pg = findPage(currentId);
-  var title = (pg && pg.title) ? pg.title : "ノート";
+  var title = mdInline((pg && pg.title) ? pg.title : "ノート") || "ノート";
   var body = collectPageText();
   if (!body) return null;
   var d = new Date();
@@ -11515,7 +11630,7 @@ function buildMarkdownForPages(ids) {
         }
         if (!body && !ink && !pics) return;
         var pg = findPage(id);
-        var head = "# " + ((pg && pg.title) ? pg.title : "ノート");
+        var head = "# " + (mdInline((pg && pg.title) ? pg.title : "ノート") || "ノート");
         /* ★このページに何が「文字として渡せていないか」を明示する。
            これが無いと、AIは渡された文字だけでページの全体像を判断し、
            図やスクショが担っている情報ごと切り落とした整理案を出す。 */
