@@ -1296,7 +1296,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.10">InkNote <small>v22.10</small></div>
+  <div class="brand" title="InkNote v22.12">InkNote <small>v22.12</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1585,7 +1585,7 @@ window.onerror = function(msg, src, line){
   <div id="ppList" class="scrollable"></div>
   <div class="pp-foot">
     <button id="ppAdd">＋ 新しいページ</button>
-    <button id="clearBtn" class="pp-clear">このページを全消去</button>
+    <button id="clearBtn" class="pp-clear">🧽 開いているノートを空に</button>
   </div>
   <button id="toolsToggle" aria-expanded="false">
     <span>🛠 書き出し・バックアップ</span><span id="toolsArrow">⌃</span>
@@ -1816,7 +1816,7 @@ window.onerror = function(msg, src, line){
       <span style="color:var(--ui-dim);font-size:11px">マーカー部分を紙色で隠す(暗記シート)</span>
     </div>
     <div class="st-row" style="border-top:1px solid var(--ui-line);margin-top:8px;padding-top:16px">
-      <button class="pp-tool" id="wipePage" style="color:#ffb84d">🧹 このページを白紙にする</button>
+      <button class="pp-tool" id="wipePage" style="color:#ffb84d">🧹 開いているノートを白紙に(戻せません)</button>
     </div>
     <div class="st-row">
       <button class="pp-tool" id="wipeAll" style="color:#ff9d97">💥 すべてのデータを初期化</button>
@@ -1884,7 +1884,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.10";
+var APP_VERSION = "22.12";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2114,10 +2114,25 @@ function viewBounds() {
   var cb = contentBBox();
   if (cb) {
     var M = 40;
-    x1 = Math.min(x1, cb.x - M);
-    y1 = Math.min(y1, cb.y - M);
-    x2 = Math.max(x2, cb.x + cb.w + M);
-    y2 = Math.max(y2, cb.y + cb.h + M);
+    /* ★用紙が伸びる向き(A4縦なら縦)は、内容に合わせていくらでも広げる。
+       伸びない向き(A4縦なら横)は、用紙の幅どおりに止める。
+       以前は両方向とも内容+40pxまで広げていたため、内容が紙の端まで
+       あるだけで常に40px分の遊びができ、「A4縦なのに横へ動かせる」
+       状態になっていた。
+       本当に紙の外へ出ている物がある時だけは広げる。そうしないと
+       その内容に辿り着けなくなる(「そのままにする」を選んだ時に
+       スクロールで見に行けるという約束を守るため)。 */
+    if (vert) {
+      if (cb.x < 0) x1 = cb.x - M;
+      if (cb.x + cb.w > A4W) x2 = cb.x + cb.w + M;
+      y1 = Math.min(y1, cb.y - M);
+      y2 = Math.max(y2, cb.y + cb.h + M);
+    } else {
+      if (cb.y < 0) y1 = cb.y - M;
+      if (cb.y + cb.h > A4W) y2 = cb.y + cb.h + M;
+      x1 = Math.min(x1, cb.x - M);
+      x2 = Math.max(x2, cb.x + cb.w + M);
+    }
   }
   return { x1: x1, y1: y1, x2: x2, y2: y2 };
 }
@@ -3139,12 +3154,21 @@ $("#redoBtn").onclick = function(){
   updateUndoUI();
 };
 $("#clearBtn").onclick = function(){
+  /* ★一覧の中にあるので「一覧のノートが全部消えるのか?」と読めてしまう。
+     消えるのは「いま開いている1つのノートの中身」だけ。
+     名前を出して、ノート自体は残ること・戻せることまで書く。 */
+  if (!objects.length) { statusEl.textContent = "このノートには内容がありません"; return; }
+  var pg = findPage(currentId);
+  var nm = (pg && pg.title) ? pg.title : "このノート";
+  if (!confirm("「" + nm + "」の中身をすべて消します。\n" +
+               "・ノート自体は一覧に残ります\n" +
+               "・他のノートには影響しません\n" +
+               "・↩(取り消し)で元に戻せます\n\nよろしいですか?")) return;
   closePages();
-  if (!objects.length) return;
-  if (!confirm("このページのすべてのオブジェクトを削除します。よろしいですか?")) return;
   pushUndo();
   rebuildScene("[]");
   scheduleSave();
+  statusEl.textContent = "「" + nm + "」を空にしました(↩で戻せます)";
 };
 
 /* ---------- オブジェクトの移動/リサイズ(共通ロジック) ---------- */
@@ -3744,10 +3768,20 @@ function onTextInput() {
    貼り付け整形: AIの回答などに含まれるLaTeX/Markdown記法を
    そのまま読める文字に直す(例: \text{NaCl} → NaCl, NiCl_2 → NiCl₂)
 ========================================================= */
+/* ★Unicodeにある上付き・下付き文字を、使えるだけ全部登録する。
+   以前は数字と数文字しか無く、air / rms / max のような
+   よくある添字が1文字も変換できず、ただの "_air" のまま残っていた。
+   (英小文字のうち下付きが存在しないのは b c d f g q w y z、
+    上付きが存在しないのは q。大文字はどちらも存在しない) */
 var SUP_MAP = { "0":"⁰","1":"¹","2":"²","3":"³","4":"⁴","5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹",
-                "+":"⁺","-":"⁻","n":"ⁿ","i":"ⁱ" };
+                "+":"⁺","-":"⁻","=":"⁼","(":"⁽",")":"⁾",
+                "a":"ᵃ","b":"ᵇ","c":"ᶜ","d":"ᵈ","e":"ᵉ","f":"ᶠ","g":"ᵍ","h":"ʰ","i":"ⁱ",
+                "j":"ʲ","k":"ᵏ","l":"ˡ","m":"ᵐ","n":"ⁿ","o":"ᵒ","p":"ᵖ","r":"ʳ","s":"ˢ",
+                "t":"ᵗ","u":"ᵘ","v":"ᵛ","w":"ʷ","x":"ˣ","y":"ʸ","z":"ᶻ" };
 var SUB_MAP = { "0":"₀","1":"₁","2":"₂","3":"₃","4":"₄","5":"₅","6":"₆","7":"₇","8":"₈","9":"₉",
-                "+":"₊","-":"₋","x":"ₓ","a":"ₐ","e":"ₑ" };
+                "+":"₊","-":"₋","=":"₌","(":"₍",")":"₎",
+                "a":"ₐ","e":"ₑ","h":"ₕ","i":"ᵢ","j":"ⱼ","k":"ₖ","l":"ₗ","m":"ₘ","n":"ₙ",
+                "o":"ₒ","p":"ₚ","r":"ᵣ","s":"ₛ","t":"ₜ","u":"ᵤ","v":"ᵥ","x":"ₓ" };
 /* コマンド名 → 記号。長いものから順に置換する(\\le より \\leq を先に) */
 var TEX_SYM = [
   ["approx","≈"], ["times","×"], ["cdot","·"], ["pm","±"], ["mp","∓"],
@@ -3987,9 +4021,24 @@ function cleanPastedText(t) {
   // 上付き・下付き: ^{2} _{2} は常に変換。
   // 波括弧のない ^2 / _2 は、元が数式(\ や $ を含む)だった時だけ変換する。
   // → "report_2026.pdf" のような普通の下線付き文字列を壊さないため。
-  s = s.replace(/\^\{([^{}]+)\}/g, function(m, a){ return mapScript(a, SUP_MAP) || m; });
-  s = s.replace(/_\{([^{}]+)\}/g, function(m, a){ return mapScript(a, SUB_MAP) || m; });
+  /* ★変換できなかった添字は、そのあとの処理に触らせない。
+     以前は失敗した {..} をそのまま残していたため、波括弧だけが
+     後で外れ、続く1文字ルールが先頭だけを拾って
+     「B_{1+rms} → B₁+rms」のように頭の1文字だけ小さくなっていた。
+     失敗したものは丸ごと退避し、最後に素の形へ戻す。 */
+  var subKeep = [];
+  function keepScript(kind, body) {
+    subKeep.push(kind + body);
+    return "\uE007" + (subKeep.length - 1) + "\uE008";
+  }
+  s = s.replace(/\^\{([^{}]+)\}/g, function(m, a){ return mapScript(a, SUP_MAP) || keepScript("^", a); });
+  s = s.replace(/_\{([^{}]+)\}/g, function(m, a){ return mapScript(a, SUB_MAP) || keepScript("_", a); });
   if (hasTex) {
+    /* 数字の添字は、後ろに文字が続いていても変換する(H_2O → H₂O)。
+       数式由来(hasTex)の時だけなので "report_2026" のような
+       ふつうの文字列は壊さない。 */
+    s = s.replace(/\^(\d+)/g, function(m, b){ return mapScript(b, SUP_MAP) || m; });
+    s = s.replace(/_(\d+)/g, function(m, b){ return mapScript(b, SUB_MAP) || m; });
     s = s.replace(/\^([\w+\-])(?![\w])/g, function(m, b){ return mapScript(b, SUP_MAP) || m; });
     s = s.replace(/_([\w+\-])(?![\w])/g, function(m, b){ return mapScript(b, SUB_MAP) || m; });
   }
@@ -4006,6 +4055,9 @@ function cleanPastedText(t) {
   s = s.replace(/`([^`]+)`/g, "$1");
   s = s.replace(/^#{1,6}\s+/gm, "");
   s = s.replace(/^\s*[-*+]\s+/gm, "・");
+
+  // 退避しておいた「小さくできなかった添字」を素の形で戻す
+  s = s.replace(/\uE007(\d+)\uE008/g, function(m, i){ return subKeep[+i] || ""; });
 
   return s.replace(/[ \t]+$/gm, "");
 }
@@ -9268,7 +9320,16 @@ $("#msToggle").onclick = function(){
     : "暗記シートOFF";
 };
 $("#wipePage").onclick = function(){
-  if (!confirm("⚠ このページを完全に白紙にします。\nすべてのオブジェクト・位置の記憶が消え、元に戻せません。\nよろしいですか?")) return;
+  /* ★上の「空にする」との違いをはっきり書く。
+     こちらは単元・表示位置の記憶まで消し、取り消しもできない。 */
+  var pgW = findPage(currentId);
+  var nmW = (pgW && pgW.title) ? pgW.title : "このノート";
+  if (!confirm("⚠「" + nmW + "」を白紙に戻します。\n" +
+               "・中身に加えて、単元の印・表示位置の記憶も消えます\n" +
+               "・↩(取り消し)では戻せません\n" +
+               "・他のノートには影響しません\n\n" +
+               "中身だけ消して戻せるようにしたい場合は、一覧の\n" +
+               "「🧽 開いているノートを空に」を使ってください。\n\nよろしいですか?")) return;
   rebuildScene("[]");
   bookmarks = [];
   view = { x: 0, y: 0, s: sheetFitScale() };
@@ -12855,6 +12916,18 @@ function looksPreformatted(text) {
   return (boxLines >= 3 && artChars >= 8 && indented >= 3);
 }
 /* 文章の中から「図の部分」だけを行単位で切り出す */
+/* 数式が含まれていそうな行か。
+   図・コードの判定より先に使い、数式を図として扱わないようにする。
+   ・$…$ / $$…$$ で囲まれている
+   ・\( \[ の囲みがある
+   ・\frac \gamma \text のようなLaTeXコマンドがある */
+function looksLikeMathLine(L) {
+  var s = String(L || "");
+  if (/\$\$?[^$]*\$\$?/.test(s)) return true;
+  if (/\\[(\[]/.test(s)) return true;
+  if (/\\[a-zA-Z]{2,}/.test(s)) return true;
+  return false;
+}
 function splitArtBlocks(text) {
   var lines = String(text || "").split("\n");
   function isArtLine(L) {
@@ -12862,6 +12935,13 @@ function splitArtBlocks(text) {
     if (/[。、]/.test(L)) return false;                 // 文らしい行は図ではない
     // ★表の行(| A | B | や |---|)は図ではない。表として扱う
     if (isTableLikeLine(L)) return false;
+    /* ★数式の行は図ではない。
+       図の判定は「/ \ | + ^ などの記号が2個以上」で行っているが、
+       LaTeXはこれらの記号だらけ($$\frac{\gamma}{2\pi}$$ など)なので、
+       ほぼ全部の数式行が「図」と誤判定され、等幅のまま生のLaTeXが
+       置かれていた(組版されない部分の正体)。
+       数式の目印($ $$ \( \[ や \コマンド)がある行は先に除外する。 */
+    if (looksLikeMathLine(L)) return false;
     var m = L.match(/[|\/\\+^▲▼←→↑↓─│┌┐└┘├┤┬┴┼━┃▶◀￣＿]/g);
     if (m && m.length >= 2) return true;
     // ★矢印や罫線が「1個だけ」の行も図とみなす(▲だけの行、￣が並ぶだけの行など)。
@@ -14983,14 +15063,55 @@ function renderGroupPanel() {
       up.className = "grp-mv"; up.textContent = "↑"; up.disabled = (idx === 0);
       var dn = document.createElement("button");
       dn.className = "grp-mv"; dn.textContent = "↓"; dn.disabled = (idx === gl.length - 1);
+      /* ★題名を付け直したら、そのまま単元として登録できるようにする。
+         これまでは「まとまり」と「単元」が別作業で、
+         整理しながら名前を決めたのに、単元にするにはもう一度
+         対象を選び直して☆を押す必要があった。 */
+      var ed = document.createElement("button");
+      ed.className = "grp-mv"; ed.textContent = "✎"; ed.title = "題名を付けて単元にする";
+      ed.addEventListener("click", function(e){
+        e.stopPropagation();
+        nameGroupAsUnit(g);
+      });
       up.addEventListener("click", function(e){ e.stopPropagation(); moveGroup(g.no, -1); });
       dn.addEventListener("click", function(e){ e.stopPropagation(); moveGroup(g.no, 1); });
       row.addEventListener("click", function(){ focusGroup(g.no); });
       row.appendChild(no); row.appendChild(lb); row.appendChild(ct);
-      row.appendChild(up); row.appendChild(dn);
+      row.appendChild(ed); row.appendChild(up); row.appendChild(dn);
       host.appendChild(row);
     })(gl[i], i);
   }
+}
+/* まとまりに題名を付け、その場で単元として登録する。
+   印は「そのまとまりの中で一番上にある文字」に付ける。
+   ★見出しに当たる物に付けたいので、いちばん上を選ぶ。
+     すでに単元が付いている物があれば、それを付け替える。 */
+function nameGroupAsUnit(g) {
+  var target = null, best = null;
+  for (var i = 0; i < g.items.length; i++) {
+    var o = g.items[i];
+    if (o.anch && o.anchLv === 2) { target = o; break; }   // 既にある単元を優先
+    if (o.type !== "text") continue;
+    var b = objBBox(o);
+    if (best === null || b.y < best) { best = b.y; target = o; }
+  }
+  if (!target) { statusEl.textContent = "このまとまりには文字がありません"; return; }
+  var def = String(target.anch || g.label || "").split("\n")[0].slice(0, 40) || "単元";
+  askText("題名(単元として登録します)", def, function(name){
+    if (name == null) return;
+    name = String(name).trim();
+    if (!name) return;
+    pushUndo();
+    target.anch = name;
+    target.anchLv = 2;
+    if (target.anchTheme === undefined) target.anchTheme = null;
+    inkDirty = true; scheduleSave();
+    renderGroupPanel(); renderTocPanel(); updateColBar();
+    if (window.renderPosList) renderPosList();
+    setTimeout(function(){
+      statusEl.textContent = "単元「" + name + "」にしました(テーマは☆の整理で割り当て)";
+    }, 40);
+  });
 }
 function openGroupPanel() {
   // まだ一度も整理していなければ、最初に自動でまとめる
