@@ -545,6 +545,10 @@
     -webkit-user-select:none;user-select:none;
   }
   #editHandle.show{display:block}
+  /* ★逃げ場が無くて文字の上に置かざるを得ない時は、薄くして
+     下の文字を読めるようにする。触れば元の濃さに戻る。 */
+  #editHandle.dim{opacity:.35}
+  #editHandle.dim:active{opacity:1}
   /* 編集中の確定ボタン: どんな巨大テキストでも必ず抜けられる脱出口 */
   #editDone{
     position:fixed;z-index:41;display:none;
@@ -1329,7 +1333,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.23">InkNote <small>v22.23</small></div>
+  <div class="brand" title="InkNote v22.27">InkNote <small>v22.27</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1919,7 +1923,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.23";
+var APP_VERSION = "22.27";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2114,7 +2118,12 @@ function sheetExtent() {
   var SH = vert ? A4H : A4H;   // どちらも伸びる方向の1ページ長はA4Hの長辺
   var cb = contentBBox();
   var used = cb ? (vert ? (cb.y + cb.h) : (cb.x + cb.w)) : 0;
-  var n = Math.max(1, Math.ceil(Math.max(used, 0) / SH) + 1);
+  /* ★下限を2ページにする。
+     内容が空(または1ページに収まる)時、1ページだけだと用紙が
+     画面に収まってしまい、スクロールする先が存在しなくなる。
+     白紙のノートでも下へ動かして書き足しに行けるよう、
+     常に1ページ分の余白を先に用意しておく。 */
+  var n = Math.max(2, Math.ceil(Math.max(used, 0) / SH) + 1);
   return n * SH;
 }
 /* ★拡大率の「100%」の基準。
@@ -3202,6 +3211,12 @@ $("#clearBtn").onclick = function(){
   closePages();
   pushUndo();
   rebuildScene("[]");
+  /* ★白紙化と同じ理由。中身を消したら用紙の枚数と表示範囲を
+     作り直さないと、スクロールが実際の紙と合わなくなる。 */
+  refreshMeasures();
+  applyCanvasMode(true);
+  clampView();
+  applyView();
   scheduleSave();
   statusEl.textContent = "「" + nm + "」を空にしました(↩で戻せます)";
 };
@@ -4098,6 +4113,28 @@ function cleanPastedText(t) {
 }
 
 /* タップした画面位置に対応する文字位置へキャレットを移動する */
+/* 触った点にいちばん近い文字位置を、行ごとに当たりを取って探す。
+   caretPositionFromPoint が使えない/外した時の受け皿。
+   ★末尾へ飛ばす代わりに、せめて触った高さの近くへ置くための処理。 */
+function nearestTextNodeAt(el, pt) {
+  try {
+    var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+    var best = null, bestD = Infinity, n;
+    while ((n = walker.nextNode())) {
+      var rg = document.createRange();
+      rg.selectNodeContents(n);
+      var rects = rg.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var rc = rects[i];
+        var dy = (pt.y < rc.top) ? rc.top - pt.y : (pt.y > rc.bottom) ? pt.y - rc.bottom : 0;
+        var dx = (pt.x < rc.left) ? rc.left - pt.x : (pt.x > rc.right) ? pt.x - rc.right : 0;
+        var d = dy * 4 + dx;                 // 行のズレを重く見る
+        if (d < bestD) { bestD = d; best = { node: n, off: 0 }; }
+      }
+    }
+    return best;
+  } catch (e) { return null; }
+}
 function placeCaret(el, pt) {
   var s;
   try { s = getSelection(); } catch (e) { return; }
@@ -4117,10 +4154,17 @@ function placeCaret(el, pt) {
       if (cr && el.contains(cr.startContainer)) r = cr;
     }
   }
-  if (!r) {                       // 取れない場合は末尾へ
+  if (!r) {
+    /* ★取れない時に末尾へ置くのは間違いだった。
+       長い文章では、触った場所と無関係に最後まで飛ばされ、
+       前半が編集できなくなる。
+       触った位置が分かっているなら、その高さに一番近い行の
+       先頭へ置く。位置すら無い時だけ先頭にする(末尾にはしない)。 */
     r = document.createRange();
     r.selectNodeContents(el);
-    r.collapse(false);
+    var nd = pt ? nearestTextNodeAt(el, pt) : null;
+    if (nd) { r.setStart(nd.node, nd.off); r.collapse(true); }
+    else r.collapse(true);        // 先頭へ
   }
   try {
     s.removeAllRanges();
@@ -4156,20 +4200,35 @@ function positionEditHandle() {
   var ry = b.y * view.s + view.y;
   var rw = b.w * view.s;
 
-  // 文字の上に被せない: BOXの「左外」に置く。入らなければ「右外」、
-  // どちらも無理なら上外へ逃がす。
+  /* 文字の上に被せない: BOXの「左外」に置く。入らなければ「右外」。
+     ★どちらにも入らない場合(BOXが画面幅いっぱいの時)、
+       以前は画面端に寄せていたが、それは結局「文字の上」であり、
+       しかも縦はカーソル追従なので、いま直したい行にちょうど
+       重なって邪魔をしていた。
+       逃げ場が無い時は、横ではなく縦で逃がす。
+       カーソルのある行から十分に離した上下どちらかに置き、
+       文字を隠さないよう半透明にする。 */
+  var cy = caretScreenY();
+  var caretY = (cy != null ? cy : ry);
+  var topLim = vvTop + 56, botLim = vvTop + visH - HS - 12;
   var x, y;
+  var narrow = false;
   if (rx - HS - 8 >= 6) {
     x = rx - HS - 8;                            // 左の外側
+    y = caretY - HS / 2;
   } else if (rx + rw + 8 + HS <= innerWidth - 6) {
     x = rx + rw + 8;                            // 右の外側
+    y = caretY - HS / 2;
   } else {
-    x = Math.max(6, rx - HS - 8);               // 画面端に寄せる
+    narrow = true;
+    x = 6;                                      // 画面の左端
+    /* カーソルの行から離す。下に十分な余地があれば下、無ければ上。 */
+    var CLEAR = HS + 28;                        // 行から空ける距離
+    if (caretY + CLEAR <= botLim) y = caretY + CLEAR;
+    else y = caretY - CLEAR - HS;
   }
-  // 縦は編集中のカーソル付近(画面内に収める)
-  var cy = caretScreenY();
-  y = (cy != null ? cy : ry) - HS / 2;
-  y = Math.max(vvTop + 56, Math.min(vvTop + visH - HS - 12, y));
+  y = Math.max(topLim, Math.min(botLim, y));
+  editHandle.classList.toggle("dim", narrow);
 
   editHandle.style.left = Math.round(x) + "px";
   editHandle.style.top = Math.round(y) + "px";
@@ -4363,6 +4422,13 @@ function commitText() {
   // ★確定後は選択を外す: 「書き終わってスクロールしたいのにBOXが動く」を防ぐ。
   //   移動したい時はもう1タップで選択してから(誤移動防止と同じ流儀)。
   setSelection([]);
+  /* ★編集中は、カーソルを見せるために view を範囲の外まで動かすことがある
+     (キーボードぶん押し上げる、など)。そのまま編集を終えると、
+     スクロールの範囲が古いままになり、つまみが途中で止まって
+     先頭まで戻れなくなる。確定したら必ず測り直して入れ直す。 */
+  refreshMeasures();
+  clampView();
+  applyView();
   scheduleSave();
 }
 
@@ -5853,8 +5919,11 @@ $("#barToggle").onclick = function(){
       if (canvasMode === "inf") {
         pageEl.textContent = "移動中…";
       } else {
-        var pgN = Math.floor((pos / view.s) / A4H) + 1;
+        /* ★用紙が画面に収まる時、clampViewが中央寄せするため
+           posが負になり、ページ番号が0と出ていた。
+           1ページ目より手前は存在しないので下限を1にする。 */
         var total = Math.max(1, Math.round(sheetExtent() / A4H));
+        var pgN = Math.min(total, Math.max(1, Math.floor((pos / view.s) / A4H) + 1));
         pageEl.textContent = pgN + " / " + total + " ページ";
       }
       if (vert) {
@@ -9143,7 +9212,10 @@ function updateSheets() {
   var extent = 0;
   if (cb) extent = vert ? (cb.y + cb.h) : (cb.x + cb.w);
   var viewEnd = vert ? toWorld(0, innerHeight).y : toWorld(innerWidth, 0).x;
-  var n = Math.max(1, Math.ceil(Math.max(extent, viewEnd) / (vert ? SH : SW)) );
+  /* ★下限はsheetExtent()と揃えて2ページ。
+     描く紙が1ページなのに動ける範囲は2ページ分、という食い違いが
+     あると、紙の無い所までスクロールできてしまう。 */
+  var n = Math.max(2, Math.ceil(Math.max(extent, viewEnd) / (vert ? SH : SW)) );
   if (vert) {
     sheetLayer.style.width = SW + "px";
     sheetLayer.style.height = (n * SH) + "px";
@@ -9566,6 +9638,12 @@ $("#wipePage").onclick = function(){
   bookmarks = [];
   view = { x: 0, y: 0, s: sheetFitScale() };
   undoStack = []; redoStack = []; updateUndoUI();
+  /* ★用紙の枚数は内容の広がりから決まる。空にした後に作り直さないと、
+     消す前の枚数のまま残ったり、逆に反映が中途半端になって、
+     スクロールの範囲が実際の紙と食い違う(ページ移動できなくなる)。 */
+  refreshMeasures();
+  applyCanvasMode(true);
+  clampView();
   applyView();
   hintEl.style.opacity = "";
   scheduleSave();
