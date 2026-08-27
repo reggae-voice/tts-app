@@ -1329,7 +1329,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.22">InkNote <small>v22.22</small></div>
+  <div class="brand" title="InkNote v22.23">InkNote <small>v22.23</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1919,7 +1919,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.22";
+var APP_VERSION = "22.23";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -6186,6 +6186,11 @@ function splitPiecesAtCaret(o, node, off) {
     box.innerHTML = html[i];
     document.body.appendChild(box);
     var txt = (box.innerText || box.textContent || "").replace(/\s+$/, "");
+    /* ★下側の先頭にできる空行を落とす。
+       行末にカーソルを置いて分けると、その行の改行そのものが
+       下側の先頭に入り、1行ぶん空いた状態で始まってしまう。
+       文章としては不要なので取り除く。 */
+    if (i === 1) txt = txt.replace(/^[ \t]*\n+/, "");
     document.body.removeChild(box);
     if (!txt.trim()) return null;               // 片方が空になる切り方はしない
     var copy = JSON.parse(JSON.stringify(o, function(k, v){
@@ -6226,6 +6231,36 @@ function splitTextObjectAtWorldY(o, worldY) {
 /* カーソル位置でテキストBOXを上下2つに分ける。
    ★pointerdownで処理するのが要点。clickまで待つと、その前に
      焦点が外れて編集が確定し、カーソル位置が失われる端末がある。 */
+/* =========================================================
+   分割で伸びた分だけ、同じ列の下にあるものを押し下げる
+   ---------------------------------------------------------
+   ★分けると2つの箱の合計が元より高くなる(間隔が入るため)。
+     下にあるものが元の位置のままだと必ず重なる。
+     手で直すのは大変なので、伸びた分だけ自動で下げる。
+   ★「すき間を空ける」と同じ考え方で、列を自動判定して
+     その列の中だけを動かす。隣の列には触らない。
+========================================================= */
+function pushDownBelow(refBBox, oldBottom, delta, exclude) {
+  if (!(delta > 0.5)) return 0;
+  var col = (typeof gapDetectColumn === "function")
+    ? gapDetectColumn(refBBox.x + refBBox.w / 2, refBBox.y + refBBox.h / 2)
+    : null;
+  var x1 = col ? col.x1 : (refBBox.x - 8);
+  var x2 = col ? col.x2 : (refBBox.x + refBBox.w + 8);
+  var moved = 0;
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.locked) continue;
+    if (exclude && exclude.indexOf(o) !== -1) continue;
+    var b = objBBox(o);
+    var cx = b.x + b.w / 2;
+    if (cx < x1 || cx > x2) continue;         // 別の列は触らない
+    if (b.y < oldBottom - 0.5) continue;      // 元の箱より上のものは動かさない
+    moveObjBy(o, 0, delta);
+    moved++;
+  }
+  return moved;
+}
 function splitTextAtCursor() {
   var o = editingObj, node = null, off = 0;
   var r = selectionInsideEditing();
@@ -6257,12 +6292,17 @@ function splitTextAtCursor() {
   pieces[1].x = b.x;
   pieces[1].y = pieces[0].y + Math.max(20, objBBox(pieces[0]).h) + 12;
   makeTextEl(pieces[1]); measureObj(pieces[1]);
+  /* 分けたことで下端がどれだけ伸びたかを測り、その分だけ下を押し下げる */
+  var newBottom = pieces[1].y + Math.max(20, objBBox(pieces[1]).h);
+  var grew = newBottom - (b.y + b.h);
+  var pushed = pushDownBelow(b, b.y + b.h, grew, [pieces[0], pieces[1]]);
   inkDirty = true;
   refreshMeasures();
   switchTool("select");
   setSelection([pieces[1]]);
   scheduleSave();
-  statusEl.textContent = "カーソル位置で2つに分けました(下側を選択中)";
+  statusEl.textContent = "カーソル位置で2つに分けました(下側を選択中)" +
+    (pushed ? " / 下の " + pushed + " 個を " + Math.round(grew) + "px 下げました" : "");
 }
 function splitHereAndSendRight() {
   var o = editingObj, node = null, off = 0;
@@ -8572,7 +8612,7 @@ function renderPageList(skipContent) {
   if (nowEl) {
     var cur = findPage(currentId);
     if (cur) {
-      nowEl.textContent = "📖 開いている: " + (cur.title || "無題");
+      nowEl.textContent = "📖 " + (cur.title || "無題");
       nowEl.style.display = "";
     } else {
       nowEl.style.display = "none";
