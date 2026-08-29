@@ -1187,7 +1187,10 @@
     touch-action:pan-y;overflow:auto;-webkit-overflow-scrolling:touch;
   }
   #aiImpText:focus{border-color:var(--accent)}
-  #idLabel{color:var(--ui-text);font-size:13.5px;font-weight:600;margin-bottom:10px}
+  /* ★同じidが2つあると、後から足した方が拾われず不具合の元になる。
+     取り込みダイアログの見出しは別id(#aiImpLabel)に分けた。 */
+  #idLabel,
+  #aiImpLabel{color:var(--ui-text);font-size:13.5px;font-weight:600;margin-bottom:10px}
   #idInput{
     width:100%;box-sizing:border-box;border:1px solid var(--ui-line);
     background:rgba(255,255,255,.06);color:var(--ui-text);
@@ -1333,7 +1336,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.27">InkNote <small>v22.27</small></div>
+  <div class="brand" title="InkNote v22.29">InkNote <small>v22.29</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1589,15 +1592,17 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="aiImpDlg">
-  <div id="idLabel" style="margin-bottom:10px">AIが返したHTMLを貼り付けてください(新しいページとして取り込みます)</div>
-  <textarea id="aiImpText" placeholder="&lt;section&gt;…&lt;/section&gt; を貼り付け"></textarea>
+  <div id="aiImpLabel" class="id-label-like" style="margin-bottom:10px">貼り付けかファイル選択で取り込みます(HTML / Markdown / テキスト / CSV / TSV / JSON に対応。形式は自動で判別します)</div>
+  <textarea id="aiImpText" placeholder="ここに貼り付け(HTML / Markdown / テキスト / CSV / JSON)"></textarea>
   <div class="id-row">
     <button id="aiImpPaste">📋 貼り付け</button>
     <button id="aiImpFile">📂 ファイル</button>
     <button id="aiImpCancel">キャンセル</button>
     <button id="aiImpOk">取り込む</button>
   </div>
-  <input type="file" id="aiImpFileInput" accept=".html,.htm,text/html" style="display:none">
+  <input type="file" id="aiImpFileInput"
+    accept=".html,.htm,.md,.markdown,.txt,.text,.json,.csv,.tsv,.log,text/*,application/json"
+    style="display:none">
 </div>
 
 <div id="pagesPanel">
@@ -1638,7 +1643,7 @@ window.onerror = function(msg, src, line){
       <button class="pp-tool" id="expStudy">🎓 学習用コピー</button>
       <button class="pp-tool" id="expAiOut">🤖 AIへ書き出す</button>
       <button class="pp-tool" id="expImgSheet">🖼 画像シート書出</button>
-      <button class="pp-tool" id="expAiIn">📥 AIから取り込む</button>
+      <button class="pp-tool" id="expAiIn">📥 ファイル/AIから取り込む</button>
       <button class="pp-tool" id="bakOut">💾 バックアップ</button>
       <button class="pp-tool" id="bakIn">📥 復元</button>
       <button class="pp-tool" id="findLost">🔍 消えたページを探す</button>
@@ -1923,7 +1928,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.27";
+var APP_VERSION = "22.29";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -1965,6 +1970,12 @@ try {
   if (_hs !== null) openListOnStart = (_hs === "1");
 } catch (e) {}
 var folders = [];             // フォルダ一覧(空フォルダも保持する)
+/* ★消したフォルダの記録。
+   フォルダは端末間で「和集合」にして統合するため、
+   これが無いと、消してもクラウドや他端末に残っている分が
+   次に開いた時に必ず復活してしまう。
+   ページには同じ仕組み(deletedIds)が既にあり、その考え方に揃える。 */
+var delFolders = [];          // [{ name, ts }]
 try {
   listView = localStorage.getItem("inknote_listview") || "grid";
   listSort = localStorage.getItem("inknote_listsort") || "ts";
@@ -7994,11 +8005,13 @@ function refreshStaleThumbs() {
 function saveDocNow() { clearTimeout(saveTimer); return saveDoc(); }
 function saveIndex() {
   return kvSet("pages_index", { pages: pages, currentId: currentId,
-                                deleted: deletedIds, folders: folders });
+                                deleted: deletedIds, folders: folders,
+                                delFolders: delFolders });
 }
 function ensureFolder(name) {
   name = (name || "").trim();
   if (!name) return;
+  unDelFolder(name);           // 作り直したら「消した記録」は取り消す
   if (folders.indexOf(name) === -1) {
     folders.push(name);
     folders.sort(function(a,b){ return a.localeCompare(b, "ja"); });
@@ -8007,6 +8020,25 @@ function ensureFolder(name) {
 function isDeleted(id) {
   for (var i = 0; i < deletedIds.length; i++) if (deletedIds[i].id === id) return true;
   return false;
+}
+/* 消したフォルダの記録を両端末ぶん束ねる */
+function mergeDelFolders(remote) {
+  var seen = {}, out = [];
+  var all = (delFolders || []).concat(remote || []);
+  for (var i = 0; i < all.length; i++) {
+    var d = all[i];
+    if (!d || !d.name) continue;
+    if (!seen[d.name]) { seen[d.name] = 1; out.push({ name: d.name, ts: d.ts || Date.now() }); }
+  }
+  return out;
+}
+function isDelFolder(name) {
+  for (var i = 0; i < delFolders.length; i++) if (delFolders[i].name === name) return true;
+  return false;
+}
+/* 消した記録より後に作り直したら、記録の方を消す(同じ名前で再作成できるように) */
+function unDelFolder(name) {
+  delFolders = delFolders.filter(function(d){ return d.name !== name; });
 }
 function mergeDeleted(remote) {
   var seen = {};
@@ -8339,6 +8371,8 @@ function folderMenu(f) {
     { label: "フォルダを削除(ページは残る)", danger: true, fn: function(){
         folders = folders.filter(function(x){ return x !== f; });
         pages.forEach(function(p){ if ((p.folder||"") === f) p.folder = ""; });
+        // 消したことを記録する(これが無いと同期のたびに復活する)
+        delFolders = mergeDelFolders([{ name: f, ts: Date.now() }]);
         if (listFolder === f) listFolder = "";
         saveIndex();
         if (cloudUser()) cloudPushIndex().catch(function(){});
@@ -9661,11 +9695,13 @@ $("#wipeAll").onclick = function(){
       return kvDel("page_" + id);
     });
   });
-  chain.then(function(){
+  /* ★1ページ消せなかっただけで止まると、中途半端な状態のまま
+     何のメッセージも出ずに終わる。必ず最後まで進める。 */
+  chain.catch(function(){}).then(function(){
     pages = [];
     currentId = null;
     return saveIndex();
-  }).then(function(){
+  }).catch(function(){}).then(function(){
     addPage();
     closeMenu();
     statusEl.textContent = "初期化しました";
@@ -11673,7 +11709,7 @@ var AI_PROMPT_HEAD =
   "  関連する話題のところへ移してまとめてください。\n" +
   "  出典は位置ではなく番号で示します。書き起こした文の行頭に「(図#番号より)」と\n" +
   "  付けてください(例: (図#12より) 18%未満で入室禁止)。\n" +
-  "  [画像 #番号] の目印も、その中身を書き起こした章へ一緒に移してください。\n" +
+  "  〔画像 #番号〕 の目印も、その中身を書き起こした章へ一緒に移してください。\n" +
   "  1つの図の内容が複数の章に散る場合は、目印は主に扱う章に1つだけ置き、\n" +
   "  他の章では「(図#番号より)」の表記だけで参照してください。\n" +
   "× 足してはいけない: ノートにも画像にも無い一般知識、あなたの推測や補足説明、\n" +
@@ -11681,12 +11717,12 @@ var AI_PROMPT_HEAD =
   "つまり「書かれていないことは足さない」の“書かれている”には、\n" +
   "画像の中に書かれていることも含みます。事実関係は変えないでください。\n" +
   "\n" +
-  "【[画像 #番号] について】\n" +
+  "【〔画像 #番号〕 について】\n" +
   "これは元のノートに貼ってあるスクリーンショットや図を指す目印です。\n" +
   "表記はそのままで残してください(消したり番号を変えたりしないこと)。\n" +
   "ただし置き場所は動かして構いません。内容にふさわしい章へ移してください。\n" +
   "画像そのものは別途「画像シート」として添付します。これは各画像の上に\n" +
-  "#番号 を書いた1枚の画像で、本文の [画像 #番号] と番号で1対1に対応します。\n" +
+  "#番号 を書いた1枚の画像で、本文の 〔画像 #番号〕 と番号で1対1に対応します。\n" +
   "ページ全体のPNG/PDFを添付することもあります。\n" +
   "本文の文字はこの書き出しを正としてください\n" +
   "(画像から数式を読み取り直すと L_1 と L₁ のような取り違えが起きるため)。\n" +
@@ -11699,7 +11735,7 @@ var AI_PROMPT_HEAD =
   "  ul, ol, li, table, thead, tbody, tr, th, td\n" +
   "- 文字色やマーカーは span の style で color / background-color のみ指定可\n" +
   "- 数式は $$...$$ のまま地の文に書いてください(表のセルの中でも同じ。取り込み時に自動で組版されます)\n" +
-  "- [画像 #番号] は地の文にそのまま書いてください\n" +
+  "- 〔画像 #番号〕 は地の文にそのまま書いてください\n" +
   "- <script> や <style>、画像は使わないでください(取り込み時に除去されます)\n" +
   "\n---\n\n";
 function pageObjectsFor(id) {
@@ -11731,7 +11767,10 @@ function buildMarkdownForPages(ids) {
            これが無いと、AIは渡された文字だけでページの全体像を判断し、
            図やスクショが担っている情報ごと切り落とした整理案を出す。 */
         var miss = [];
-        if (pics) miss.push("画像 " + pics + "個(本文中の [画像 #番号] がその位置)");
+        /* ★本文中の目印は〔画像 #番号〕に変えてある(角括弧はMarkdownの
+           リンク記法と誤読されるため)。案内の表記も合わせないと、
+           AIが実際には無い [画像 #..] を探しに行ってしまう。 */
+        if (pics) miss.push("画像 " + pics + "個(本文中の 〔画像 #番号〕 がその位置)");
         if (ink) miss.push("手書き・図形 " + ink + "個(位置は示せません)");
         var note = miss.length
           ? ("\n\n*(このページには " + miss.join(" / ") +
@@ -11775,7 +11814,7 @@ function runAiExport(ids, label, asFile) {
     var payload = AI_PROMPT_HEAD + md;
     if (!asFile) {
       copyTextToClipboard(payload,
-        "AI用にコピーしました(" + label + " / " + ids.length + "ページ) → AIに貼り付け、返ってきたHTMLを「AIから取り込む」へ");
+        "AI用にコピーしました(" + label + " / " + ids.length + "ページ) → AIに貼り付け、返ってきた内容を「ファイル/AIから取り込む」へ");
       return;
     }
     var stamp = new Date();
@@ -11833,7 +11872,7 @@ function openAiExportSheet() {
 /* =========================================================
    AI連携: 貼り付けた画像だけを「番号付きの1枚シート」にして書き出す
    ---------------------------------------------------------
-   ページ全体のPDFを渡すと、本文中の [画像 #12] がその絵のどこなのかを
+   ページ全体のPDFを渡すと、本文中の 〔画像 #12〕 がその絵のどこなのかを
    AIが推測するしかなく、画像が何枚もあると当てにならない。
    画像だけを抜き出して #番号 を振っておけば1対1で対応するので、
    推測の余地が無くなる。添付も1枚で済み、ページごとにPDFを
@@ -12004,6 +12043,128 @@ function htmlToPageBlocks(html) {
   // 塊に分けられなければ、全体で1つ
   if (!blocks.length && String(box.innerHTML || "").trim()) blocks.push(box.innerHTML);
   return blocks;
+}
+/* =========================================================
+   取り込みの入口(形式を自動で見分ける)
+   ---------------------------------------------------------
+   ★以前はHTML専用で、拡張子も .html しか選べなかった。
+     実際にはAIの出力はMarkdownや素のテキスト、表はCSV、
+     設定やデータはJSONで来ることの方が多い。
+     中身を見て形を判断し、いちばん読みやすい形に直してから
+     既存の取り込み処理へ渡す。
+========================================================= */
+function sniffImportKind(text, fileName) {
+  var t = String(text || "");
+  var name = String(fileName || "").toLowerCase();
+  var ext = (name.match(/\.([a-z0-9]+)$/) || [])[1] || "";
+  if (ext === "html" || ext === "htm") return "html";
+  if (ext === "json") return "json";
+  if (ext === "csv") return "csv";
+  if (ext === "tsv") return "tsv";
+  if (ext === "md" || ext === "markdown") return "md";
+  if (ext === "txt" || ext === "text" || ext === "log") return "text";
+  // 拡張子が無い/貼り付けの場合は中身で判断する
+  var head = t.replace(/^\uFEFF/, "").trim();
+  if (/^<(!doctype|html|div|p|h[1-6]|table|ul|ol|section|article)\b/i.test(head)) return "html";
+  if (/^[\[{]/.test(head)) {
+    try { JSON.parse(head); return "json"; } catch (e) {}
+  }
+  // 表らしさ: 先頭の数行が同じ数の区切りを持つか
+  var lines = head.split(/\r?\n/).slice(0, 5).filter(function(L){ return L.trim(); });
+  if (lines.length >= 2) {
+    function cols(sep){
+      var c = lines.map(function(L){ return L.split(sep).length; });
+      return (c[0] >= 2 && c.every(function(x){ return x === c[0]; })) ? c[0] : 0;
+    }
+    if (cols("\t")) return "tsv";
+    if (cols(",")) return "csv";
+  }
+  if (/^#{1,6}\s|\n#{1,6}\s|^\s*[-*+]\s|\n\s*[-*+]\s|\|.*\|/.test(t)) return "md";
+  return "text";
+}
+/* 区切り文字の表 → Markdownの表。取り込み側は表を認識できるので、
+   そこに合わせて渡すのが一番きれいに入る。 */
+function delimitedToMarkdown(text, sep) {
+  var rows = String(text || "").replace(/^\uFEFF/, "").split(/\r?\n/)
+    .filter(function(L){ return L.trim(); })
+    .map(function(L){ return L.split(sep).map(function(c){
+      return String(c).trim().replace(/^"(.*)"$/, "$1").replace(/\|/g, "\\|");
+    }); });
+  if (!rows.length) return "";
+  var n = rows[0].length;
+  var out = ["| " + rows[0].join(" | ") + " |",
+             "|" + new Array(n + 1).join(" --- |")];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i].slice(0, n);
+    while (r.length < n) r.push("");
+    out.push("| " + r.join(" | ") + " |");
+  }
+  return out.join("\n");
+}
+/* JSON → 読める形。表にできる形(オブジェクトの配列)なら表に、
+   それ以外は整形して等幅で置く。 */
+function jsonToReadable(text) {
+  var data;
+  try { data = JSON.parse(text); } catch (e) { return null; }
+  if (Array.isArray(data) && data.length && typeof data[0] === "object" && data[0] !== null
+      && !Array.isArray(data[0])) {
+    var keys = [];
+    data.forEach(function(row){
+      if (row && typeof row === "object")
+        Object.keys(row).forEach(function(k){ if (keys.indexOf(k) === -1) keys.push(k); });
+    });
+    if (keys.length) {
+      var lines = ["| " + keys.join(" | ") + " |",
+                   "|" + new Array(keys.length + 1).join(" --- |")];
+      data.forEach(function(row){
+        lines.push("| " + keys.map(function(k){
+          var v = row ? row[k] : "";
+          if (v == null) return "";
+          if (typeof v === "object") return JSON.stringify(v).replace(/\|/g, "\\|");
+          return String(v).replace(/\|/g, "\\|");
+        }).join(" | ") + " |");
+      });
+      return lines.join("\n");
+    }
+  }
+  return "```\n" + JSON.stringify(data, null, 2) + "\n```";
+}
+function importAnyAsNewPage(text, fileName) {
+  var kind = sniffImportKind(text, fileName);
+  var baseTitle = String(fileName || "").replace(/\.[a-z0-9]+$/i, "").trim();
+  var title = baseTitle || ("取り込み " + new Date().toLocaleDateString("ja-JP"));
+  var body = String(text || "");
+  if (kind === "html") { importHtmlAsNewPage(body, title); return; }
+  if (kind === "csv") body = delimitedToMarkdown(body, ",");
+  else if (kind === "tsv") body = delimitedToMarkdown(body, "\t");
+  else if (kind === "json") {
+    var r = jsonToReadable(body);
+    if (r == null) { statusEl.textContent = "JSONとして読めませんでした"; return; }
+    body = r;
+  }
+  /* md / text / 変換後の表は、貼り付けと同じ道具で整える。
+     ★貼り付け経路は数式・表・図の切り分けが既に作り込まれているので、
+       取り込みでも同じものを使う方が結果が揃う。 */
+  if (!body.trim()) { statusEl.textContent = "取り込める中身がありませんでした"; return; }
+  importTextAsNewPage(body, title, kind);
+}
+/* 文章(Markdown/素のテキスト)を新しいノートに置く */
+function importTextAsNewPage(body, title, kind) {
+  saveDocNow();
+  var id = Date.now();
+  pages.push({ id: id, title: title, ts: Date.now(), rev: 1 });
+  loadPage(id, function(){
+    try {
+      insertRichPaste(body);
+      statusEl.textContent = "「" + title + "」として取り込みました(" +
+        ({ md: "Markdown", text: "テキスト", csv: "CSV", tsv: "TSV", json: "JSON" }[kind] || kind) + ")";
+    } catch (e) {
+      statusEl.textContent = "取り込みに失敗しました";
+    }
+    saveIndex();
+    scheduleSave();
+    renderPageList();
+  });
 }
 function importHtmlAsNewPage(html, title) {
   var blocks = htmlToPageBlocks(html);
@@ -12405,12 +12566,14 @@ $("#aiImpPaste").onclick = function(){
   } catch (e) {}
 };
 $("#aiImpFile").onclick = function(){ $("#aiImpFileInput").click(); };
+var aiImpFileName = "";       // 直前に読み込んだファイル名(見出しと形式の判定に使う)
 $("#aiImpFileInput").onchange = function(){
   var f = this.files && this.files[0];
   this.value = "";
   if (!f) return;
   var rd = new FileReader();
   rd.onload = function(){
+    aiImpFileName = f.name || "";
     $("#aiImpText").value = String(rd.result || "");
     statusEl.textContent = f.name + " を読み込みました(内容を確かめて「取り込む」)";
   };
@@ -12421,7 +12584,7 @@ $("#aiImpOk").onclick = function(){
   var t = $("#aiImpText").value || "";
   if (!t.trim()) { statusEl.textContent = "貼り付けてから「取り込む」を押してください"; return; }
   closeAiImportSheet();
-  setTimeout(function(){ importHtmlAsNewPage(t); }, 120);
+  setTimeout(function(){ importAnyAsNewPage(t, aiImpFileName); }, 120);
 };
 $("#expPrint").onclick = function(){
   closeExp();
@@ -16509,10 +16672,13 @@ function cloudPushIndex(force) {
     var merged = [];
     for (var i = 0; i < order.length; i++) merged.push(byId[order[i]]);
 
-    // フォルダも和集合
+    /* フォルダも和集合。ただし「消した記録」にあるものは復活させない。
+       ★これが無いと、削除しても他端末やクラウドに残っている分が
+         次に開いた時に必ず戻ってきていた。 */
+    delFolders = mergeDelFolders((snap.exists && snap.data().delFolders) || []);
     var fset = {}, folderList = [];
     (folders || []).concat(remoteFolders || []).forEach(function(f){
-      if (f && !fset[f]) { fset[f] = true; folderList.push(f); }
+      if (f && !fset[f] && !isDelFolder(f)) { fset[f] = true; folderList.push(f); }
     });
 
     // 自分の手元にも反映しておく(他端末の新着がすぐ一覧に出る)
@@ -16528,7 +16694,8 @@ function cloudPushIndex(force) {
     }
 
     return ref.set({ pages: merged, currentId: currentId, deleted: delAll,
-                     folders: folderList, updatedAt: Date.now() })
+                     folders: folderList, delFolders: delFolders,
+                     updatedAt: Date.now() })
       .then(function(){ return saveIndex(); });
   });
 }
@@ -16888,7 +17055,12 @@ function syncAll() {
     var remotePages = (snap.exists && snap.data().pages) || [];
     var remoteDeleted = (snap.exists && snap.data().deleted) || [];
     var remoteFolders = (snap.exists && snap.data().folders) || [];
-    for (var rf = 0; rf < remoteFolders.length; rf++) ensureFolder(remoteFolders[rf]);
+    // 消した記録を先に束ねてから、記録に無いものだけ取り込む
+    delFolders = mergeDelFolders((snap.exists && snap.data().delFolders) || []);
+    for (var rf = 0; rf < remoteFolders.length; rf++) {
+      if (!isDelFolder(remoteFolders[rf])) ensureFolder(remoteFolders[rf]);
+    }
+    folders = folders.filter(function(f){ return !isDelFolder(f); });
     deletedIds = mergeDeleted(remoteDeleted);          // 削除は両端末の和集合
     remotePages = remotePages.filter(function(p){ return !isDeleted(p.id); });
     pages = pages.filter(function(p){ return !isDeleted(p.id); });
@@ -17080,7 +17252,10 @@ function startRealtime() {
 function applyRemoteIndex(d) {
   var remote = d.pages || [];
   deletedIds = mergeDeleted(d.deleted || []);
-  (d.folders || []).forEach(function(f){ ensureFolder(f); });
+  (d.delFolders || []).forEach(function(x){
+    if (x && x.name) delFolders = mergeDelFolders([x]);
+  });
+  (d.folders || []).forEach(function(f){ if (!isDelFolder(f)) ensureFolder(f); });
 
   var byId = {}, order = [], changed = false;
   function put(p) {
@@ -17635,6 +17810,7 @@ function initAfterStore() {
     if (idx && idx.pages && idx.pages.length) {
       pages = idx.pages;
       deletedIds = idx.deleted || [];
+      delFolders = idx.delFolders || [];
       folders = idx.folders || [];
       booting = false;
       var cur = findPage(idx.currentId) ? idx.currentId : pages[0].id;
