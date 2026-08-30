@@ -1336,7 +1336,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.29">InkNote <small>v22.29</small></div>
+  <div class="brand" title="InkNote v22.30">InkNote <small>v22.30</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1628,7 +1628,7 @@ window.onerror = function(msg, src, line){
   <div id="ppFolders"></div>
   <div id="ppList" class="scrollable"></div>
   <div class="pp-foot">
-    <button id="ppAdd">＋ 新しいページ</button>
+    <button id="ppAdd">＋ 新しいノート</button>
     <button id="clearBtn" class="pp-clear">🧽 開いているノートを空に</button>
   </div>
   <button id="toolsToggle" aria-expanded="false">
@@ -1646,7 +1646,7 @@ window.onerror = function(msg, src, line){
       <button class="pp-tool" id="expAiIn">📥 ファイル/AIから取り込む</button>
       <button class="pp-tool" id="bakOut">💾 バックアップ</button>
       <button class="pp-tool" id="bakIn">📥 復元</button>
-      <button class="pp-tool" id="findLost">🔍 消えたページを探す</button>
+      <button class="pp-tool" id="findLost">🔍 消えたノートを探す</button>
     </div>
   </div>
   <div id="usageInfo" style="color:var(--ui-dim);font-size:11px;padding:8px 4px 0;text-align:center"></div>
@@ -1928,7 +1928,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.29";
+var APP_VERSION = "22.30";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -7687,7 +7687,7 @@ function findOrphanPagesCloud() {
     }).catch(function(){ return []; });
 }
 function recoverLostPages() {
-  statusEl.textContent = "失われたページを探しています…";
+  statusEl.textContent = "失われたノートを探しています…";
   var restored = 0;
   return findOrphanPages().then(function(localIds){
     return findOrphanPagesCloud().then(function(cloudIds){
@@ -7715,14 +7715,14 @@ function recoverLostPages() {
       return chain;
     });
   }).then(function(){
-    if (!restored) { statusEl.textContent = "復元できるページは見つかりませんでした"; return 0; }
+    if (!restored) { statusEl.textContent = "復元できるノートは見つかりませんでした"; return 0; }
     pages.sort(function(a, b){ return (b.ts || 0) - (a.ts || 0); });
     return saveIndex().then(function(){
       if (cloudUser()) return cloudPushIndex().catch(function(){});
     }).then(function(){
       renderPageList();
       updatePageBtn();
-      statusEl.textContent = restored + "件のページを復元しました";
+      statusEl.textContent = restored + "件のノートを復元しました";
       return restored;
     });
   }).catch(function(){
@@ -8184,7 +8184,7 @@ function removeBlankPage() {
     var s = vert ? b.y : b.x;
     var e = s + (vert ? b.h : b.w);
     if (e > top + 0.5 && s < bottom - 0.5) {
-      statusEl.textContent = "このページには内容があります(空白ページのみ詰められます)";
+      statusEl.textContent = "ここには内容があります(空白の紙だけ詰められます)";
       return;
     }
   }
@@ -8368,7 +8368,7 @@ function folderMenu(f) {
           renderPageList();
         });
     }},
-    { label: "フォルダを削除(ページは残る)", danger: true, fn: function(){
+    { label: "フォルダを削除(ノートは残る)", danger: true, fn: function(){
         folders = folders.filter(function(x){ return x !== f; });
         pages.forEach(function(p){ if ((p.folder||"") === f) p.folder = ""; });
         // 消したことを記録する(これが無いと同期のたびに復活する)
@@ -8377,7 +8377,7 @@ function folderMenu(f) {
         saveIndex();
         if (cloudUser()) cloudPushIndex().catch(function(){});
         renderPageList();
-        statusEl.textContent = "📁" + f + " を削除しました(中のページは「すべて」に残っています)";
+        statusEl.textContent = "📁" + f + " を削除しました(中のノートは「すべて」に残っています)";
     }},
     { label: "キャンセル", cancel: true }
   ]);
@@ -8509,7 +8509,7 @@ function renderFolderTabs() {
               if (cloudUser()) cloudPushIndex().catch(function(){});
               listFolder = f;
               renderPageList();
-              statusEl.textContent = "📁" + f + " を作成しました(⋮からページを移動できます)";
+              statusEl.textContent = "📁" + f + " を作成しました(⋮からノートを移動できます)";
           }},
           { label: "キャンセル", cancel: true }
         ]);
@@ -8530,7 +8530,7 @@ function rescueThumb(pg) {
           downloadURL(th.png, "thumb_" + (pg.title || "page") + ".jpg");
           statusEl.textContent = "サムネを画像として保存しました";
         } },
-      { label: "📄 このページに貼る", fn: function(){
+      { label: "📄 このノートに貼る", fn: function(){
           addImageFiles([dataUrlToBlob(th.png)]);
         } },
       { label: "キャンセル", cancel: true }
@@ -9685,8 +9685,8 @@ $("#wipePage").onclick = function(){
   statusEl.textContent = "白紙にしました";
 };
 $("#wipeAll").onclick = function(){
-  if (!confirm("⚠ すべてのページとデータを削除し、初期状態に戻します。\nこの操作は元に戻せません。よろしいですか?")) return;
-  if (!confirm("⚠ 最終確認: 本当にすべて削除しますか?\n(クラウド同期中の場合、クラウド側のページも削除されます)")) return;
+  if (!confirm("⚠ すべてのノートとデータを削除し、初期状態に戻します。\nこの操作は元に戻せません。よろしいですか?")) return;
+  if (!confirm("⚠ 最終確認: 本当にすべて削除しますか?\n(クラウド同期中の場合、クラウド側のノートも削除されます)")) return;
   var ids = pages.map(function(p){ return p.id; });
   var chain = Promise.resolve();
   ids.forEach(function(id){
@@ -11324,7 +11324,7 @@ function gotoHit(h) {
      読み込みが失敗した時(手元にまだ無いページなど)は
      いつまでも終わらず、何のメッセージも出ないまま無反応になっていた。
      loadPageの完了合図(onReady)を使い、来なければその旨を出す。 */
-  statusEl.textContent = "ページを開いています…";
+  statusEl.textContent = "ノートを開いています…";
   var done = false;
   saveDocNow();
   loadPage(h.pageId, function(){ done = true; focusIt(); });
@@ -11804,11 +11804,11 @@ function copyTextToClipboard(payload, okMsg) {
    ★ページ数が増えるとコピー&貼り付けが現実的でなくなるため
      (長文はコピーに失敗したり、貼り付け欄が扱いきれなくなる)。 */
 function runAiExport(ids, label, asFile) {
-  if (!ids.length) { statusEl.textContent = "書き出すページがありません"; return; }
-  statusEl.textContent = "書き出しています…(" + ids.length + "ページ)";
+  if (!ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
+  statusEl.textContent = "書き出しています…(" + ids.length + "件)";
   buildMarkdownForPages(ids).then(function(md){
     if (!md || !md.trim()) {
-      statusEl.textContent = "書き出せる文字がありませんでした(手書きだけのページはPDF書出を使ってください)";
+      statusEl.textContent = "書き出せる文字がありませんでした(手書きだけのノートはPDF書出を使ってください)";
       return;
     }
     var payload = AI_PROMPT_HEAD + md;
@@ -11828,7 +11828,7 @@ function runAiExport(ids, label, asFile) {
       var url = URL.createObjectURL(blob);
       downloadURL(url, name);
       setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
-      statusEl.textContent = name + " を保存しました(" + ids.length + "ページ / " +
+      statusEl.textContent = name + " を保存しました(" + ids.length + "件 / " +
         Math.round(payload.length / 1000) + "千文字) → AIに添付してください";
     } catch (e) {
       copyTextToClipboard(payload, "ファイルに保存できなかったのでコピーしました");
@@ -11841,14 +11841,14 @@ function openScopeSheet(title, run) {
   var pg = findPage(currentId);
   var fol = pg && pg.folder;
   var items = [];
-  items.push({ label: "📄 このページだけ", fn: function(){ run([currentId], "このページ"); } });
+  items.push({ label: "📄 このノートだけ", fn: function(){ run([currentId], "このノート"); } });
   if (fol) {
     var inFolder = pages.filter(function(p){ return p.folder === fol; })
                         .map(function(p){ return p.id; });
-    items.push({ label: "📁 フォルダ「" + fol + "」ぜんぶ(" + inFolder.length + "ページ)",
+    items.push({ label: "📁 フォルダ「" + fol + "」ぜんぶ(" + inFolder.length + "件)",
                  fn: function(){ run(inFolder, "フォルダ " + fol); } });
   }
-  items.push({ label: "🗂 すべてのノート(" + pages.length + "ページ)",
+  items.push({ label: "🗂 すべてのノート(" + pages.length + "件)",
                fn: function(){ run(pages.map(function(p){ return p.id; }), "すべて"); } });
   items.push({ label: "キャンセル", cancel: true });
   showSheet(title, items);
@@ -11914,7 +11914,7 @@ function loadImg(src) {
   });
 }
 function runImageSheetExport(ids, label) {
-  if (!ids.length) { statusEl.textContent = "書き出すページがありません"; return; }
+  if (!ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
   statusEl.textContent = "画像を集めています…";
   collectPageImages(ids).then(function(picks){
     if (!picks.length) {
@@ -12225,7 +12225,7 @@ function importHtmlAsNewPage(html, title) {
     var nAnch = made.filter(function(o){ return o.anch; }).length;
     renderTocPanel();
     updateColBar();
-    statusEl.textContent = "新しいページに取り込みました(" + made.length + "ブロック" +
+    statusEl.textContent = "新しいノートに取り込みました(" + made.length + "ブロック" +
       (nAnch ? " / 見出し " + nAnch + "件を目次に登録" : "") + ")";
     /* ★ブロック全体(表の中も外も)の式を組版する。
        表専用の処理だけだと、表を含むブロックの地の文が取り残される。 */
@@ -12348,7 +12348,7 @@ function importBackup(file) {
     try {
       var data = JSON.parse(r.result);
       if (!data || data.format !== "inknote-backup") throw new Error("bad format");
-      if (!confirm("バックアップを復元しますか?\n現在の全ページは置き換えられます。")) return;
+      if (!confirm("バックアップを復元しますか?\n現在の全ノートは置き換えられます。")) return;
       var chain = Promise.resolve();
       Object.keys(data.docs || {}).forEach(function(k){
         chain = chain.then(function(){ return kvSet(k, data.docs[k]); });
@@ -15954,7 +15954,7 @@ function gapOpenRange(x1, x2, y) {
 }
 function gapOpen(wx, wy) {
   var col = gapDetectColumn(wx, wy);
-  if (!col) { statusEl.textContent = "このページにはまだ内容がありません"; return; }
+  if (!col) { statusEl.textContent = "このノートにはまだ内容がありません"; return; }
   gapOn = true; gapDy = 0;
   gapX1 = col.x1; gapX2 = col.x2; gapY = wy;
   gapTargets = gapCollect();
@@ -17003,7 +17003,7 @@ function askAccountChange(newUid) {
         setLastUid(newUid);
         pages = [];                       // 相手のアカウントへ混ぜない
         saveIndex().then(function(){ syncing = false; flushPendingSave(); syncAll(); });
-        statusEl.textContent = "元のノートは「🔍消えたページを探す」で戻せます";
+        statusEl.textContent = "元のノートは「🔍消えたノートを探す」で戻せます";
       } },
     { label: "➕ 端末のノートもこのアカウントに追加する", fn: function(){
         uidAskOpen = false;
@@ -17408,7 +17408,7 @@ function refreshSyncPanel() {
        両端末に同じページがあって中身だけ違う場合はこちらを使う。 */
     var b3 = document.createElement("button");
     b3.className = "pp-tool";
-    b3.textContent = "🧮 全ページを照合(端末をそろえる)";
+    b3.textContent = "🧮 全ノートを照合(端末をそろえる)";
     b3.style.cssText = "margin-top:10px;width:100%";
     b3.onclick = function(){
       b3.disabled = true;
@@ -17418,7 +17418,7 @@ function refreshSyncPanel() {
       });
     };
     body.appendChild(b3);
-    div("端末どうしで中身が食い違う時に押してください。全ページの本文を1枚ずつ突き合わせます。" +
+    div("端末どうしで中身が食い違う時に押してください。全ノートの本文を1件ずつ突き合わせます。" +
         "枝分かれしていた分は消さずに版の控えへ残します。",
         "color:#7E8593;font-size:11px;line-height:1.8;padding:10px 6px 4px");
 
