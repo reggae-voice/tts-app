@@ -1350,7 +1350,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.34">InkNote <small>v22.34</small></div>
+  <div class="brand" title="InkNote v22.37">InkNote <small>v22.37</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1850,6 +1850,10 @@ window.onerror = function(msg, src, line){
       <span style="color:var(--ui-dim);font-size:11px">選ばなくてもページ全部を、列ごとに幅と左端をそろえる</span>
     </div>
     <div class="st-row"><span class="st-label">整列</span>
+      <button class="stybtn" id="unstackAllBtn">↧ 重なりを全部直す</button>
+      <span style="color:var(--ui-dim);font-size:11px">重なった文字を下へ送って解消。連鎖もまとめて直します</span>
+    </div>
+    <div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
       <span style="color:var(--ui-dim);font-size:11px">だんだんズレた左端・行間を直す</span>
     </div>
@@ -1942,7 +1946,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.34";
+var APP_VERSION = "22.37";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -10308,7 +10312,13 @@ function renderPageToCanvas(bbox, marginOpt, list) {
   if (!b) return null;
   var margin = (marginOpt == null) ? 40 : marginOpt;
   var w = b.w + margin * 2, h = b.h + margin * 2;
-  var scale = Math.min(2, 4096 / Math.max(w, h));
+  /* ★全ノートPDFの倍率は呼ぶ側が決める(__pdfBulkScale)。
+     v22.36では一律1.4に落としたが、落ちた原因は解像度ではなく
+     全canvasを溜め込んでいたことだった。1枚ずつ解放する今の作りなら
+     倍率2でも同時保持は14MB程度で足りる。
+     既定は元の画質(2)に戻し、端末が苦しい時だけ下げる。 */
+  var capScale = window.__pdfBulkScale || 2;
+  var scale = Math.min(capScale, 4096 / Math.max(w, h));
   var c = document.createElement("canvas");
   c.width = Math.round(w * scale);
   c.height = Math.round(h * scale);
@@ -11186,6 +11196,90 @@ function tidyWidthsOn(targets) {
   }
   return n;
 }
+/* =========================================================
+   ページ全体の重なりを一度に直す
+   ---------------------------------------------------------
+   ★1つずつ動かすと、動かした先でまた下の物に重なる。
+     「押し出し」が連鎖するので、1件ずつでは終わらない。
+     重なっている相手を下へ押し出し、その押し出しでさらに
+     重なった相手も押し出す、を繰り返して全部を解消する。
+   ★横は動かさない。縦にだけ送る。
+     横も動かすと列の配置が崩れ、整えたレイアウトが壊れるため。
+   ★列をまたいで巻き込まないよう、横に重なりが無い相手は無関係とみなす。
+========================================================= */
+/* 2つの箱が横方向に重なっているか(重なり幅が狭い方の25%以上) */
+function overlapsX(a, b) {
+  var l = Math.max(a.x, b.x), r = Math.min(a.x + a.w, b.x + b.w);
+  var w = r - l;
+  if (w <= 0) return false;
+  return w >= Math.min(a.w, b.w) * 0.25;
+}
+function overlapsY(a, b, gap) {
+  return (a.y < b.y + b.h + gap) && (b.y < a.y + a.h + gap);
+}
+/* 対象の箱を集める。手書き・図形・ロックは動かさない */
+function unstackTargets(list) {
+  var out = [];
+  for (var i = 0; i < list.length; i++) {
+    var o = list[i];
+    if (o.locked) continue;
+    if (o.type !== "text" && o.type !== "image") continue;
+    out.push(o);
+  }
+  return out;
+}
+/* 重なりを全部ほどく。戻り値は動かした数 */
+function unstackAll(objs, gap) {
+  gap = (gap == null) ? 12 : gap;
+  var items = objs.map(function(o){ return { o: o, b: objBBox(o), dy: 0 }; });
+  // 上にあるものから順に確定させていく
+  items.sort(function(p, q){ return (p.b.y - q.b.y) || (p.b.x - q.b.x); });
+  var moved = 0, guard = 0;
+  for (var i = 0; i < items.length; i++) {
+    for (var j = i + 1; j < items.length; j++) {
+      if (guard++ > 200000) break;                 // 暴走防止
+      var a = items[i], b = items[j];
+      var ab = { x: a.b.x, y: a.b.y + a.dy, w: a.b.w, h: a.b.h };
+      var bb = { x: b.b.x, y: b.b.y + b.dy, w: b.b.w, h: b.b.h };
+      if (!overlapsX(ab, bb)) continue;            // 別の列は無関係
+      if (!overlapsY(ab, bb, gap)) continue;       // 重なっていない
+      /* 下にある方(b)を、aの下端+すき間まで押し下げる。
+         押した結果さらに下の物と重なっても、外側のループで
+         その相手を同じように押すので、連鎖がすべて解消される。 */
+      var want = ab.y + ab.h + gap;
+      if (bb.y < want) { b.dy += want - bb.y; }
+    }
+  }
+  for (var k = 0; k < items.length; k++) {
+    if (Math.abs(items[k].dy) > 0.5) { moveObjBy(items[k].o, 0, items[k].dy); moved++; }
+  }
+  return moved;
+}
+/* ページ全体に対して実行する(メニューから) */
+function unstackWholePage() {
+  var objs = unstackTargets(objects);
+  if (objs.length < 2) { statusEl.textContent = "直す対象がありません"; return; }
+  /* 事前に何個重なっているかを数えて見せる。
+     全体に効く操作なので、押す前に規模が分かるようにする。 */
+  var items = objs.map(function(o){ return objBBox(o); });
+  var hit = 0;
+  for (var i = 0; i < items.length; i++)
+    for (var j = i + 1; j < items.length; j++)
+      if (overlapsX(items[i], items[j]) && overlapsY(items[i], items[j], 0)) hit++;
+  if (!hit) { statusEl.textContent = "重なっている文字はありませんでした"; return; }
+  showSheet("重なりを直す", [
+    { label: "↧ " + hit + "組の重なりを下へ送って直す", fn: function(){
+        pushUndo();
+        var n = unstackAll(objs, 12);
+        inkDirty = true; refreshMeasures(); scheduleSave(); updateSelUI();
+        statusEl.textContent = n
+          ? (n + "個を下へずらして重なりを直しました(↩で戻せます)")
+          : "重なりはありませんでした";
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
+
 function unstackSelection(gap) {
   gap = (gap == null) ? 16 : gap;
   var list = [];
@@ -11890,46 +11984,108 @@ function makeTitleCanvas(title, idx, total) {
 }
 function exportAllAsPdf(ids) {
   if (!ids || !ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
+  /* ★全ノートPDFは端末のメモリを一番使う操作。
+     件数が多い時は、分けて出す道があることを先に知らせる。
+     途中で落ちると何も残らないので、落ちる前に選ばせたい。 */
+  if (!window.__pdfBulkConfirmed) {
+    /* ★画質を選べるようにする。
+       落ちた原因は解像度ではなく溜め込みだったので、既定は元の画質。
+       端末が苦しい時の逃げ道として軽い方も残す。 */
+    var run = function(scale, list){
+      window.__pdfBulkConfirmed = true;
+      window.__pdfBulkScale = scale;
+      exportAllAsPdf(list);
+      window.__pdfBulkConfirmed = false;
+    };
+    var half = Math.ceil(ids.length / 2);
+    var items = [
+      { label: "📚 そのままの画質で書き出す(" + ids.length + "件)",
+        fn: function(){ run(2, ids); } },
+      { label: "🪶 軽い画質で書き出す(落ちる時はこちら)",
+        fn: function(){ run(1.4, ids); } }
+    ];
+    if (ids.length > 8) {
+      items.push({ label: "✂ 前半だけ(" + half + "件・そのままの画質)",
+                   fn: function(){ run(2, ids.slice(0, half)); } });
+      items.push({ label: "✂ 後半だけ(" + (ids.length - half) + "件・そのままの画質)",
+                   fn: function(){ run(2, ids.slice(half)); } });
+    }
+    items.push({ label: "キャンセル", cancel: true });
+    showSheet(ids.length + "件をまとめてPDFにします", items);
+    return;
+  }
   statusEl.textContent = "PDFを作っています…(0/" + ids.length + ")";
   loadJsPdf().then(function(){
-    var failed = 0;
-    /* ★まず全ノートを集めてから組み立てる。
-       見出しに入れる「n / 全体」は、中身の無いノートを除いた
-       実数が分からないと決められないため(以前は全件数を使っていて
-       「7 / 14」のように最後まで行っても数が合わなかった)。 */
-    var collected = [];
-    var chain = Promise.resolve();
-    ids.forEach(function(id, n){
+    var failed = 0, pdf = null, added = 0, noteNo = 0;
+    if (!window.__pdfBulkScale) window.__pdfBulkScale = 2;
+    /* ★canvasは1枚あたり24MB前後ある。
+       v22.34では「全ノート分を集めてから組み立てる」作りにしたため、
+       143ページで3.4GBを同時に抱えることになり、タブごと落ちていた。
+       1枚ずつPDFへ入れて、入れたらすぐ解放する方式に戻す。
+       見出しに入れる「n / 全体」は、canvasを作らない軽い下調べで
+       先に数えておく(中身の有無はオブジェクトの数で判断できる)。 */
+    var total = 0;
+    var pre = Promise.resolve();
+    var liveIds = [];
+    ids.forEach(function(id){
+      pre = pre.then(function(){
+        return pageObjectsFor(id).then(function(list){
+          var usable = unstackTargets ? list.filter(function(o){
+            return o && (o.type === "text" || o.type === "image" ||
+                         o.type === "stroke" || o.type === "shape");
+          }) : list;
+          if (usable.length) { liveIds.push(id); total++; }
+        }).catch(function(){});
+      });
+    });
+    var chain = pre.catch(function(){});
+    liveIds.forEach(function(id, n){
       chain = chain.then(function(){
-        statusEl.textContent = "PDFを作っています…(" + (n + 1) + "/" + ids.length + ")";
+        statusEl.textContent = "PDFを作っています…(" + (n + 1) + "/" + total + ")";
         return Promise.resolve(pageCanvasModeFor(id)).then(function(mode){
           return pageObjectsFor(id).then(function(list){
             var pg = findPage(id);
             var cvs = renderNoteToCanvases(list, mode);
-            if (!cvs.length) return;                  // 空のノートは入れない
-            collected.push({ title: (pg && pg.title) || "ノート", pages: cvs });
+            if (!cvs.length) return;
+            noteNo++;
+            var all = [makeTitleCanvas(pg && pg.title, noteNo, total)].concat(cvs);
+            all.forEach(function(c){
+              var isLand = c.width > c.height;
+              if (!pdf) {
+                pdf = new window.jspdf.jsPDF({
+                  orientation: isLand ? "l" : "p", unit: "px", format: [c.width, c.height]
+                });
+              } else {
+                pdf.addPage([c.width, c.height], isLand ? "l" : "p");
+              }
+              /* 画質。倍率を下げている時だけ圧縮も強める */
+              pdf.addImage(c.toDataURL("image/jpeg",
+                            (window.__pdfBulkScale >= 2) ? 0.9 : 0.82),
+                           "JPEG", 0, 0, c.width, c.height);
+              added++;
+              /* ★入れ終わったcanvasは即座に捨てる。
+                 幅と高さを0にすると、確保していた絵の領域が解放される。
+                 端末によっては1x1にしないと解放されないことがあるので、
+                 両方を順に行う。 */
+              try {
+                var gg = c.getContext("2d");
+                if (gg) gg.clearRect(0, 0, c.width, c.height);
+                c.width = 1; c.height = 1;
+                c.width = 0; c.height = 0;
+              } catch (e) {}
+            });
           });
         });
-      }).catch(function(){ failed++; });
+      }).catch(function(){ failed++; })
+        /* ★1ノートごとに一度ブラウザへ処理を返す。
+           返さないと画面が固まり、端末が「応答なし」と判断して
+           落としにかかることがある。解放の猶予にもなる。 */
+        .then(function(){
+          return new Promise(function(res){ setTimeout(res, 0); });
+        });
     });
     return chain.catch(function(){}).then(function(){
-      var pdf = null, added = 0;
-      var total = collected.length;
-      collected.forEach(function(item, idx){
-        var all = [makeTitleCanvas(item.title, idx + 1, total)].concat(item.pages);
-        all.forEach(function(c){
-          var isLand = c.width > c.height;
-          if (!pdf) {
-            pdf = new window.jspdf.jsPDF({
-              orientation: isLand ? "l" : "p", unit: "px", format: [c.width, c.height]
-            });
-          } else {
-            pdf.addPage([c.width, c.height], isLand ? "l" : "p");
-          }
-          pdf.addImage(c.toDataURL("image/jpeg", 0.88), "JPEG", 0, 0, c.width, c.height);
-          added++;
-        });
-      });
+      window.__pdfBulkScale = 0;
       if (!pdf || !added) { statusEl.textContent = "書き出せる内容がありませんでした"; return; }
       var d = new Date(), p = function(x){ return (x < 10 ? "0" : "") + x; };
       pdf.save("inknote_" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
@@ -11938,6 +12094,7 @@ function exportAllAsPdf(ids) {
         (failed ? " ※" + failed + "件は読めませんでした" : "");
     });
   }).catch(function(){
+    window.__pdfBulkScale = 0;
     statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
   });
 }
@@ -15785,6 +15942,7 @@ function makeSelectedTheme() {
   });
 }
 $("#tidyWidthAllBtn").onclick = function(){ closeMenu(); setTimeout(tidyWidthsAll, 120); };
+$("#unstackAllBtn").onclick = function(){ closeMenu(); setTimeout(unstackWholePage, 120); };
 $("#colWidthBtn").onclick = function(){
   closeMenu();
   setTimeout(function(){
@@ -16058,7 +16216,17 @@ function openMoreSheet() {
                  fn: function(){ equalizeTextWidths("max"); } });
   }
   if (sel.length > 1) {
-    items.push({ label: "↧ 重なりを直して下に詰め直す", fn: function(){ unstackSelection(16); } });
+    items.push({ label: "↧ 重なりを直す(選んだ分)", fn: function(){
+      /* ★以前は横の位置を見ずに全部を1列へ縦積みしていたため、
+         別の列まで巻き込んで下へ送っていた。
+         横に重なっている相手だけを対象にする方式へ揃える。 */
+      var objs = unstackTargets(sel);
+      if (objs.length < 2) { statusEl.textContent = "2つ以上選んでから実行してください"; return; }
+      pushUndo();
+      var n = unstackAll(objs, 12);
+      inkDirty = true; refreshMeasures(); scheduleSave(); updateSelUI();
+      statusEl.textContent = n ? (n + "個を下へずらしました(↩で戻せます)") : "重なりはありませんでした";
+    } });
   }
   /* ★図・写真に検索用のことばを付ける。図の中身は文字にできないため、
      これが無いと図だけ検索から漏れる。 */
