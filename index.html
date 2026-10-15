@@ -1350,7 +1350,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.33">InkNote <small>v22.33</small></div>
+  <div class="brand" title="InkNote v22.34">InkNote <small>v22.34</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1942,7 +1942,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.33";
+var APP_VERSION = "22.34";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -11776,28 +11776,79 @@ function pageCanvasModeFor(id) {
 function renderNoteToCanvases(list, mode) {
   var out = [];
   if (!list || !list.length) return out;
+  var b = bboxOfList(list);
+  if (!b) return out;
   if (mode === "inf") {
-    /* 無限ノートは紙の区切りが無いので、内容の広がりをそのまま1枚に。
-       大きすぎると扱いにくいので renderPageToCanvas 側で上限が効く。 */
-    var c = renderPageToCanvas(null, 40, list);
-    if (c) out.push(c);
+    /* ★無限ノートは紙の区切りが無い。
+       以前は内容の広がりをそのまま1枚にしていたが、
+       縦に長いノートでは 584 x 5461 のような極端に細長い紙になり、
+       印刷も閲覧も実用にならなかった。
+       内容の形に合わせてA4縦/A4横を選び、その紙で区切って出す。 */
+    var infVert = (b.h >= b.w);
+    var IW = infVert ? A4W : A4H;
+    var IH = infVert ? A4H : A4W;
+    /* 内容の幅(横長なら高さ)を紙に収める倍率。
+       拡大はしない(1を超えない)ので、文字が無駄に大きくならない。 */
+    var fit = Math.min(1, infVert ? (IW / Math.max(1, b.w)) : (IH / Math.max(1, b.h)));
+    var stepW = IW / fit, stepH = IH / fit;        // ノート座標での1枚ぶん
+    var cols = infVert ? 1 : Math.ceil(b.w / stepW);
+    var rows = infVert ? Math.ceil(b.h / stepH) : 1;
+    var lim = 0;
+    for (var r = 0; r < rows; r++) {
+      for (var cc = 0; cc < cols; cc++) {
+        if (++lim > 60) break;                      // 暴走防止
+        var cv0 = renderPageToCanvas(
+          { x: b.x + cc * stepW, y: b.y + r * stepH, w: stepW, h: stepH }, 0, list);
+        if (cv0 && canvasHasInk(cv0)) out.push(cv0);
+      }
+    }
+    if (!out.length) {                              // 念のための受け皿
+      var c1 = renderPageToCanvas(null, 40, list);
+      if (c1) out.push(c1);
+    }
     return out;
   }
   var vert = (mode === "a4v");
-  var SW = vert ? A4W : A4H;
-  var SH = vert ? A4H : A4W;
-  // 内容がどこまで伸びているかで枚数を決める
-  var b = bboxOfList(list);
-  var used = b ? (vert ? (b.y + b.h) : (b.x + b.w)) : 0;
-  var n = Math.max(1, Math.ceil(Math.max(used, 1) / SH));
+  var SW = vert ? A4W : A4H;      // 紙の幅
+  var SH = vert ? A4H : A4W;      // 紙の高さ
+  /* ★紙が伸びる方向の長さで割る。
+     A4横は「横に」伸びるので幅(SW)で割らなければならないのに、
+     高さ(SH)で割っていたため枚数が過大になり、
+     余った分がまるごと真っ白なページとして出ていた
+     (実際の書き出しで16枚連続の白紙を確認)。 */
+  var used = vert ? (b.y + b.h) : (b.x + b.w);
+  var step = vert ? SH : SW;
+  var n = Math.max(1, Math.ceil(Math.max(used, 1) / step));
   if (n > 60) n = 60;                       // 暴走防止
   for (var i = 0; i < n; i++) {
     var ox = vert ? 0 : i * SW;
     var oy = vert ? i * SH : 0;
     var cv = renderPageToCanvas({ x: ox, y: oy, w: SW, h: SH }, 0, list);
-    if (cv) out.push(cv);
+    // ★中身が無い紙は入れない。白紙が混ざると読む時に流れが切れる
+    if (cv && canvasHasInk(cv)) out.push(cv);
   }
   return out;
+}
+/* その紙に中身があるか。
+   ★白紙のページが挟まると、読む人には「抜けている」ようにしか見えない。
+     書き出す前に実際の絵を調べて、何も無い紙は入れない。
+     端だけ薄く色が付くことがあるので、少し内側を見る。 */
+function canvasHasInk(c) {
+  try {
+    var g = c.getContext("2d");
+    var m = Math.round(Math.min(c.width, c.height) * 0.02);
+    var w = c.width - m * 2, h = c.height - m * 2;
+    if (w <= 0 || h <= 0) return true;
+    var d = g.getImageData(m, m, w, h).data;
+    // 紙の色を基準に、違う色の点が一定数あれば「中身あり」
+    var r0 = d[0], g0 = d[1], b0 = d[2], diff = 0;
+    for (var i = 0; i < d.length; i += 4 * 97) {        // 間引いて走査(速度のため)
+      if (Math.abs(d[i] - r0) + Math.abs(d[i+1] - g0) + Math.abs(d[i+2] - b0) > 30) {
+        if (++diff > 12) return true;
+      }
+    }
+    return false;
+  } catch (e) { return true; }                          // 調べられない時は入れる
 }
 /* オブジェクト列の外接範囲(contentBBoxの任意リスト版) */
 function bboxOfList(list) {
@@ -11841,7 +11892,12 @@ function exportAllAsPdf(ids) {
   if (!ids || !ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
   statusEl.textContent = "PDFを作っています…(0/" + ids.length + ")";
   loadJsPdf().then(function(){
-    var pdf = null, added = 0, failed = 0;
+    var failed = 0;
+    /* ★まず全ノートを集めてから組み立てる。
+       見出しに入れる「n / 全体」は、中身の無いノートを除いた
+       実数が分からないと決められないため(以前は全件数を使っていて
+       「7 / 14」のように最後まで行っても数が合わなかった)。 */
+    var collected = [];
     var chain = Promise.resolve();
     ids.forEach(function(id, n){
       chain = chain.then(function(){
@@ -11850,31 +11906,35 @@ function exportAllAsPdf(ids) {
           return pageObjectsFor(id).then(function(list){
             var pg = findPage(id);
             var cvs = renderNoteToCanvases(list, mode);
-            if (!cvs.length) return;
-            // 見出し + 中身 を順に足す
-            var all = [makeTitleCanvas(pg && pg.title, n + 1, ids.length)].concat(cvs);
-            all.forEach(function(c){
-              var isLand = c.width > c.height;
-              if (!pdf) {
-                pdf = new window.jspdf.jsPDF({
-                  orientation: isLand ? "l" : "p", unit: "px", format: [c.width, c.height]
-                });
-              } else {
-                pdf.addPage([c.width, c.height], isLand ? "l" : "p");
-              }
-              pdf.addImage(c.toDataURL("image/jpeg", 0.88), "JPEG", 0, 0, c.width, c.height);
-              added++;
-            });
+            if (!cvs.length) return;                  // 空のノートは入れない
+            collected.push({ title: (pg && pg.title) || "ノート", pages: cvs });
           });
         });
       }).catch(function(){ failed++; });
     });
     return chain.catch(function(){}).then(function(){
+      var pdf = null, added = 0;
+      var total = collected.length;
+      collected.forEach(function(item, idx){
+        var all = [makeTitleCanvas(item.title, idx + 1, total)].concat(item.pages);
+        all.forEach(function(c){
+          var isLand = c.width > c.height;
+          if (!pdf) {
+            pdf = new window.jspdf.jsPDF({
+              orientation: isLand ? "l" : "p", unit: "px", format: [c.width, c.height]
+            });
+          } else {
+            pdf.addPage([c.width, c.height], isLand ? "l" : "p");
+          }
+          pdf.addImage(c.toDataURL("image/jpeg", 0.88), "JPEG", 0, 0, c.width, c.height);
+          added++;
+        });
+      });
       if (!pdf || !added) { statusEl.textContent = "書き出せる内容がありませんでした"; return; }
       var d = new Date(), p = function(x){ return (x < 10 ? "0" : "") + x; };
       pdf.save("inknote_" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
                "_" + p(d.getHours()) + p(d.getMinutes()) + ".pdf");
-      statusEl.textContent = "PDFを書き出しました(" + added + "ページ)" +
+      statusEl.textContent = "PDFを書き出しました(" + total + "件 / " + added + "ページ)" +
         (failed ? " ※" + failed + "件は読めませんでした" : "");
     });
   }).catch(function(){
