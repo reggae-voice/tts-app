@@ -1350,7 +1350,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.37">InkNote <small>v22.37</small></div>
+  <div class="brand" title="InkNote v22.39">InkNote <small>v22.39</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1946,7 +1946,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.37";
+var APP_VERSION = "22.39";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13086,14 +13086,198 @@ function exportSheets() {
     statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
   });
 }
+/* =========================================================
+   内容を切らない分割位置を探す
+   ---------------------------------------------------------
+   ★等間隔で切ると、テキストBOXや図のまん中で分断される。
+     文章が途中で途切れたページができると読めない。
+     「どのBOXにも重なっていない高さ」を探して、そこで切る。
+   ★紙に収まりきらない大きなBOXは、どこで切っても切れてしまう。
+     その場合だけは諦めて等間隔で切る(切らないと出せないため)。
+========================================================= */
+/* 範囲内のBOXの上端・下端を集め、切ってよい高さの候補を作る */
+function safeCutsY(b, list, maxStep, minStep) {
+  var items = [];
+  for (var i = 0; i < list.length; i++) {
+    var ob = objBBox(list[i]);
+    if (!ob) continue;
+    if (ob.y + ob.h < b.y || ob.y > b.y + b.h) continue;   // 範囲外
+    items.push({ y1: ob.y, y2: ob.y + ob.h });
+  }
+  /* ★切ってよい高さの候補は「BOXの下端」。
+     そこで切れば、そのBOXまでが1枚に収まり、次のBOXから次の枚になる。
+     すき間が1pxも無く詰まっていても、境界なら必ず切れる。
+     上端も候補に入れる(直前のBOXとの間で切る場合に使う)。 */
+  var cand = [];
+  for (var c = 0; c < items.length; c++) { cand.push(items[c].y2); cand.push(items[c].y1); }
+  cand.sort(function(p, q){ return p - q; });
+  /* その高さがどのBOXの内部も通らないか */
+  var free = function(y){
+    for (var k = 0; k < items.length; k++)
+      if (y > items[k].y1 + 1 && y < items[k].y2 - 1) return false;
+    return true;
+  };
+  var cuts = [b.y], cur = b.y, guard = 0;
+  var end = b.y + b.h;
+  while (cur < end && guard++ < 500) {
+    var limit = cur + maxStep;
+    if (limit >= end) break;
+    /* 上限以下でいちばん下にある「切ってよい候補」を選ぶ。
+       cur から進めない候補(=同じ位置)は除く。 */
+    var best = null;
+    for (var i2 = 0; i2 < cand.length; i2++) {
+      var y = cand[i2];
+      if (y <= cur + 1) continue;
+      if (y > limit) break;
+      if (free(y)) best = y;
+    }
+    /* 候補が無いのは「1枚に収まらない大きなBOX」がある時だけ。
+       その場合はどこで切っても切れるので、上限で切る。 */
+    cur = (best == null) ? limit : best;
+    cuts.push(cur);
+  }
+  cuts.push(end);
+  return cuts;
+}
+/* 1枚に収めると字が潰れる大きさかどうか。
+   ★renderPageToCanvasは長辺4096pxに収める作りなので、
+     内容が長いほど倍率が下がる。A4 4ページ分で倍率0.91、
+     とても長いノートでは0.20まで落ち、A4の幅が163pxしか
+     残らず読めない絵になっていた。 */
+function tooBigForOneSheet(b) {
+  if (!b) return false;
+  var L = Math.max(b.w, b.h);
+  return (4096 / L) < 1.3;        // 倍率1.3未満なら分割した方がよい
+}
+/* 大きい内容をA4に割って、読める倍率のまま複数ページで出す */
+function exportSplitPages(b, margin) {
+  var vert = (b.h >= b.w);        // 縦長ならA4縦、横長ならA4横
+  var PW = vert ? A4W : A4H;
+  var PH = vert ? A4H : A4W;
+  var m = (margin == null) ? 24 : margin;
+  /* ★まず横を1枚に収められるか試す。
+     収まるなら横には割らず、縦にだけ送る(読む順が素直になる)。
+     収まらない時だけ横にも割る。
+     横を1枚に収める時は、紙幅に合わせて縮むぶん倍率が下がるので、
+     下がりすぎる場合は素直に横も割る。 */
+  var cols = 1, scaleIfOneCol = (PW - m * 2) / Math.max(1, b.w);
+  if (scaleIfOneCol < 0.55) cols = Math.max(1, Math.ceil(b.w / (PW - m * 2)));
+  var stepW = b.w / cols;
+  /* 縦の切れ目は、内容を分断しない高さを探して決める。
+     1枚に入る高さ(maxStep)を上限に、そこから戻りながら
+     どのBOXにも重なっていない位置を探す。 */
+  var fit = (cols === 1) ? Math.min(1, scaleIfOneCol) : 1;
+  var maxStep = (PH - m * 2) / Math.max(0.2, fit);
+  var yCuts = safeCutsY(b, objects, maxStep, maxStep * 0.35);
+  var rows = Math.max(1, yCuts.length - 1);
+  var total = cols * rows;
+  if (total > 60) { alert("内容が大きすぎます。範囲を分けて書き出してください"); return; }
+  /* ★どうしても途中で切れてしまう物を数えて、先に知らせる。
+     起きるのは次の2つで、どちらも1本の線で割る限り避けられない。
+       ・紙より大きいBOX(そもそも1枚に入らない)
+       ・左右で段差のある2列(片方の切れ目が他方の途中を通る)
+     黙って切ると「書き出しが壊れた」と見えるので、
+     件数を伝えて、続けるか選んでもらう。 */
+  var cutThrough = [];
+  for (var ci = 1; ci < yCuts.length - 1; ci++) {
+    for (var oi = 0; oi < objects.length; oi++) {
+      var ob2 = objBBox(objects[oi]);
+      if (!ob2) continue;
+      if (yCuts[ci] > ob2.y + 1 && yCuts[ci] < ob2.y + ob2.h - 1) {
+        if (cutThrough.indexOf(objects[oi]) === -1) cutThrough.push(objects[oi]);
+      }
+    }
+  }
+  if (cutThrough.length && !window.__splitConfirmed) {
+    showSheet(total + "枚に分けて書き出します", [
+      { label: "⚠ " + cutThrough.length + "個が紙をまたぎます。このまま続ける",
+        fn: function(){
+          window.__splitConfirmed = true;
+          exportSplitPages(b, margin);
+          window.__splitConfirmed = false;
+        } },
+      { label: "↧ 先に「重なりを直す」で整えてから出す", fn: function(){
+          closeExp && closeExp();
+          setTimeout(unstackWholePage, 150);
+        } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
+  }
+  if (exportFmt === "png") {
+    var n = 0;
+    for (var r = 0; r < rows; r++) {
+      for (var c2 = 0; c2 < cols; c2++) {
+        var cv = renderPageToCanvas(
+          { x: b.x + c2 * stepW, y: yCuts[r],
+            w: stepW, h: yCuts[r + 1] - yCuts[r] }, m);
+        if (!cv || !canvasHasInk(cv)) continue;
+        n++;
+        downloadURL(cv.toDataURL("image/png"), "inknote_p" + n + ".png");
+        try { cv.width = 0; cv.height = 0; } catch (e) {}
+      }
+    }
+    statusEl.textContent = n + "枚のPNGを書き出しました";
+    return;
+  }
+  statusEl.textContent = "PDF生成中…(0/" + total + ")";
+  loadJsPdf().then(function(){
+    var pdf = null, added = 0, i = 0;
+    var step = function(){
+      if (i >= total) {
+        if (!pdf || !added) { statusEl.textContent = "書き出す内容がありませんでした"; return; }
+        var pg = findPage(currentId);
+        pdf.save(exportName(pg, "pdf"));
+        statusEl.textContent = added + "ページのPDFを書き出しました";
+        return;
+      }
+      var r = Math.floor(i / cols), c3 = i % cols;
+      i++;
+      statusEl.textContent = "PDF生成中…(" + i + "/" + total + ")";
+      var cv = renderPageToCanvas(
+        { x: b.x + c3 * stepW, y: yCuts[r],
+          w: stepW, h: yCuts[r + 1] - yCuts[r] }, m);
+      if (cv && canvasHasInk(cv)) {
+        var isLand = cv.width > cv.height;
+        if (!pdf) {
+          pdf = new window.jspdf.jsPDF({
+            orientation: isLand ? "l" : "p", unit: "px", format: [cv.width, cv.height]
+          });
+        } else {
+          pdf.addPage([cv.width, cv.height], isLand ? "l" : "p");
+        }
+        pdf.addImage(cv.toDataURL("image/jpeg", 0.9), "JPEG", 0, 0, cv.width, cv.height);
+        added++;
+      }
+      /* ★1枚ずつ解放し、ブラウザに処理を返しながら進める。
+         まとめて作ると端末のメモリが尽きてタブごと落ちる。 */
+      try { if (cv) { cv.width = 0; cv.height = 0; } } catch (e) {}
+      setTimeout(step, 0);
+    };
+    step();
+  }).catch(function(){
+    statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
+  });
+}
 function doExport(b, margin) {
+  var bb = b || contentBBox();
+  /* ★大きい内容は1枚に押し込まず、A4に割って出す。
+     1枚に収めると倍率が下がって字が読めなくなるため。 */
+  if (tooBigForOneSheet(bb)) { exportSplitPages(bb, margin); return; }
   var c = renderPageToCanvas(b, margin);
   if (!c) { alert("書き出す内容がありません"); return; }
   if (exportFmt === "pdf") exportPDFCanvas(c);
   else exportPNGCanvas(c);
 }
 function openExp() {
-  $("#expSheetRow").style.display = (canvasMode === "inf") ? "none" : "";
+  /* ★無限ノートでもA4で割って出せるようにする。
+     以前は隠していたため「全体(すべてのオブジェクト)」しか選べず、
+     それは1枚に押し込む方式なので必ず字が潰れていた。 */
+  $("#expSheetRow").style.display = "";
+  $("#expSheetRow").querySelector(".pp-title").textContent =
+    (canvasMode === "inf")
+      ? "📄 A4に割って書き出す(印刷用・推奨)"
+      : "📄 A4ページとして書き出す(印刷用・推奨)";
   $("#expTitle").textContent = "書き出し範囲を選択(" + (exportFmt === "pdf" ? "PDF" : "PNG") + ")";
   $("#expSelRow").style.display = sel.length ? "" : "none";
   $("#expPanel").classList.add("show");
@@ -13114,7 +13298,10 @@ $("#exClose").onclick = closeExp;
       var r = this.getAttribute("data-r");
       closeExp();
       if (r === "sheet") {
-        exportSheets();                           // A4用紙をページ単位で正確に出力
+        /* ★無限ノートには用紙の区切りが無いので、
+           内容の範囲をA4に割る方式で出す。 */
+        if (canvasMode === "inf") exportSplitPages(contentBBox(), 24);
+        else exportSheets();                      // A4用紙をページ単位で正確に出力
       } else if (r === "all") {
         doExport(null, 40);                       // 全オブジェクト+余白
       } else if (r === "view") {
