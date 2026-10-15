@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.41">InkNote <small>v22.41</small></div>
+  <div class="brand" title="InkNote v22.42">InkNote <small>v22.42</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.41";
+var APP_VERSION = "22.42";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13311,16 +13311,37 @@ function exportSplitPages(b, margin) {
      下がりすぎる場合は素直に横も割る。 */
   var cols = 1, scaleIfOneCol = (PW - m * 2) / Math.max(1, b.w);
   if (scaleIfOneCol < 0.55) cols = Math.max(1, Math.ceil(b.w / (PW - m * 2)));
+  /* ★枚数が多すぎる時は、1枚に入れる量を増やして(=少し縮めて)収める。
+     以前はここで「大きすぎます」と断って何も出さなかったが、
+     広い無限ノートでは普通に60枚を超えるため、実質書き出せなかった。
+     縮めすぎると読めないので、実効倍率1.0(=縮小50%)までに留め、
+     それでも収まらない時だけ断る。 */
+  var zoom = 1;
+  var MAXP = 60, MINZOOM = 0.5;
+  for (var z = 0; z < 8; z++) {
+    var cw = (PW - m * 2) / zoom, ch = (PH - m * 2) / zoom;
+    var tc = Math.max(1, Math.ceil(b.w / cw)) * Math.max(1, Math.ceil(b.h / ch));
+    if (tc <= MAXP || zoom <= MINZOOM + 0.001) break;
+    zoom = Math.max(MINZOOM, zoom * 0.8);
+  }
+  if (zoom < 1) {
+    // 縮めた時は、横の分割も縮めた幅で計算し直す
+    cols = Math.max(1, Math.ceil(b.w / ((PW - m * 2) / zoom)));
+  }
   var stepW = b.w / cols;
   /* 縦の切れ目は、内容を分断しない高さを探して決める。
      1枚に入る高さ(maxStep)を上限に、そこから戻りながら
      どのBOXにも重なっていない位置を探す。 */
   var fit = (cols === 1) ? Math.min(1, scaleIfOneCol) : 1;
-  var maxStep = (PH - m * 2) / Math.max(0.2, fit);
+  var maxStep = (PH - m * 2) / Math.max(0.2, fit * zoom);
   var yCuts = safeCutsY(b, objects, maxStep, maxStep * 0.35);
   var rows = Math.max(1, yCuts.length - 1);
   var total = cols * rows;
-  if (total > 60) { alert("内容が大きすぎます。範囲を分けて書き出してください"); return; }
+  if (total > MAXP * 2) {
+    alert("内容が大きすぎて " + total + "枚になります。\n" +
+          "「範囲をドラッグで指定」で分けて書き出してください");
+    return;
+  }
   /* ★どうしても途中で切れてしまう物を数えて、先に知らせる。
      起きるのは次の2つで、どちらも1本の線で割る限り避けられない。
        ・紙より大きいBOX(そもそも1枚に入らない)
@@ -13336,6 +13357,26 @@ function exportSplitPages(b, margin) {
         if (cutThrough.indexOf(objects[oi]) === -1) cutThrough.push(objects[oi]);
       }
     }
+  }
+  /* ★枚数が多い時は先に知らせる。
+     30枚を超えるPDFは端末にも負荷がかかるので、
+     範囲を絞る道も示した上で選んでもらう。 */
+  if (total > 30 && !window.__splitConfirmed) {
+    showSheet(total + "枚になります" + (zoom < 1 ? "(収めるため" + Math.round(zoom * 100) + "%に縮小)" : ""), [
+      { label: "📚 このまま " + total + "枚で書き出す", fn: function(){
+          window.__splitConfirmed = true;
+          exportSplitPages(b, margin);
+          window.__splitConfirmed = false;
+        } },
+      { label: "✂ 範囲をドラッグで指定して分ける", fn: function(){
+          // 既存の「範囲をドラッグで指定」と同じ状態にする
+          pickingExport = true;
+          capture.className = "active";
+          statusEl.textContent = "書き出す範囲をドラッグで囲んでください";
+        } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
   }
   if (cutThrough.length && !window.__splitConfirmed) {
     showSheet(total + "枚に分けて書き出します", [
