@@ -438,6 +438,27 @@
   }
   #vscroll.on{display:block}
   /* --- 縦(A4縦): 右端 --- */
+  /* 2本目(無限ノートで足りない向きを補う) */
+  #vscroll2{position:fixed;z-index:26;display:none;touch-action:none}
+  #vscroll2.on{display:block}
+  #vscroll2.v{right:2px;width:30px;
+    top:calc(env(safe-area-inset-top) + 90px);
+    bottom:calc(env(safe-area-inset-bottom) + 120px)}
+  #vscroll2.h{left:14px;height:30px;
+    bottom:calc(env(safe-area-inset-bottom) + 92px);
+    right:calc(env(safe-area-inset-right) + 150px)}
+  #vscroll2.v #vsTrack2{position:absolute;right:10px;top:0;bottom:0;width:4px;
+    background:rgba(120,126,140,.18);border-radius:2px}
+  #vscroll2.h #vsTrack2{position:absolute;left:0;right:0;bottom:10px;height:4px;
+    background:rgba(120,126,140,.18);border-radius:2px}
+  #vscroll2.v #vsThumb2{position:absolute;right:3px;width:18px;height:52px;
+    background:rgba(70,80,96,.55);border-radius:9px;
+    box-shadow:0 1px 5px rgba(15,18,24,.3)}
+  #vscroll2.h #vsThumb2{position:absolute;bottom:3px;height:18px;width:52px;
+    background:rgba(70,80,96,.55);border-radius:9px;
+    box-shadow:0 1px 5px rgba(15,18,24,.3)}
+  #vscroll2.drag #vsThumb2{background:var(--accent)}
+  body.editing-mode #vscroll2{display:none !important}
   #vscroll.v{
     right:2px;width:30px;
     top:calc(env(safe-area-inset-top) + 90px);
@@ -1350,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.40">InkNote <small>v22.40</small></div>
+  <div class="brand" title="InkNote v22.41">InkNote <small>v22.41</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1508,6 +1529,12 @@ window.onerror = function(msg, src, line){
   <div id="vsTrack"></div>
   <div id="vsThumb"></div>
   <div id="vsPage"></div>
+</div>
+<!-- ★無限ノートは縦にも横にも広がる。本体のスライダーは
+     どちらか一方しか出せないので、足りない方をこちらで補う。 -->
+<div id="vscroll2">
+  <div id="vsTrack2"></div>
+  <div id="vsThumb2"></div>
 </div>
 <div id="editHandle" title="ドラッグで移動">✥</div>
 <div id="toast"></div>
@@ -1946,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.40";
+var APP_VERSION = "22.41";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5894,6 +5921,69 @@ $("#barToggle").onclick = function(){
   window.__vertNow = vertNow;               // テスト・デバッグ用
   window.__scrollRange = scrollRange;
   /* ビュー位置 → つまみ位置 */
+  /* =========================================================
+     2本目のスライダー(無限ノート専用)
+     ---------------------------------------------------------
+     ★無限ノートは縦にも横にも広がるのに、本体のスライダーは
+       「動く量が大きい方」だけを出す作りだった。
+       そのため横に大きく広がっていても、縦の方がわずかに大きいと
+       横スライダーが一切出ず、横へ動かす手段が無くなっていた。
+       足りない向きをこちらで補う。
+     ★A4モードは紙の向きが決まっているので出さない。 */
+  var vs2 = $("#vscroll2"), thumb2 = $("#vsThumb2");
+  function secondRange(vert2) {
+    var info = infExtentAndOrigin(vert2);
+    var total2 = info.extent * view.s;
+    return Math.max(1, total2 - (vert2 ? innerHeight : innerWidth) + 48);
+  }
+  function trackLen2(vert2) {
+    var el = vs2.getBoundingClientRect();
+    return Math.max(1, (vert2 ? el.height : el.width) - 52);
+  }
+  function syncSecondBar(mainVert) {
+    if (canvasMode !== "inf") { vs2.classList.remove("on"); return; }
+    var v2 = !mainVert;                       // 本体が出していない方を担当
+    var info = infExtentAndOrigin(v2);
+    var need = info.extent * view.s - (v2 ? innerHeight : innerWidth);
+    if (need <= 8) { vs2.classList.remove("on"); return; }   // 動く余地が無い
+    vs2.classList.add("on");
+    vs2.classList.toggle("v", v2);
+    vs2.classList.toggle("h", !v2);
+    var org2 = info.origin * view.s;
+    var pos2 = -org2 + 24 - (v2 ? view.y : view.x);
+    var r2 = Math.max(0, Math.min(1, pos2 / secondRange(v2)));
+    if (v2) { thumb2.style.top = (r2 * trackLen2(true)) + "px"; thumb2.style.left = ""; }
+    else { thumb2.style.left = (r2 * trackLen2(false)) + "px"; thumb2.style.top = ""; }
+  }
+  /* 2本目のドラッグ。本体と同じ式で動かす */
+  (function(){
+    var dg = false;
+    vs2.addEventListener("pointerdown", function(e){
+      if (!vs2.classList.contains("on")) return;
+      e.preventDefault(); e.stopPropagation();
+      dg = true; vs2.classList.add("drag");
+      try { vs2.setPointerCapture(e.pointerId); } catch (err) {}
+      var v2 = vs2.classList.contains("v");
+      var move = function(ev){
+        var rc = vs2.getBoundingClientRect();
+        var p = v2 ? (ev.clientY - rc.top - 26) : (ev.clientX - rc.left - 26);
+        var r = Math.max(0, Math.min(1, p / trackLen2(v2)));
+        var info = infExtentAndOrigin(v2);
+        var pos = r * secondRange(v2);
+        if (v2) view.y = -info.origin * view.s + 24 - pos;
+        else view.x = -info.origin * view.s + 24 - pos;
+        applyView(); updateSelUI();
+      };
+      move(e);
+      var up = function(){
+        dg = false; vs2.classList.remove("drag");
+        removeEventListener("pointermove", move);
+        removeEventListener("pointerup", up);
+      };
+      addEventListener("pointermove", move);
+      addEventListener("pointerup", up);
+    });
+  })();
   window.__syncVScroll = function() {
     if (canvasMode === "inf") {
       var cb0 = contentBBox();
@@ -5901,6 +5991,7 @@ $("#barToggle").onclick = function(){
         vs.classList.remove("on");
         document.body.classList.remove("has-vscroll-v");
         document.body.classList.remove("has-hscroll");
+        $("#vscroll2").classList.remove("on");
         return;
       }
       // ★内容が今の画面の中にすっぽり収まっているなら、動かす意味が無い。
@@ -5915,6 +6006,7 @@ $("#barToggle").onclick = function(){
         vs.classList.remove("on");
         document.body.classList.remove("has-vscroll-v");
         document.body.classList.remove("has-hscroll");
+        $("#vscroll2").classList.remove("on");
         return;
       }
     }
@@ -5939,6 +6031,7 @@ $("#barToggle").onclick = function(){
       : sheetOrigin(vert) * view.s;
     var pos = -org + 24 - (vert ? view.y : view.x);     // 0=先頭
     var ratio = Math.max(0, Math.min(1, pos / scrollRange()));
+    syncSecondBar(vert);                               // もう一方の向きも面倒を見る
     if (vert) {
       thumb.style.top = (ratio * trackLen()) + "px";
       thumb.style.left = "";
@@ -12196,6 +12289,24 @@ function dataURLToBytes(u) {
 ========================================================= */
 function exportAllAsZip(ids) {
   if (!ids || !ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
+  /* ★ZIPは全ファイルをメモリに持ってから1つにまとめる作りなので、
+     件数が多いと端末が落ちる(PDFで落ちた端末なら特に)。
+     多い時は分けて出す道を先に示す。 */
+  if (ids.length > 5 && !window.__zipConfirmed) {
+    var half = Math.ceil(ids.length / 2);
+    var go = function(list){
+      window.__zipConfirmed = true;
+      exportAllAsZip(list);
+      window.__zipConfirmed = false;
+    };
+    showSheet(ids.length + "件をZIPにします", [
+      { label: "🗜 このまま全部(端末によっては落ちます)", fn: function(){ go(ids); } },
+      { label: "✂ 前半だけ(" + half + "件)", fn: function(){ go(ids.slice(0, half)); } },
+      { label: "✂ 後半だけ(" + (ids.length - half) + "件)", fn: function(){ go(ids.slice(half)); } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
+  }
   statusEl.textContent = "ZIPを作っています…(0/" + ids.length + ")";
   var files = [], used = {}, chain = Promise.resolve();
   var okCount = 0, failCount = 0;
@@ -12238,13 +12349,21 @@ function exportAllAsZip(ids) {
           try {
             var c = renderPageToCanvas(null, 40, list);
             if (c) {
-              var d2 = dataURLToBytes(c.toDataURL("image/png"));
-              if (d2) files.push({ name: dir + "/見た目.png", data: d2.bytes });
+              /* ★PNGではなくJPEGにする。
+                 見た目の控えは原寸でなくてよく、PNGだと
+                 1ノートで数MBになりメモリを圧迫する。 */
+              var d2 = dataURLToBytes(c.toDataURL("image/jpeg", 0.85));
+              if (d2) files.push({ name: dir + "/見た目." + d2.ext, data: d2.bytes });
+              // 使い終わったcanvasは即解放(溜め込むと端末が落ちる)
+              try { c.width = 1; c.height = 1; c.width = 0; c.height = 0; } catch (e2) {}
             }
           } catch (e) {}
         }
         okCount++;
       }).catch(function(){ failCount++; });
+    }).then(function(){
+      // 1ノートごとにブラウザへ処理を返す(固まり・強制終了を防ぐ)
+      return new Promise(function(res){ setTimeout(res, 0); });
     });
   });
   chain.catch(function(){}).then(function(){
@@ -12386,8 +12505,20 @@ function openAiExportSheet() {
       /* ★文字だけの書き出しは手書き・画像が丸ごと落ちる。
          ZIPなら「文字は文字のまま、絵は絵のまま」まとめて渡せるので、
          取りこぼしなく抜き出したい時はこれを使う。 */
-      { label: "🗜 ZIPでまるごと(文字+画像+見た目)",
+      /* ★全ノートを一度にZIPにすると、全部の画像をメモリに溜めてから
+         まとめる作りなので、件数が多いと端末が落ちる。
+         1件ずつ出す道を先に出しておく。 */
+      { label: "🗜 ZIPでまるごと(" + ids.length + "件まとめて)",
         fn: function(){ exportAllAsZip(ids); } },
+      { label: "🗜 ZIPを1ノートずつ出す(確実)", fn: function(){
+          var sub = ids.slice(0, 40).map(function(id){
+            var pg2 = findPage(id);
+            return { label: "📄 " + ((pg2 && pg2.title) || "ノート"),
+                     fn: function(){ exportAllAsZip([id]); } };
+          });
+          sub.push({ label: "キャンセル", cancel: true });
+          showSheet("どのノートを出しますか", sub);
+        } },
       { label: (many ? "📄 文字だけファイルに保存" : "📄 文字だけファイルに保存"),
         fn: function(){ runAiExport(ids, label, true); } },
       { label: (many ? "📋 文字だけコピー(長いと途中で切れることがあります)" : "📋 文字だけコピー"),
@@ -12894,8 +13025,12 @@ function exportReadableHtml() {
              ★文字だけだと図の情報が落ちるので、必ず添える。 */
           try {
             var c = renderPageToCanvas(null, 40, list);
-            if (c) parts.push('<img alt="' + htmlEsc(title) + '" src="' +
-                              c.toDataURL("image/jpeg", 0.82) + '">');
+            if (c) {
+              parts.push('<img alt="' + htmlEsc(title) + '" src="' +
+                         c.toDataURL("image/jpeg", 0.82) + '">');
+              // 使い終わったcanvasは即解放(全ノート分を溜めると落ちる)
+              try { c.width = 1; c.height = 1; c.width = 0; c.height = 0; } catch (e2) {}
+            }
           } catch (e) {}
         }
         parts.push("</section>");
