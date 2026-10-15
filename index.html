@@ -470,8 +470,22 @@
   /* ===== スライダーとチップの重なり回避 =====
      A4横: 横スライダーが画面下を横切るので、下のチップ類をその上へ逃がす
      A4縦: 縦スライダーが右端にあるので、右のチップ類を左へ寄せる       */
+  /* ★A4横だけでなく、無限ノートでも下に横スライダーが出る。
+     以前はこの逃がしがA4横限定だったため、無限ノートでは
+     貼り付けボタンと22px重なり、しかもスライダーの方が手前(z-index)
+     なので、重なった所を押すとスライダーが反応して貼り付けできなかった。
+     モードではなく「いま下に横スライダーが出ているか」で逃がす。 */
   body.mode-a4h #pasteChip,
-  body.mode-a4h #zoomChip{bottom:calc(env(safe-area-inset-bottom) + 128px)}
+  body.mode-a4h #zoomChip,
+  body.has-hscroll #pasteChip,
+  body.has-hscroll #zoomChip,
+  body.has-hscroll #mapChip,
+  body.has-hscroll #topChip{bottom:calc(env(safe-area-inset-bottom) + 128px)}
+  /* ★それでも重なった場合に備え、貼り付けなど操作系を手前にする。
+     スライダーは広い帯なので、ボタンが隠れる側になると押せない。 */
+  body.has-hscroll #pasteChip,
+  body.has-hscroll #mapChip,
+  body.has-hscroll #topChip{z-index:27}
   body.mode-a4h #fitChip{bottom:calc(env(safe-area-inset-bottom) + 166px)}
   body.mode-a4h #mapChip{bottom:calc(env(safe-area-inset-bottom) + 174px)}
   body.mode-a4h #posChip{bottom:calc(env(safe-area-inset-bottom) + 204px)}
@@ -1336,7 +1350,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.30">InkNote <small>v22.30</small></div>
+  <div class="brand" title="InkNote v22.33">InkNote <small>v22.33</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1502,7 +1516,7 @@ window.onerror = function(msg, src, line){
 <button id="editDone" title="入力を確定">✓ 確定</button>
 
 <div id="cropModal">
-  <div id="cropHead">必要な部分をドラッグで囲む</div>
+  <div id="cropHead">必要な部分をドラッグで囲む(囲んだ後は四隅・各辺を掴んで調整できます)</div>
   <canvas id="cropCanvas"></canvas>
   <div id="cropBtns">
     <button id="cropCancel">中止</button>
@@ -1928,7 +1942,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.30";
+var APP_VERSION = "22.33";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -5882,6 +5896,7 @@ $("#barToggle").onclick = function(){
       if (!cb0) {                                             // 何も置かれていない
         vs.classList.remove("on");
         document.body.classList.remove("has-vscroll-v");
+        document.body.classList.remove("has-hscroll");
         return;
       }
       // ★内容が今の画面の中にすっぽり収まっているなら、動かす意味が無い。
@@ -5895,6 +5910,7 @@ $("#barToggle").onclick = function(){
       if (lo0 >= scrLo - 1 && hi0 <= scrHi + 1) {
         vs.classList.remove("on");
         document.body.classList.remove("has-vscroll-v");
+        document.body.classList.remove("has-hscroll");
         return;
       }
     }
@@ -11738,6 +11754,298 @@ var AI_PROMPT_HEAD =
   "- 〔画像 #番号〕 は地の文にそのまま書いてください\n" +
   "- <script> や <style>、画像は使わないでください(取り込み時に除去されます)\n" +
   "\n---\n\n";
+/* =========================================================
+   全ノートを1つのPDFに
+   ---------------------------------------------------------
+   ★これまでPDFは「いま開いているノート1件」だけだった。
+     ノートごとに保存された用紙設定(A4縦/A4横/無限)を見て、
+     A4のノートは紙単位で、無限ノートは内容の広がりに合わせた
+     1枚として出す。設定をユーザーが覚えていなくても困らない。
+   ★ノートの切れ目に見出しページを挟み、どこからどこまでが
+     どのノートかを紙の上で分かるようにする。
+========================================================= */
+/* 指定ノートの用紙設定(保存値)を読む。無ければ今の設定を使う */
+function pageCanvasModeFor(id) {
+  if (id === currentId) return canvasMode;
+  return kvGet("page_" + id).then(function(rec){
+    var m = rec && rec.canvasMode;
+    return (m === "inf" || m === "a4v" || m === "a4h") ? m : canvasMode;
+  }).catch(function(){ return canvasMode; });
+}
+/* 任意のオブジェクト列を、指定モードの紙に割って canvas の配列にする */
+function renderNoteToCanvases(list, mode) {
+  var out = [];
+  if (!list || !list.length) return out;
+  if (mode === "inf") {
+    /* 無限ノートは紙の区切りが無いので、内容の広がりをそのまま1枚に。
+       大きすぎると扱いにくいので renderPageToCanvas 側で上限が効く。 */
+    var c = renderPageToCanvas(null, 40, list);
+    if (c) out.push(c);
+    return out;
+  }
+  var vert = (mode === "a4v");
+  var SW = vert ? A4W : A4H;
+  var SH = vert ? A4H : A4W;
+  // 内容がどこまで伸びているかで枚数を決める
+  var b = bboxOfList(list);
+  var used = b ? (vert ? (b.y + b.h) : (b.x + b.w)) : 0;
+  var n = Math.max(1, Math.ceil(Math.max(used, 1) / SH));
+  if (n > 60) n = 60;                       // 暴走防止
+  for (var i = 0; i < n; i++) {
+    var ox = vert ? 0 : i * SW;
+    var oy = vert ? i * SH : 0;
+    var cv = renderPageToCanvas({ x: ox, y: oy, w: SW, h: SH }, 0, list);
+    if (cv) out.push(cv);
+  }
+  return out;
+}
+/* オブジェクト列の外接範囲(contentBBoxの任意リスト版) */
+function bboxOfList(list) {
+  var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity, any = false;
+  for (var i = 0; i < list.length; i++) {
+    var b = objBBox(list[i]);
+    if (!b) continue;
+    any = true;
+    x1 = Math.min(x1, b.x); y1 = Math.min(y1, b.y);
+    x2 = Math.max(x2, b.x + b.w); y2 = Math.max(y2, b.y + b.h);
+  }
+  return any ? { x: x1, y: y1, w: x2 - x1, h: y2 - y1 } : null;
+}
+/* ノートの区切りに挟む見出しページ */
+function makeTitleCanvas(title, idx, total) {
+  var c = document.createElement("canvas");
+  c.width = Math.round(A4W * 2); c.height = Math.round(A4H * 2);
+  var g = c.getContext("2d");
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = "#111318";
+  g.textAlign = "center";
+  g.font = "700 " + (46 * 2) + "px system-ui, sans-serif";
+  // 長い題名は折り返す
+  var words = String(title || "ノート");
+  var maxW = c.width - 160, lines = [], cur = "";
+  for (var i = 0; i < words.length; i++) {
+    var t = cur + words[i];
+    if (g.measureText(t).width > maxW && cur) { lines.push(cur); cur = words[i]; }
+    else cur = t;
+  }
+  if (cur) lines.push(cur);
+  var y = c.height / 2 - (lines.length - 1) * 60;
+  lines.slice(0, 6).forEach(function(L){ g.fillText(L, c.width / 2, y); y += 120; });
+  g.fillStyle = "#6b7280";
+  g.font = "400 " + (22 * 2) + "px system-ui, sans-serif";
+  g.fillText(idx + " / " + total, c.width / 2, c.height - 160);
+  return c;
+}
+function exportAllAsPdf(ids) {
+  if (!ids || !ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
+  statusEl.textContent = "PDFを作っています…(0/" + ids.length + ")";
+  loadJsPdf().then(function(){
+    var pdf = null, added = 0, failed = 0;
+    var chain = Promise.resolve();
+    ids.forEach(function(id, n){
+      chain = chain.then(function(){
+        statusEl.textContent = "PDFを作っています…(" + (n + 1) + "/" + ids.length + ")";
+        return Promise.resolve(pageCanvasModeFor(id)).then(function(mode){
+          return pageObjectsFor(id).then(function(list){
+            var pg = findPage(id);
+            var cvs = renderNoteToCanvases(list, mode);
+            if (!cvs.length) return;
+            // 見出し + 中身 を順に足す
+            var all = [makeTitleCanvas(pg && pg.title, n + 1, ids.length)].concat(cvs);
+            all.forEach(function(c){
+              var isLand = c.width > c.height;
+              if (!pdf) {
+                pdf = new window.jspdf.jsPDF({
+                  orientation: isLand ? "l" : "p", unit: "px", format: [c.width, c.height]
+                });
+              } else {
+                pdf.addPage([c.width, c.height], isLand ? "l" : "p");
+              }
+              pdf.addImage(c.toDataURL("image/jpeg", 0.88), "JPEG", 0, 0, c.width, c.height);
+              added++;
+            });
+          });
+        });
+      }).catch(function(){ failed++; });
+    });
+    return chain.catch(function(){}).then(function(){
+      if (!pdf || !added) { statusEl.textContent = "書き出せる内容がありませんでした"; return; }
+      var d = new Date(), p = function(x){ return (x < 10 ? "0" : "") + x; };
+      pdf.save("inknote_" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+               "_" + p(d.getHours()) + p(d.getMinutes()) + ".pdf");
+      statusEl.textContent = "PDFを書き出しました(" + added + "ページ)" +
+        (failed ? " ※" + failed + "件は読めませんでした" : "");
+    });
+  }).catch(function(){
+    statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
+  });
+}
+
+/* =========================================================
+   ZIP書き出し(無圧縮)
+   ---------------------------------------------------------
+   ★外部ライブラリを使わず自前で組む。
+     ZIPの圧縮なし形式(store)は構造が単純で、画像は元々PNG/JPEGで
+     圧縮済みなので、まとめるだけならこれで十分。
+     ライブラリを読みに行かない分、初回の通信が要らず、
+     オフラインでも確実に書き出せる。
+========================================================= */
+var CRC_TABLE = null;
+function crc32(bytes) {
+  if (!CRC_TABLE) {
+    CRC_TABLE = new Int32Array(256);
+    for (var n = 0; n < 256; n++) {
+      var c = n;
+      for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      CRC_TABLE[n] = c;
+    }
+  }
+  var crc = -1;
+  for (var i = 0; i < bytes.length; i++)
+    crc = (crc >>> 8) ^ CRC_TABLE[(crc ^ bytes[i]) & 0xFF];
+  return (crc ^ -1) >>> 0;
+}
+function zipPushU16(a, v) { a.push(v & 0xFF, (v >>> 8) & 0xFF); }
+function zipPushU32(a, v) { a.push(v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF); }
+/* name: ZIP内のパス, data: Uint8Array */
+function makeZip(files) {
+  var parts = [], central = [], offset = 0;
+  var enc = new TextEncoder();
+  files.forEach(function(f){
+    var nameB = enc.encode(f.name);
+    var data = f.data;
+    var crc = crc32(data);
+    var local = [];
+    zipPushU32(local, 0x04034b50);
+    zipPushU16(local, 20); zipPushU16(local, 0x0800);   // UTF-8 のファイル名
+    zipPushU16(local, 0);                                // 無圧縮
+    zipPushU16(local, 0); zipPushU16(local, 0);          // 時刻(使わない)
+    zipPushU32(local, crc);
+    zipPushU32(local, data.length); zipPushU32(local, data.length);
+    zipPushU16(local, nameB.length); zipPushU16(local, 0);
+    var localU = new Uint8Array(local);
+    parts.push(localU, nameB, data);
+    var cen = [];
+    zipPushU32(cen, 0x02014b50);
+    zipPushU16(cen, 20); zipPushU16(cen, 20); zipPushU16(cen, 0x0800);
+    zipPushU16(cen, 0);
+    zipPushU16(cen, 0); zipPushU16(cen, 0);
+    zipPushU32(cen, crc);
+    zipPushU32(cen, data.length); zipPushU32(cen, data.length);
+    zipPushU16(cen, nameB.length); zipPushU16(cen, 0); zipPushU16(cen, 0);
+    zipPushU16(cen, 0); zipPushU16(cen, 0); zipPushU32(cen, 0);
+    zipPushU32(cen, offset);
+    central.push(new Uint8Array(cen), nameB);
+    offset += localU.length + nameB.length + data.length;
+  });
+  var cenSize = 0;
+  central.forEach(function(p){ cenSize += p.length; });
+  var end = [];
+  zipPushU32(end, 0x06054b50);
+  zipPushU16(end, 0); zipPushU16(end, 0);
+  zipPushU16(end, files.length); zipPushU16(end, files.length);
+  zipPushU32(end, cenSize); zipPushU32(end, offset);
+  zipPushU16(end, 0);
+  return new Blob(parts.concat(central, [new Uint8Array(end)]),
+                  { type: "application/zip" });
+}
+/* ZIP内で使えるファイル名にする(フォルダ区切りや禁止文字を落とす) */
+function zipSafeName(s, fallback) {
+  var t = String(s == null ? "" : s)
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_")
+    .replace(/\s+/g, " ").trim();
+  if (t === "." || t === "..") t = "";
+  return t.slice(0, 60) || (fallback || "note");
+}
+function dataURLToBytes(u) {
+  var p = String(u || "").split(",");
+  if (p.length < 2) return null;
+  try {
+    var bin = atob(p[1]);
+    var arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return { bytes: arr, ext: /image\/png/.test(p[0]) ? "png" : "jpg" };
+  } catch (e) { return null; }
+}
+/* =========================================================
+   全ノートをZIPに書き出す
+   ---------------------------------------------------------
+   ノートごとにフォルダを作り、
+     本文.md … 文字・数式・表(そのまま読める / AIにも渡せる)
+     画像/   … 貼った画像と、手書き・図形をまとめた1枚のPNG
+   を入れる。文字は文字のまま、絵は絵のまま残るので、
+   InkNodeが無くても中身が分かる。
+========================================================= */
+function exportAllAsZip(ids) {
+  if (!ids || !ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
+  statusEl.textContent = "ZIPを作っています…(0/" + ids.length + ")";
+  var files = [], used = {}, chain = Promise.resolve();
+  var okCount = 0, failCount = 0;
+  ids.forEach(function(id, n){
+    chain = chain.then(function(){
+      statusEl.textContent = "ZIPを作っています…(" + (n + 1) + "/" + ids.length + ")";
+      return pageObjectsFor(id).then(function(list){
+        var pg = findPage(id);
+        var base = zipSafeName(pg && pg.title, "note" + (n + 1));
+        // 同じ名前のノートがあっても上書きしないよう連番を足す
+        var dir = base;
+        var k = 2;
+        while (used[dir]) { dir = base + "_" + k; k++; }
+        used[dir] = 1;
+        if (!list.length) {
+          files.push({ name: dir + "/本文.md",
+                       data: new TextEncoder().encode("# " + (pg && pg.title || "ノート") + "\n\n(空のノート)\n") });
+          okCount++;
+          return;
+        }
+        // --- 本文 ---
+        var body = collectPageText(list);
+        var head = "# " + (mdInline((pg && pg.title) ? pg.title : "ノート") || "ノート");
+        var md = head + (body ? "\n\n" + body : "\n\n(文字はありません)") + "\n";
+        files.push({ name: dir + "/本文.md", data: new TextEncoder().encode(md) });
+        // --- 貼った画像(数式の画像は本文に$$で入っているので除く) ---
+        var picN = 0;
+        for (var i = 0; i < list.length; i++) {
+          var o = list[i];
+          if (o.type !== "image" || o.latex || !o.src) continue;
+          var d = dataURLToBytes(o.src);
+          if (!d) continue;
+          picN++;
+          files.push({ name: dir + "/画像/" + ("00" + picN).slice(-2) +
+                             "_id" + (o.id || 0) + "." + d.ext, data: d.bytes });
+        }
+        // --- 見た目の控え(手書き・図形を含む全体を1枚のPNGに) ---
+        var hasInk = list.some(function(o){ return o.type === "stroke" || o.type === "shape"; });
+        if (hasInk || picN) {
+          try {
+            var c = renderPageToCanvas(null, 40, list);
+            if (c) {
+              var d2 = dataURLToBytes(c.toDataURL("image/png"));
+              if (d2) files.push({ name: dir + "/見た目.png", data: d2.bytes });
+            }
+          } catch (e) {}
+        }
+        okCount++;
+      }).catch(function(){ failCount++; });
+    });
+  });
+  chain.catch(function(){}).then(function(){
+    if (!files.length) { statusEl.textContent = "書き出せる内容がありませんでした"; return; }
+    try {
+      var blob = makeZip(files);
+      var url = URL.createObjectURL(blob);
+      var d = new Date(), p = function(x){ return (x < 10 ? "0" : "") + x; };
+      downloadURL(url, "inknote_" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+                       "_" + p(d.getHours()) + p(d.getMinutes()) + ".zip");
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 8000);
+      statusEl.textContent = "ZIPを書き出しました(" + okCount + "件 / " + files.length + "ファイル)" +
+        (failCount ? " ※" + failCount + "件は読めませんでした" : "");
+    } catch (e) {
+      statusEl.textContent = "ZIPの書き出しに失敗しました";
+    }
+  });
+}
 function pageObjectsFor(id) {
   if (id === currentId) return Promise.resolve(objects.slice());
   return kvGet("page_" + id).then(function(rec){
@@ -11858,14 +12166,19 @@ function openAiExportSheet() {
     /* ページ数が多い時はコピーだと詰まるので、既定をファイルにする */
     var many = ids.length > 1;
     var items = [
-      { label: (many ? "📄 ファイルに保存(おすすめ)" : "📄 ファイルに保存"),
+      /* ★文字だけの書き出しは手書き・画像が丸ごと落ちる。
+         ZIPなら「文字は文字のまま、絵は絵のまま」まとめて渡せるので、
+         取りこぼしなく抜き出したい時はこれを使う。 */
+      { label: "🗜 ZIPでまるごと(文字+画像+見た目)",
+        fn: function(){ exportAllAsZip(ids); } },
+      { label: (many ? "📄 文字だけファイルに保存" : "📄 文字だけファイルに保存"),
         fn: function(){ runAiExport(ids, label, true); } },
-      { label: (many ? "📋 コピー(長いと途中で切れることがあります)" : "📋 コピー"),
+      { label: (many ? "📋 文字だけコピー(長いと途中で切れることがあります)" : "📋 文字だけコピー"),
         fn: function(){ runAiExport(ids, label, false); } },
       { label: "キャンセル", cancel: true }
     ];
     setTimeout(function(){
-      showSheet(label + "(" + ids.length + "ページ)をどう渡しますか", items);
+      showSheet(label + "(" + ids.length + "件)をどう渡しますか", items);
     }, 180);
   });
 }
@@ -12325,6 +12638,93 @@ function exportName(pg, ext) {
 /* =========================================================
    バックアップ(全ページを1つのJSONに) / 復元
 ========================================================= */
+/* =========================================================
+   閲覧用バックアップ(1枚のHTML)
+   ---------------------------------------------------------
+   ★復元用のJSONは中身が読めない。
+     InkNoteが無くても、どの端末でもブラウザで開けば
+     全ノートを通して読める形も用意する。
+     文字は文字のまま、手書き・画像は絵として埋め込む。
+========================================================= */
+function htmlEsc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function exportReadableHtml() {
+  saveDocNow();
+  var ids = pages.map(function(p){ return p.id; });
+  if (!ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
+  statusEl.textContent = "閲覧用HTMLを作っています…(0/" + ids.length + ")";
+  var secs = [], toc = [], chain = Promise.resolve();
+  var okN = 0, failN = 0;
+  ids.forEach(function(id, n){
+    chain = chain.then(function(){
+      statusEl.textContent = "閲覧用HTMLを作っています…(" + (n + 1) + "/" + ids.length + ")";
+      return pageObjectsFor(id).then(function(list){
+        var pg = findPage(id);
+        var title = (pg && pg.title) ? pg.title : "ノート";
+        var anchor = "n" + n;
+        toc.push('<li><a href="#' + anchor + '">' + htmlEsc(title) + "</a></li>");
+        var parts = ['<section id="' + anchor + '"><h2>' + htmlEsc(title) + "</h2>"];
+        if (!list.length) {
+          parts.push("<p class=sub>(空のノート)</p>");
+        } else {
+          // 文字(Markdownそのままだと読みにくいので、素直に段落として出す)
+          var body = collectPageText(list);
+          if (body) parts.push("<pre>" + htmlEsc(body) + "</pre>");
+          /* 見た目の控え。手書き・図形・画像をまとめて1枚の絵にする。
+             ★文字だけだと図の情報が落ちるので、必ず添える。 */
+          try {
+            var c = renderPageToCanvas(null, 40, list);
+            if (c) parts.push('<img alt="' + htmlEsc(title) + '" src="' +
+                              c.toDataURL("image/jpeg", 0.82) + '">');
+          } catch (e) {}
+        }
+        parts.push("</section>");
+        secs.push(parts.join("\n"));
+        okN++;
+      }).catch(function(){ failN++; });
+    });
+  });
+  chain.catch(function(){}).then(function(){
+    if (!secs.length) { statusEl.textContent = "書き出せる内容がありませんでした"; return; }
+    var d = new Date();
+    var html =
+      '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      "<title>InkNote バックアップ " + d.toLocaleDateString("ja-JP") + "</title><style>" +
+      "body{margin:0;padding:24px;background:#f6f5f0;color:#1b1d22;" +
+      "font-family:system-ui,-apple-system,'Hiragino Sans','Noto Sans JP',sans-serif;line-height:1.8}" +
+      "h1{font-size:22px;margin:0 0 4px}h2{font-size:18px;margin:0 0 12px;" +
+      "padding-bottom:8px;border-bottom:2px solid #d8d4c8}" +
+      ".sub{color:#6b7280;font-size:13px;margin:0 0 20px}" +
+      "nav{background:#fff;border:1px solid #e2ded2;border-radius:10px;padding:14px 18px;margin:0 0 24px}" +
+      "nav ul{margin:6px 0 0;padding-left:20px}nav a{color:#2d4ed8;text-decoration:none}" +
+      "section{background:#fff;border:1px solid #e2ded2;border-radius:10px;padding:18px;margin:0 0 20px}" +
+      "pre{white-space:pre-wrap;word-break:break-word;font-family:inherit;font-size:14.5px;margin:0 0 14px}" +
+      "img{max-width:100%;height:auto;border:1px solid #e2ded2;border-radius:6px;display:block}" +
+      "@media print{body{background:#fff}section{break-inside:avoid;border:none}}" +
+      "</style></head><body>" +
+      "<h1>InkNote バックアップ</h1>" +
+      '<p class="sub">' + d.toLocaleString("ja-JP") + " · " + okN + "件のノート" +
+      (failN ? " ※" + failN + "件は読めませんでした" : "") + "</p>" +
+      "<nav><strong>目次</strong><ul>" + toc.join("") + "</ul></nav>" +
+      secs.join("\n") + "</body></html>";
+    try {
+      var blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      var url = URL.createObjectURL(blob);
+      var p2 = function(x){ return (x < 10 ? "0" : "") + x; };
+      downloadURL(url, "inknote_閲覧用_" + d.getFullYear() + p2(d.getMonth() + 1) +
+                       p2(d.getDate()) + ".html");
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 8000);
+      statusEl.textContent = "閲覧用HTMLを書き出しました(" + okN + "件)";
+    } catch (e) {
+      statusEl.textContent = "閲覧用HTMLの書き出しに失敗しました";
+    }
+  });
+}
+
 function exportBackup() {
   saveDocNow();
   var out = { format: "inknote-backup", version: 1,
@@ -12588,11 +12988,44 @@ $("#aiImpOk").onclick = function(){
 };
 $("#expPrint").onclick = function(){
   closeExp();
-  closePages && closePages();
-  setTimeout(printNow, 150);
+  showSheet("印刷", [
+    { label: "🖨 このノートだけ", fn: function(){
+        closePages && closePages();
+        setTimeout(printNow, 150);
+      } },
+    { label: "📚 すべてのノート(PDFにまとめて印刷)(" + pages.length + "件)", fn: function(){
+        /* ★まとめ印刷はPDFを経由する。印刷は画面の内容をそのまま使う作りで、
+           ノートを次々に切り替えながら刷ることができないため。
+           PDFにしてから刷れば、順番も見出しもそのまま紙になる。 */
+        closePages();
+        exportAllAsPdf(pages.map(function(p){ return p.id; }));
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
 };
-$("#expPdf").onclick = function(){ closePages(); exportFmt = "pdf"; openExp(); };
-$("#bakOut").onclick = exportBackup;
+$("#expPdf").onclick = function(){
+  /* ★全ノートを1冊にまとめる道を足す。
+     ノートごとの用紙設定(A4縦/横/無限)は保存値を見て自動で出し分けるので、
+     どのノートがどの設定だったかを覚えていなくてよい。 */
+  closeExp();
+  showSheet("PDF書き出し", [
+    { label: "📄 このノートだけ", fn: function(){ closePages(); exportFmt = "pdf"; openExp(); } },
+    { label: "📚 すべてのノートを1つのPDFに(" + pages.length + "件)", fn: function(){
+        closePages();
+        exportAllAsPdf(pages.map(function(p){ return p.id; }));
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
+};
+$("#bakOut").onclick = function(){
+  /* ★バックアップは「戻すためのJSON」だが、それだけだと
+     InkNote以外では中身が読めない。人が読めるHTMLも選べるようにする。 */
+  showSheet("バックアップ", [
+    { label: "💾 復元用(.json) — InkNoteに戻せる形", fn: exportBackup },
+    { label: "📖 閲覧用(.html) — ブラウザでそのまま読める", fn: exportReadableHtml },
+    { label: "キャンセル", cancel: true }
+  ]);
+};
 $("#bakIn").onclick = function(){ $("#backupInput").click(); };
 $("#backupInput").onchange = function(){
   if (this.files[0]) importBackup(this.files[0]);
@@ -13666,14 +14099,45 @@ function splitTableBlocks(text) {
   function flushText() {
     if (buf.length) { out.push({ t: "text", s: buf.join("\n") }); buf = []; }
   }
+  var isRowLine = function(L){ return /^\s*\|.*\|\s*$/.test(L); };
+  /* 表の行を集める。
+     ★行と行の間に空行が挟まっていても1つの表として扱う。
+       AIの出力やコピー経路によっては各行が空行で区切られて届き、
+       以前はそこで連続が途切れて表と認識できなかった。
+       ただし空行が2つ以上続いたら、そこは段落の切れ目とみなす。 */
+  var collectRows = function(start){
+    var rows = [], j = start, blanks = 0;
+    while (j < lines.length) {
+      if (isRowLine(lines[j])) { rows.push(lines[j]); blanks = 0; j++; continue; }
+      if (!lines[j].trim() && blanks < 1 && rows.length) { blanks++; j++; continue; }
+      break;
+    }
+    // 末尾に空行を食べていた分は戻す
+    while (j > start && !lines[j - 1].trim()) j--;
+    return { rows: rows, end: j };
+  };
   while (i < lines.length) {
-    var isRow = /^\s*\|.*\|\s*$/.test(lines[i]);
-    if (isRow && i + 1 < lines.length && isSepRow(lines[i + 1])) {
-      var block = [lines[i], lines[i + 1]];
-      var j = i + 2;
-      while (j < lines.length && /^\s*\|.*\|\s*$/.test(lines[j])) { block.push(lines[j]); j++; }
-      var html = mdTableToHtml(block);
-      if (html) { flushText(); out.push({ t: "table", s: html }); i = j; continue; }
+    if (isRowLine(lines[i])) {
+      var got = collectRows(i);
+      var rows = got.rows;
+      /* 見出し行が無く、区切り行から始まる形にも対応する。
+         ★「|---|---|---|」が先頭に来る貼り付けは珍しくない。
+           その場合は列数だけ決めて、見出しは空にする。 */
+      if (rows.length >= 2 && isSepRow(rows[0]) && !isSepRow(rows[1])) {
+        var n0 = splitRow(rows[0]).length;
+        var head = [];
+        for (var c0 = 0; c0 < n0; c0++) head.push("");
+        rows = ["| " + head.join(" | ") + " |"].concat(rows);
+      }
+      // 区切り行が無い場合は、2行目に補って表として扱う
+      if (rows.length >= 2 && !isSepRow(rows[1])) {
+        var n1 = splitRow(rows[0]).length;
+        rows = [rows[0], "|" + new Array(n1 + 1).join(" --- |")].concat(rows.slice(1));
+      }
+      if (rows.length >= 3) {
+        var html = mdTableToHtml(rows);
+        if (html) { flushText(); out.push({ t: "table", s: html }); i = got.end; continue; }
+      }
     }
     buf.push(lines[i]); i++;
   }
@@ -17643,14 +18107,95 @@ function drawCrop() {
     cctx2.strokeStyle = "#4C6FFF";
     cctx2.lineWidth = 2;
     cctx2.strokeRect(x1, y1, rw, rh);
+    /* ★囲んだ後に四隅と各辺を掴んで直せるようにする。
+       以前は一度囲むと描き直すしかなく、画像の端まで正確に
+       合わせるのが難しかった(端が触りづらい)。
+       指で掴めるよう、見た目より広い当たり判定を別に持つ。 */
+    var hs = CROP_HANDLE;
+    cctx2.fillStyle = "#4C6FFF";
+    cctx2.strokeStyle = "#fff";
+    cctx2.lineWidth = 2;
+    cropHandlePoints(x1, y1, rw, rh).forEach(function(p){
+      cctx2.beginPath();
+      cctx2.arc(p.x, p.y, hs / 2, 0, Math.PI * 2);
+      cctx2.fill();
+      cctx2.stroke();
+    });
   }
+}
+var CROP_HANDLE = 16;          // 見た目のつまみの直径
+var CROP_HIT = 30;             // 指で掴める範囲(見た目より広く取る)
+/* 四隅 + 各辺の中央。name は動かす辺の組み合わせ */
+function cropHandlePoints(x, y, w, h) {
+  return [
+    { name: "nw", x: x,         y: y },
+    { name: "ne", x: x + w,     y: y },
+    { name: "sw", x: x,         y: y + h },
+    { name: "se", x: x + w,     y: y + h },
+    { name: "n",  x: x + w / 2, y: y },
+    { name: "s",  x: x + w / 2, y: y + h },
+    { name: "w",  x: x,         y: y + h / 2 },
+    { name: "e",  x: x + w,     y: y + h / 2 }
+  ];
+}
+/* 触った点がどのつまみか。無ければ null */
+function cropHitHandle(px, py) {
+  if (!cropRect) return null;
+  var x = Math.min(cropRect.x1, cropRect.x2), y = Math.min(cropRect.y1, cropRect.y2);
+  var w = Math.abs(cropRect.x2 - cropRect.x1), h = Math.abs(cropRect.y2 - cropRect.y1);
+  var pts = cropHandlePoints(x, y, w, h), best = null, bestD = CROP_HIT;
+  for (var i = 0; i < pts.length; i++) {
+    var d = Math.hypot(pts[i].x - px, pts[i].y - py);
+    if (d <= bestD) { bestD = d; best = pts[i].name; }
+  }
+  if (best) return best;
+  // 枠の内側を掴んだら、範囲ごと移動
+  if (px > x && px < x + w && py > y && py < y + h) return "move";
+  return null;
 }
 $("#cropCanvas").addEventListener("pointerdown", function(e){
   e.preventDefault();
   e.stopPropagation();
   var r = this.getBoundingClientRect();
-  cropRect = { x1: e.clientX - r.left, y1: e.clientY - r.top,
-               x2: e.clientX - r.left, y2: e.clientY - r.top };
+  var px = e.clientX - r.left, py = e.clientY - r.top;
+  var hit = cropHitHandle(px, py);
+  if (hit) {
+    /* ★既にある範囲を直す。つまみを掴んだらその辺だけ動かし、
+       内側を掴んだら範囲ごと平行移動する。 */
+    var x = Math.min(cropRect.x1, cropRect.x2), y = Math.min(cropRect.y1, cropRect.y2);
+    var w = Math.abs(cropRect.x2 - cropRect.x1), h = Math.abs(cropRect.y2 - cropRect.y1);
+    var st = { x: x, y: y, w: w, h: h, px: px, py: py };
+    drag(e, {
+      move: function(ev){
+        var rr = $("#cropCanvas").getBoundingClientRect();
+        var mx = Math.max(0, Math.min(rr.width, ev.clientX - rr.left));
+        var my = Math.max(0, Math.min(rr.height, ev.clientY - rr.top));
+        var dx = mx - st.px, dy = my - st.py;
+        var nx = st.x, ny = st.y, nw = st.w, nh = st.h;
+        if (hit === "move") {
+          nx = Math.max(0, Math.min(rr.width - st.w, st.x + dx));
+          ny = Math.max(0, Math.min(rr.height - st.h, st.y + dy));
+        } else {
+          if (hit.indexOf("w") !== -1) { nx = st.x + dx; nw = st.w - dx; }
+          if (hit.indexOf("e") !== -1) { nw = st.w + dx; }
+          if (hit.indexOf("n") !== -1) { ny = st.y + dy; nh = st.h - dy; }
+          if (hit.indexOf("s") !== -1) { nh = st.h + dy; }
+          // 端を越えないよう画像の中に収める
+          if (nx < 0) { nw += nx; nx = 0; }
+          if (ny < 0) { nh += ny; ny = 0; }
+          if (nx + nw > rr.width) nw = rr.width - nx;
+          if (ny + nh > rr.height) nh = rr.height - ny;
+          if (nw < 8) nw = 8;
+          if (nh < 8) nh = 8;
+        }
+        cropRect = { x1: nx, y1: ny, x2: nx + nw, y2: ny + nh };
+        drawCrop();
+      }
+    });
+    return;
+  }
+  // 何もない所からは、これまでどおり新しく囲む
+  cropRect = { x1: px, y1: py, x2: px, y2: py };
   drawCrop();
   drag(e, {
     move: function(ev){
