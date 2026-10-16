@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.46">InkNote <small>v22.46</small></div>
+  <div class="brand" title="InkNote v22.47">InkNote <small>v22.47</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.46";
+var APP_VERSION = "22.47";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13470,9 +13470,17 @@ function exportSplitPages(b, margin) {
     var msg = total + "枚(" + bands.length + (vertFlow ? "列" : "段") + ")になります";
     var opts = [
       { label: "📚 このまま書き出す", fn: function(){
-          window.__splitConfirmed = true;
-          exportSplitPages(b, margin);
-          window.__splitConfirmed = false;
+          /* ★シートが閉じ切ってから始める。
+             重なると描画が止まり、押しても何も起きないように見える。 */
+          setTimeout(function(){
+            window.__splitConfirmed = true;
+            try { exportSplitPages(b, margin); }
+            catch (e) {
+              statusEl.textContent = "書き出しでエラーが起きました(" +
+                ((e && e.message) ? e.message : e) + ")";
+            }
+            finally { window.__splitConfirmed = false; }
+          }, 240);
         } }
     ];
     if (cutThrough.length)
@@ -13822,7 +13830,11 @@ function renderPagesOut(pages, m, PW, PH) {
       }
       var p = pages[i2]; i2++;
       statusEl.textContent = "PDF生成中…(" + i2 + "/" + pages.length + ")";
-      var cv = renderToPaperCanvas(p, m, PW, PH);
+      /* ★1枚の描画でつまずいても全体を止めない。
+         止まると「ダウンロードされない」だけの無反応になる。 */
+      var cv = null;
+      try { cv = renderToPaperCanvas(p, m, PW, PH); }
+      catch (e0) { cv = null; }
       if (cv && canvasHasInk(cv)) {
         var isLand = cv.width > cv.height;
         if (!pdf) {
@@ -13888,21 +13900,36 @@ $("#exClose").onclick = closeExp;
     opts[i].addEventListener("click", function(){
       var r = this.getAttribute("data-r");
       closeExp();
+      /* ★パネルを閉じた直後に別のシートを開くと、閉じる処理と
+         重なって打ち消され、何も起きないように見える。
+         閉じ終わるのを待ってから実行する。
+         あわせて、途中で例外が出ても黙って終わらないようにする。 */
+      var later = function(fn){
+        setTimeout(function(){
+          try { fn(); }
+          catch (e) {
+            statusEl.textContent = "書き出しでエラーが起きました(" +
+              ((e && e.message) ? e.message : e) + ")";
+          }
+        }, 260);
+      };
       if (r === "sheet") {
         /* ★無限ノートには用紙の区切りが無いので、
            内容の範囲をA4に割る方式で出す。 */
-        if (canvasMode === "inf") exportSplitPages(contentBBox(), 24);
-        else exportSheets();                      // A4用紙をページ単位で正確に出力
+        if (canvasMode === "inf") later(function(){ exportSplitPages(contentBBox(), 24); });
+        else later(function(){ exportSheets(); });  // A4用紙をページ単位で正確に出力
       } else if (r === "all") {
         /* ★「全体」は無限ノート専用の「1枚絵」。
            分割すると意味が無いので割らず、拡大して読めるよう
            超高解像度で出す(タイルに分けて描き、1枚に合成)。 */
-        exportHiResSingle(contentBBox(), 40);
+        later(function(){ exportHiResSingle(contentBBox(), 40); });
       } else if (r === "view") {
         var tl = toWorld(0, 0), br = toWorld(innerWidth, innerHeight);
-        doExport({ x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y }, 0);
+        later(function(){
+          doExport({ x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y }, 0);
+        });
       } else if (r === "sel" && sel.length) {
-        doExport(selBBox(), 24);
+        later(function(){ doExport(selBBox(), 24); });
       } else if (r === "pick") {
         pickingExport = true;
         capture.className = "active";             // どのツール中でもドラッグを受け取る
