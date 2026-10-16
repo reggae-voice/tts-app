@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.48">InkNote <small>v22.48</small></div>
+  <div class="brand" title="InkNote v22.49">InkNote <small>v22.49</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.48";
+var APP_VERSION = "22.49";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13364,6 +13364,17 @@ function safeCutsY(b, list, maxStep, minStep) {
   };
   var cuts = [b.y], cur = b.y, guard = 0;
   var end = b.y + b.h;
+  /* ★候補が無い時に備え、その高さを通るBOXを引けるようにしておく。
+     紙より大きいBOXは丸ごと送れないので、
+     せめてBOX内の行間で切って、文字が上下に割れないようにする。 */
+  var boxAt = function(y){
+    for (var q = 0; q < list.length; q++) {
+      var ob2 = objBBox(list[q]);
+      if (!ob2) continue;
+      if (y > ob2.y + 1 && y < ob2.y + ob2.h - 1) return list[q];
+    }
+    return null;
+  };
   /* ★紙に収まらないBOXは、切る代わりにページを伸ばして全体を入れ、
      あとでA4に収まるよう縮める。
      ただし縮めすぎると読めない。実測すると、
@@ -13392,7 +13403,13 @@ function safeCutsY(b, list, maxStep, minStep) {
         if (free(y2)) { best = y2; break; }      // 最初に見つかった=いちばん手前
       }
     }
-    cur = (best == null) ? limit : best;         // それでも無ければ切るしかない
+    if (best == null) {
+      /* 候補が無い = 紙より大きいBOXの中。行間に合わせて切る */
+      var ob3 = boxAt(limit);
+      best = ob3 ? lineSafeY(ob3, limit) : limit;
+      if (best <= cur + 1) best = limit;         // 戻りすぎた時の保険
+    }
+    cur = best;
     cuts.push(cur);
   }
   cuts.push(end);
@@ -13409,6 +13426,25 @@ function tooBigForOneSheet(b) {
   return (4096 / L) < 1.3;        // 倍率1.3未満なら分割した方がよい
 }
 /* 大きい内容をA4に割って、読める倍率のまま複数ページで出す */
+/* 大きなテキストBOXの中で、切ってよい高さ(行と行の間)を返す。
+   ★1つのBOXに長文が入っていると、BOXごと送ることができない。
+     その場合はBOXの中の行間で切れば、文字が上下に割れない。
+   ★行の高さは本文のCSS(line-height:1.45)と合わせる。 */
+function lineSafeY(o, wantY) {
+  if (!o || o.type !== "text") return wantY;
+  var b = objBBox(o);
+  if (!b) return wantY;
+  var fs = o.fontSize || 22;
+  var lh = fs * 1.45;
+  if (!(lh > 1)) return wantY;
+  var rel = wantY - b.y;
+  if (rel <= 0 || rel >= b.h) return wantY;
+  /* 行の切れ目(行の上端)まで戻す。
+     進めると文字の下半分が残るので、必ず手前に戻す。 */
+  var k = Math.floor(rel / lh);
+  var y = b.y + k * lh;
+  return (y > b.y + 1) ? y : wantY;
+}
 /* =========================================================
    ページの境目にかかるBOXを、次のページへ送る
    ---------------------------------------------------------
@@ -13450,12 +13486,19 @@ function fitContentToPageBreaks(bands, stepFor, vertFlow) {
       var it = mine[k];
       var start = (vertFlow ? it.b.y : it.b.x) + shift;
       var len = vertFlow ? it.b.h : it.b.w;
-      if (len >= step) continue;                 // 紙より大きい物はどうしても割れる
+      /* ★紙より大きいBOXは丸ごとは送れないが、
+         書き出し側がBOX内の行間で切るので文字は割れない。
+         ここでは送らずに次へ進む。 */
+      if (len >= step) continue;
       var rel = start - origin;
       var page = Math.floor(rel / step);
       var endRel = rel + len;
       /* 同じページに収まらない = 境目をまたぐ */
-      if (endRel > (page + 1) * step + 0.5) {
+      /* ★ぎりぎりまで詰めず、少し余裕を見て次のページへ送る。
+         紙の端に文字が貼り付くと読みにくく、
+         わずかな計算差で切れてしまうこともあるため。 */
+      var SAFE = step * 0.03;
+      if (endRel > (page + 1) * step - SAFE) {
         var push = (page + 1) * step - rel;      // 次のページの先頭まで送る
         if (push > 0 && guard++ < 500) { shift += push; movedTotal++; }
       }
@@ -13471,7 +13514,7 @@ function fitContentToPageBreaks(bands, stepFor, vertFlow) {
         if (len2 < step) {
           var rel2 = s2 - origin;
           var pg2 = Math.floor(rel2 / step);
-          if (rel2 + len2 > (pg2 + 1) * step + 0.5) {
+          if (rel2 + len2 > (pg2 + 1) * step - step * 0.03) {
             acc += (pg2 + 1) * step - rel2;
           }
         }
@@ -13626,13 +13669,31 @@ function exportHiResMulti(b, m, scale, pcols, prows) {
   /* 長い方向を、内容を切らない位置で区切る */
   var cuts = vertFlow ? safeCutsY(b, objects, pageLen - m * 2, (pageLen - m * 2) * 0.3)
                       : safeCutsX(b, objects, pageLen - m * 2, (pageLen - m * 2) * 0.3);
-  /* 短い方向も入りきらないなら、そちらも区切る */
+  /* 短い方向も入りきらないなら、そちらも区切る。
+     ★横方向は「列の境目」で切るのが正しい。
+       文字幅の単位で切ると、列のまん中で割れて右端が切れたように見える。
+       列をまたがないよう、検出した列の境界だけを候補にする。 */
   var acrossLen = vertFlow ? b.w : b.h;
   var acrossN = Math.max(1, Math.ceil((acrossLen + m * 2) / pageLen));
   var acrossCuts = [];
   if (acrossN > 1) {
-    acrossCuts = vertFlow ? safeCutsX(b, objects, pageLen - m * 2, (pageLen - m * 2) * 0.3)
-                          : safeCutsY(b, objects, pageLen - m * 2, (pageLen - m * 2) * 0.3);
+    var lim = pageLen - m * 2;
+    if (vertFlow) {
+      /* 列ごとにまとめ、1ページに入るだけ詰めていく */
+      var colsL = splitIntoColumns(items, b);
+      acrossCuts = [b.x];
+      var curX = b.x;
+      for (var ci2 = 0; ci2 < colsL.length; ci2++) {
+        var right = colsL[ci2].x + colsL[ci2].w;
+        if (right - curX > lim && acrossCuts[acrossCuts.length - 1] !== colsL[ci2].x) {
+          acrossCuts.push(colsL[ci2].x);
+          curX = colsL[ci2].x;
+        }
+      }
+      acrossCuts.push(b.x + b.w);
+    } else {
+      acrossCuts = safeCutsY(b, objects, lim, lim * 0.3);
+    }
   } else {
     acrossCuts = vertFlow ? [b.x, b.x + b.w] : [b.y, b.y + b.h];
   }
