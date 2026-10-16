@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.49">InkNote <small>v22.49</small></div>
+  <div class="brand" title="InkNote v22.50">InkNote <small>v22.50</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.49";
+var APP_VERSION = "22.50";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13355,11 +13355,34 @@ function safeCutsY(b, list, maxStep, minStep) {
      上端も候補に入れる(直前のBOXとの間で切る場合に使う)。 */
   var cand = [];
   for (var c = 0; c < items.length; c++) { cand.push(items[c].y2); cand.push(items[c].y1); }
+  /* ★BOXの外側だけでなく、BOXの中の行の切れ目も候補に入れる。
+     長文が1つのBOXに入っていると外側の候補が足りず、
+     結局どこかで文字を割るしかなくなっていた。
+     行の位置は画面の実物から測るので、計算のズレが無い。 */
+  for (var li = 0; li < list.length; li++) {
+    var lo = list[li];
+    if (!lo || lo.type !== "text") continue;
+    var lb = objBBox(lo);
+    if (!lb || lb.y + lb.h < b.y || lb.y > b.y + b.h) continue;
+    if (lb.h < maxStep * 0.8) continue;          // 紙に収まるBOXは外側で足りる
+    var ys = textLineBreaksWorld(lo);
+    if (ys) for (var yi = 0; yi < ys.length; yi++) cand.push(ys[yi]);
+  }
   cand.sort(function(p, q){ return p - q; });
-  /* その高さがどのBOXの内部も通らないか */
+  /* その高さで切ってよいか。
+     ★BOXの内部でも、行の切れ目なら切ってよい。
+       以前は「BOXの内部は一律だめ」としていたため、
+       長文のBOXでは候補が尽きて強制的に割っていた。 */
+  var lineOK = {};
+  for (var q2 = 0; q2 < cand.length; q2++) lineOK[Math.round(cand[q2])] = 1;
   var free = function(y){
-    for (var k = 0; k < items.length; k++)
-      if (y > items[k].y1 + 1 && y < items[k].y2 - 1) return false;
+    for (var k = 0; k < items.length; k++) {
+      if (y > items[k].y1 + 1 && y < items[k].y2 - 1) {
+        // 行の切れ目として集めた高さなら許可する
+        if (lineOK[Math.round(y)]) continue;
+        return false;
+      }
+    }
     return true;
   };
   var cuts = [b.y], cur = b.y, guard = 0;
@@ -13427,23 +13450,72 @@ function tooBigForOneSheet(b) {
 }
 /* 大きい内容をA4に割って、読める倍率のまま複数ページで出す */
 /* 大きなテキストBOXの中で、切ってよい高さ(行と行の間)を返す。
-   ★1つのBOXに長文が入っていると、BOXごと送ることができない。
-     その場合はBOXの中の行間で切れば、文字が上下に割れない。
-   ★行の高さは本文のCSS(line-height:1.45)と合わせる。 */
+   ★行の高さを「文字サイズ×1.45」で計算していたが、
+     実際のBOXは余白・見出し・数式の画像・表が混ざり、
+     折り返しの行数も文字数で決まるため、計算では必ずズレる。
+     ズレた位置で切るから文字が上下に割れていた。
+     画面に出ている実物(DOM)から行の位置を測る。 */
+function textLineBreaksWorld(o) {
+  if (!o || o.type !== "text" || !o.el) return null;
+  var cache = o.__lineBreaks;
+  if (cache && cache.w === o.w && cache.t === (o.text || "").length) return cache.ys;
+  var ys = [];
+  try {
+    var host = o.el.getBoundingClientRect();
+    if (!host.height) return null;
+    var b = objBBox(o);
+    var k = b.h / host.height;                 // 画面px → ノート座標
+    var seen = {};
+    var walker = document.createTreeWalker(o.el, NodeFilter.SHOW_TEXT, null);
+    var n;
+    while ((n = walker.nextNode())) {
+      var rg = document.createRange();
+      rg.selectNodeContents(n);
+      var rects = rg.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        /* 行の上端と下端を、どちらも切ってよい位置として集める */
+        [rects[i].top, rects[i].bottom].forEach(function(v){
+          var y = b.y + (v - host.top) * k;
+          var key = Math.round(y);
+          if (!seen[key]) { seen[key] = 1; ys.push(y); }
+        });
+      }
+    }
+    /* 画像(数式・貼った絵)の上下端も行の切れ目として使える */
+    var imgs = o.el.querySelectorAll("img");
+    for (var m = 0; m < imgs.length; m++) {
+      var r2 = imgs[m].getBoundingClientRect();
+      [r2.top, r2.bottom].forEach(function(v){
+        var y2 = b.y + (v - host.top) * k;
+        var key2 = Math.round(y2);
+        if (!seen[key2]) { seen[key2] = 1; ys.push(y2); }
+      });
+    }
+  } catch (e) { return null; }
+  if (!ys.length) return null;
+  ys.sort(function(a, c){ return a - c; });
+  o.__lineBreaks = { w: o.w, t: (o.text || "").length, ys: ys };
+  return ys;
+}
+/* 切りたい高さに対し、そのBOXの中で「行の切れ目」に合わせた高さを返す。
+   必ず手前(上)に戻すので、文字の下半分が残ることがない。 */
 function lineSafeY(o, wantY) {
-  if (!o || o.type !== "text") return wantY;
-  var b = objBBox(o);
-  if (!b) return wantY;
-  var fs = o.fontSize || 22;
-  var lh = fs * 1.45;
-  if (!(lh > 1)) return wantY;
-  var rel = wantY - b.y;
-  if (rel <= 0 || rel >= b.h) return wantY;
-  /* 行の切れ目(行の上端)まで戻す。
-     進めると文字の下半分が残るので、必ず手前に戻す。 */
-  var k = Math.floor(rel / lh);
-  var y = b.y + k * lh;
-  return (y > b.y + 1) ? y : wantY;
+  var ys = textLineBreaksWorld(o);
+  if (!ys || !ys.length) {
+    /* DOMから測れない時だけ、計算で近似する(従来の方法) */
+    var b0 = objBBox(o);
+    if (!b0 || o.type !== "text") return wantY;
+    var lh0 = (o.fontSize || 22) * 1.45;
+    var rel0 = wantY - b0.y;
+    if (rel0 <= 0 || rel0 >= b0.h) return wantY;
+    return b0.y + Math.floor(rel0 / lh0) * lh0;
+  }
+  var best = null;
+  for (var i = 0; i < ys.length; i++) {
+    if (ys[i] <= wantY + 0.5) best = ys[i];
+    else break;
+  }
+  return (best == null) ? wantY : best;
 }
 /* =========================================================
    ページの境目にかかるBOXを、次のページへ送る
@@ -13497,7 +13569,7 @@ function fitContentToPageBreaks(bands, stepFor, vertFlow) {
       /* ★ぎりぎりまで詰めず、少し余裕を見て次のページへ送る。
          紙の端に文字が貼り付くと読みにくく、
          わずかな計算差で切れてしまうこともあるため。 */
-      var SAFE = step * 0.03;
+      var SAFE = step * 0.08;
       if (endRel > (page + 1) * step - SAFE) {
         var push = (page + 1) * step - rel;      // 次のページの先頭まで送る
         if (push > 0 && guard++ < 500) { shift += push; movedTotal++; }
@@ -13514,7 +13586,7 @@ function fitContentToPageBreaks(bands, stepFor, vertFlow) {
         if (len2 < step) {
           var rel2 = s2 - origin;
           var pg2 = Math.floor(rel2 / step);
-          if (rel2 + len2 > (pg2 + 1) * step - step * 0.03) {
+          if (rel2 + len2 > (pg2 + 1) * step - step * 0.08) {
             acc += (pg2 + 1) * step - rel2;
           }
         }
@@ -13552,7 +13624,9 @@ function exportSplitPages(b, margin) {
     var across = vertFlow ? bd.w : bd.h;                 // 紙幅に合わせる方向
     var fit = Math.min(1, (PW - m * 2) / Math.max(1, across));
     if (fit < 0.45) fit = 0.45;                          // 縮めすぎない
-    var step = (PH - m * 2) / fit;                       // 1枚に入る長さ
+    /* ★1枚に詰め込む長さに余裕を持たせる(8%)。
+       ぎりぎりまで入れると、わずかな計算差で下端の文字が切れる。 */
+    var step = ((PH - m * 2) / fit) * 0.92;
     var cuts = vertFlow ? safeCutsY(bd, objects, step, step * 0.35)
                         : safeCutsX(bd, objects, step, step * 0.35);
     for (var ci = 0; ci + 1 < cuts.length; ci++) {
@@ -13679,18 +13753,27 @@ function exportHiResMulti(b, m, scale, pcols, prows) {
   if (acrossN > 1) {
     var lim = pageLen - m * 2;
     if (vertFlow) {
-      /* 列ごとにまとめ、1ページに入るだけ詰めていく */
+      /* 列ごとにまとめ、1ページに入るだけ詰めていく。
+         ★列1本が1ページの幅より広い場合は、その中でも切る。
+           以前は列の境界だけを候補にしていたため、
+           広い列では切る場所が無く、紙幅を超えたまま出していた。
+           超えた分はブラウザが黙って捨てるので右端が欠けていた。 */
       var colsL = splitIntoColumns(items, b);
       acrossCuts = [b.x];
       var curX = b.x;
       for (var ci2 = 0; ci2 < colsL.length; ci2++) {
-        var right = colsL[ci2].x + colsL[ci2].w;
-        if (right - curX > lim && acrossCuts[acrossCuts.length - 1] !== colsL[ci2].x) {
-          acrossCuts.push(colsL[ci2].x);
-          curX = colsL[ci2].x;
+        var cl = colsL[ci2], right = cl.x + cl.w;
+        // この列を足すと溢れるなら、列の手前で切る
+        if (right - curX > lim && cl.x > curX + 1) {
+          acrossCuts.push(cl.x); curX = cl.x;
+        }
+        // 列そのものが1ページより広いなら、列の中でも等間隔に切る
+        while (right - curX > lim) {
+          curX = curX + lim;
+          acrossCuts.push(curX);
         }
       }
-      acrossCuts.push(b.x + b.w);
+      if (acrossCuts[acrossCuts.length - 1] !== b.x + b.w) acrossCuts.push(b.x + b.w);
     } else {
       acrossCuts = safeCutsY(b, objects, lim, lim * 0.3);
     }
@@ -13758,6 +13841,11 @@ function exportHiResMulti(b, m, scale, pcols, prows) {
 /* 指定範囲を、タイルに分けて描いた1枚のcanvasにする */
 function buildHiResCanvas(b, m, scale, done) {
   var wW = b.w + m * 2, wH = b.h + m * 2;
+  /* ★最後の砦。ここで上限を超えていたら倍率を下げて必ず収める。
+     超えたままcanvasを作ると、ブラウザが黙って切り捨てるため
+     端が欠けた絵になってしまう。 */
+  var sc2 = Math.min(scale, HIRES_MAXSIDE / Math.max(wW, wH));
+  if (sc2 < scale) scale = sc2;
   var outW = Math.round(wW * scale), outH = Math.round(wH * scale);
   var out = document.createElement("canvas");
   out.width = outW; out.height = outH;
