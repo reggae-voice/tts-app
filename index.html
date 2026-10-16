@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.50">InkNote <small>v22.50</small></div>
+  <div class="brand" title="InkNote v22.51">InkNote <small>v22.51</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.50";
+var APP_VERSION = "22.51";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13364,7 +13364,10 @@ function safeCutsY(b, list, maxStep, minStep) {
     if (!lo || lo.type !== "text") continue;
     var lb = objBBox(lo);
     if (!lb || lb.y + lb.h < b.y || lb.y > b.y + b.h) continue;
-    if (lb.h < maxStep * 0.8) continue;          // 紙に収まるBOXは外側で足りる
+    /* ★すべてのテキストBOXから行の位置を集める。
+       以前は「大きいBOXだけ」にしていたが、
+       紙の切れ目はどのBOXの上を通るか分からないので、
+       全部から集めておかないと候補が足りない。 */
     var ys = textLineBreaksWorld(lo);
     if (ys) for (var yi = 0; yi < ys.length; yi++) cand.push(ys[yi]);
   }
@@ -13418,19 +13421,40 @@ function safeCutsY(b, list, maxStep, minStep) {
     if (best == null) {
       /* 上限内に候補が無い = 紙より大きいBOXをまたいでいる。
          少し先まで見て、伸ばせば全体が入る候補があればそこまで伸ばす。 */
-      var stretchLimit = cur + maxStep * STRETCH;
-      for (var i3 = 0; i3 < cand.length; i3++) {
-        var y2 = cand[i3];
-        if (y2 <= cur + 1) continue;
-        if (y2 > stretchLimit) break;
-        if (free(y2)) { best = y2; break; }      // 最初に見つかった=いちばん手前
+      /* ★伸ばしてよいのは、行で切れない物(画像・表)をまたいだ時だけ。
+         文字のBOXは行の切れ目で切れるので伸ばす必要がなく、
+         伸ばすとページごとに大きさが変わって見た目が揃わない。 */
+      var blocker = boxAt(limit);
+      var isText = blocker && blocker.type === "text" && textLineBreaksWorld(blocker);
+      if (!isText) {
+        var stretchLimit = cur + maxStep * STRETCH;
+        for (var i3 = 0; i3 < cand.length; i3++) {
+          var y2 = cand[i3];
+          if (y2 <= cur + 1) continue;
+          if (y2 > stretchLimit) break;
+          if (free(y2)) { best = y2; break; }    // 最初に見つかった=いちばん手前
+        }
       }
     }
     if (best == null) {
-      /* 候補が無い = 紙より大きいBOXの中。行間に合わせて切る */
+      /* ★ここに来るのは、候補がひとつも無い時だけ。
+         その高さを通るBOXの行間に合わせる。
+         それでも決まらない場合に限り、やむを得ず上限で切る。 */
       var ob3 = boxAt(limit);
       best = ob3 ? lineSafeY(ob3, limit) : limit;
-      if (best <= cur + 1) best = limit;         // 戻りすぎた時の保険
+      if (best <= cur + 1) {
+        /* 戻りすぎた = その行より手前に切れる場所が無い。
+           少し先の行の切れ目を探して、そこで切る。 */
+        if (ob3) {
+          var ys2 = textLineBreaksWorld(ob3);
+          if (ys2) {
+            for (var y3 = 0; y3 < ys2.length; y3++) {
+              if (ys2[y3] > cur + minStep) { best = ys2[y3]; break; }
+            }
+          }
+        }
+        if (best <= cur + 1) best = limit;
+      }
     }
     cur = best;
     cuts.push(cur);
@@ -13517,85 +13541,6 @@ function lineSafeY(o, wantY) {
   }
   return (best == null) ? wantY : best;
 }
-/* =========================================================
-   ページの境目にかかるBOXを、次のページへ送る
-   ---------------------------------------------------------
-   ★「重なりを直す」はBOX同士の重なりを解消する処理で、
-     ページの境目とは関係なかった。
-     こちらは「紙の切れ目にBOXが乗らないよう、内容そのものを
-     下へずらす」処理。紙に合わせて中身を動かすので、
-     書き出した時に文字が上下に割れない。
-   ★ずらすのは、その列の「それ以降すべて」。
-     1つだけ動かすと、下のBOXと重なってしまうため。
-========================================================= */
-function fitContentToPageBreaks(bands, stepFor, vertFlow) {
-  var movedTotal = 0;
-  for (var bi = 0; bi < bands.length; bi++) {
-    var bd = bands[bi];
-    var step = stepFor(bd);
-    if (!(step > 20)) continue;
-    /* その帯に属するBOXを、流れの順(縦流れなら上から)に並べる */
-    var mine = [];
-    for (var i = 0; i < objects.length; i++) {
-      var o = objects[i];
-      if (o.locked) continue;
-      if (o.type !== "text" && o.type !== "image" && o.type !== "stroke" && o.type !== "shape") continue;
-      var ob = objBBox(o);
-      if (!ob) continue;
-      var c = vertFlow ? (ob.x + ob.w / 2) : (ob.y + ob.h / 2);
-      var lo = vertFlow ? bd.x : bd.y;
-      var hi = vertFlow ? (bd.x + bd.w) : (bd.y + bd.h);
-      if (c < lo || c > hi) continue;
-      mine.push({ o: o, b: ob });
-    }
-    if (!mine.length) continue;
-    mine.sort(function(p, q){
-      return vertFlow ? (p.b.y - q.b.y) : (p.b.x - q.b.x);
-    });
-    var origin = vertFlow ? bd.y : bd.x;
-    var shift = 0, guard = 0;
-    for (var k = 0; k < mine.length; k++) {
-      var it = mine[k];
-      var start = (vertFlow ? it.b.y : it.b.x) + shift;
-      var len = vertFlow ? it.b.h : it.b.w;
-      /* ★紙より大きいBOXは丸ごとは送れないが、
-         書き出し側がBOX内の行間で切るので文字は割れない。
-         ここでは送らずに次へ進む。 */
-      if (len >= step) continue;
-      var rel = start - origin;
-      var page = Math.floor(rel / step);
-      var endRel = rel + len;
-      /* 同じページに収まらない = 境目をまたぐ */
-      /* ★ぎりぎりまで詰めず、少し余裕を見て次のページへ送る。
-         紙の端に文字が貼り付くと読みにくく、
-         わずかな計算差で切れてしまうこともあるため。 */
-      var SAFE = step * 0.08;
-      if (endRel > (page + 1) * step - SAFE) {
-        var push = (page + 1) * step - rel;      // 次のページの先頭まで送る
-        if (push > 0 && guard++ < 500) { shift += push; movedTotal++; }
-      }
-    }
-    /* 実際に動かす。送った量は後ろのBOXほど大きくなるので、
-       もう一度順に走査して各BOXの最終的なずれを決める。 */
-    if (shift > 0) {
-      var acc = 0;
-      for (var m2 = 0; m2 < mine.length; m2++) {
-        var it2 = mine[m2];
-        var s2 = (vertFlow ? it2.b.y : it2.b.x) + acc;
-        var len2 = vertFlow ? it2.b.h : it2.b.w;
-        if (len2 < step) {
-          var rel2 = s2 - origin;
-          var pg2 = Math.floor(rel2 / step);
-          if (rel2 + len2 > (pg2 + 1) * step - step * 0.08) {
-            acc += (pg2 + 1) * step - rel2;
-          }
-        }
-        if (acc > 0) moveObjBy(it2.o, vertFlow ? 0 : acc, vertFlow ? acc : 0);
-      }
-    }
-  }
-  return movedTotal;
-}
 
 function exportSplitPages(b, margin) {
   /* ★列ごとに「上から下まで」出す。
@@ -13673,38 +13618,11 @@ function exportSplitPages(b, margin) {
           }, 240);
         } }
     ];
-    if (cutThrough.length)
-      opts.push({ label: "↧ 紙の境目に重ならないよう内容をずらす(" + cutThrough.length + "個)",
-                  fn: function(){
-        /* ★以前はここから unstackWholePage を呼んでいたが、
-           あちらも確認シートを出すため、閉じたばかりのシートと
-           入れ替わりになって打ち消され、何も起きなかった。
-           ここでは確認を挟まず、その場で直してしまう。 */
-        closeExp && closeExp();
-        /* ★紙の切れ目にBOXが乗らないよう、内容そのものを下へ送る。
-           「重なりを直す」(BOX同士の重なり解消)とは別の処理。
-           こちらは紙に合わせて中身を動かすので、文字が上下に割れない。 */
-        pushUndo();
-        var n = fitContentToPageBreaks(bands, function(bd2){
-          var across2 = vertFlow ? bd2.w : bd2.h;
-          var fit2 = Math.min(1, (PW - m * 2) / Math.max(1, across2));
-          if (fit2 < 0.45) fit2 = 0.45;
-          return (PH - m * 2) / fit2;
-        }, vertFlow);
-        inkDirty = true; refreshMeasures(); scheduleSave(); updateSelUI();
-        statusEl.textContent = n ? (n + "個を次のページへ送りました。続けて書き出します…")
-                                 : "送る必要はありませんでした。続けて書き出します…";
-        /* ★直したら、そのまま書き出しまで進める。
-           以前は直すだけで終わっていたため、押した人には
-           「何も起きずダウンロードもされない」ように見えていた。
-           範囲は内容が動いたぶん取り直す。 */
-        setTimeout(function(){
-          var nb = contentBBox();
-          window.__splitConfirmed = true;
-          try { exportSplitPages(nb || b, margin); }
-          finally { window.__splitConfirmed = false; }
-        }, 220);
-      } });
+    /* ★「内容をずらす」選択肢は廃止した。
+       BOXを次ページ先頭へ送る方式だと、送った分が丸ごと空白になり、
+       ページ内に大きな不自然な余白が大量にできてしまう。
+       内容は動かさず、切る位置を行と行の間に合わせることで
+       文字が割れないようにする(safeCutsY側で対応)。 */
     opts.push({ label: "✂ 範囲をドラッグで指定して分ける", fn: function(){
         pickingExport = true;
         capture.className = "active";
@@ -13753,25 +13671,24 @@ function exportHiResMulti(b, m, scale, pcols, prows) {
   if (acrossN > 1) {
     var lim = pageLen - m * 2;
     if (vertFlow) {
-      /* 列ごとにまとめ、1ページに入るだけ詰めていく。
-         ★列1本が1ページの幅より広い場合は、その中でも切る。
-           以前は列の境界だけを候補にしていたため、
-           広い列では切る場所が無く、紙幅を超えたまま出していた。
-           超えた分はブラウザが黙って捨てるので右端が欠けていた。 */
-      var colsL = splitIntoColumns(items, b);
+      /* ★横の切れ目は「テキストBOXの左端」だけ。
+         BOXを横切る位置では絶対に切らない。
+         1ページに入らないBOXが出てきたら、そのBOXの左端で切って
+         BOXごと次のページへ送る(①の方式)。
+         ★以前は「列が広ければ列の中でも切る」としていたが、
+           それはBOXを横切る切り方で、まさに欠けの原因だった。 */
+      var lefts = [];
+      for (var li2 = 0; li2 < items.length; li2++) lefts.push(items[li2].x);
+      lefts.sort(function(p2, q2){ return p2 - q2; });
       acrossCuts = [b.x];
       var curX = b.x;
-      for (var ci2 = 0; ci2 < colsL.length; ci2++) {
-        var cl = colsL[ci2], right = cl.x + cl.w;
-        // この列を足すと溢れるなら、列の手前で切る
-        if (right - curX > lim && cl.x > curX + 1) {
-          acrossCuts.push(cl.x); curX = cl.x;
-        }
-        // 列そのものが1ページより広いなら、列の中でも等間隔に切る
-        while (right - curX > lim) {
-          curX = curX + lim;
-          acrossCuts.push(curX);
-        }
+      for (var k2 = 0; k2 < items.length; k2++) {
+        var it2 = items[k2];
+        var right2 = it2.x + it2.w;
+        if (right2 - curX <= lim) continue;        // まだ収まる
+        /* 収まらない → このBOXの左端で切る。
+           ただし既にその位置で切っている/戻ってしまう時は飛ばす。 */
+        if (it2.x > curX + 1) { acrossCuts.push(it2.x); curX = it2.x; }
       }
       if (acrossCuts[acrossCuts.length - 1] !== b.x + b.w) acrossCuts.push(b.x + b.w);
     } else {
@@ -13842,8 +13759,9 @@ function exportHiResMulti(b, m, scale, pcols, prows) {
 function buildHiResCanvas(b, m, scale, done) {
   var wW = b.w + m * 2, wH = b.h + m * 2;
   /* ★最後の砦。ここで上限を超えていたら倍率を下げて必ず収める。
-     超えたままcanvasを作ると、ブラウザが黙って切り捨てるため
-     端が欠けた絵になってしまう。 */
+     BOXを横切らずに切ると、どうしても紙幅を超えるページが
+     出ることがある。そこで切るのではなく、そのページだけ
+     少し縮めて全部入れる(欠けさせない)。 */
   var sc2 = Math.min(scale, HIRES_MAXSIDE / Math.max(wW, wH));
   if (sc2 < scale) scale = sc2;
   var outW = Math.round(wW * scale), outH = Math.round(wH * scale);
