@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.45">InkNote <small>v22.45</small></div>
+  <div class="brand" title="InkNote v22.46">InkNote <small>v22.46</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.45";
+var APP_VERSION = "22.46";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13488,9 +13488,18 @@ function exportSplitPages(b, margin) {
         pushUndo();
         var n = unstackAll(objs, 12);
         inkDirty = true; refreshMeasures(); scheduleSave(); updateSelUI();
-        statusEl.textContent = n
-          ? (n + "個を下へずらして重なりを直しました(↩で戻せます)。もう一度書き出してください")
-          : "重なりはありませんでした";
+        statusEl.textContent = n ? (n + "個を下へずらしました。続けて書き出します…")
+                                 : "重なりはありませんでした。続けて書き出します…";
+        /* ★直したら、そのまま書き出しまで進める。
+           以前は直すだけで終わっていたため、押した人には
+           「何も起きずダウンロードもされない」ように見えていた。
+           範囲は内容が動いたぶん取り直す。 */
+        setTimeout(function(){
+          var nb = contentBBox();
+          window.__splitConfirmed = true;
+          try { exportSplitPages(nb || b, margin); }
+          finally { window.__splitConfirmed = false; }
+        }, 220);
       } });
     opts.push({ label: "✂ 範囲をドラッグで指定して分ける", fn: function(){
         pickingExport = true;
@@ -13747,15 +13756,24 @@ function safeCutsX(b, list, maxStep, minStep) {
    前ページの末尾と次ページの冒頭が重複していた。
    範囲は一切広げず、足りないところは余白で埋める。 */
 function renderToPaperCanvas(box, m, PW, PH) {
-  var inner = renderPageToCanvas(box, m);
+  /* ★余白は margin=0 で描いてから、できた絵の外側に付ける。
+     renderPageToCanvas の margin は「範囲の外側を広げて描く」
+     指定なので、そのまま使うと隣のページの内容が余白部分に
+     入り込み、前ページ末尾と次ページ冒頭が重複していた
+     (24pxの余白で約2〜3行ぶんが重なる)。
+     範囲は切り出したとおり、余白は後から足す。 */
+  var inner = renderPageToCanvas(box, 0);
   if (!inner) return null;
   if (!PW || !PH) return inner;                   // 紙に合わせない場合はそのまま
   var want = PW / PH;
-  var have = inner.width / inner.height;
-  if (Math.abs(have - want) < 0.01) return inner; // すでに紙の形
+  /* 余白ぶんを見込んだ大きさで紙を作る(内容は中に縮めて置く) */
+  var scale = inner.width / Math.max(1, box.w);      // 1ノート単位あたりのpx
+  var padPx = Math.round(m * scale);
+  var needW = inner.width + padPx * 2, needH = inner.height + padPx * 2;
+  var have = needW / needH;
   var ow, oh;
-  if (have > want) { ow = inner.width; oh = Math.round(inner.width / want); }
-  else { oh = inner.height; ow = Math.round(inner.height * want); }
+  if (have > want) { ow = needW; oh = Math.round(needW / want); }
+  else { oh = needH; ow = Math.round(needH * want); }
   var cap = 4096;
   if (Math.max(ow, oh) > cap) {
     var k = cap / Math.max(ow, oh);
@@ -13768,8 +13786,10 @@ function renderToPaperCanvas(box, m, PW, PH) {
   outWhite = printWhite;
   g.fillStyle = paperForOutput();
   g.fillRect(0, 0, ow, oh);
-  /* 中身は縦横比を保ったまま、収まる大きさで中央に置く */
-  var k2 = Math.min(ow / inner.width, oh / inner.height);
+  /* 中身は縦横比を保ったまま、余白を残して中央に置く。
+     ★余白(padPx)を引いた枠に収めるので、紙の縁に貼り付かない。 */
+  var availW = Math.max(1, ow - padPx * 2), availH = Math.max(1, oh - padPx * 2);
+  var k2 = Math.min(availW / inner.width, availH / inner.height, 1);
   var dw = Math.round(inner.width * k2), dh = Math.round(inner.height * k2);
   g.drawImage(inner, Math.round((ow - dw) / 2), Math.round((oh - dh) / 2), dw, dh);
   try { inner.width = 1; inner.height = 1; inner.width = 0; inner.height = 0; } catch (e) {}
