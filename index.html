@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.51">InkNote <small>v22.51</small></div>
+  <div class="brand" title="InkNote v22.52">InkNote <small>v22.52</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.51";
+var APP_VERSION = "22.52";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13574,6 +13574,11 @@ function exportSplitPages(b, margin) {
     var step = ((PH - m * 2) / fit) * 0.92;
     var cuts = vertFlow ? safeCutsY(bd, objects, step, step * 0.35)
                         : safeCutsX(bd, objects, step, step * 0.35);
+    /* ★切れ目を、実際に描いた絵で確かめて微調整する。
+       計算やDOMから求めた位置は、BOXの作りによってはズレる。
+       描いた絵の下端に文字がかかっていたら、
+       その手前の行間まで戻して切り直す。 */
+    if (vertFlow) cuts = refineCutsByInk(bd, cuts, step);
     for (var ci = 0; ci + 1 < cuts.length; ci++) {
       pages.push(vertFlow
         ? { x: bd.x, y: cuts[ci], w: bd.w, h: cuts[ci + 1] - cuts[ci] }
@@ -13654,13 +13659,37 @@ var HIRES_MAXSIDE = 16384;      // 出来上がりの長辺の上限
 /* 1枚に入りきらない時は、内容を切らない位置で区切って複数ページにする。
    ★「一枚絵」の見え方は保ったまま、はみ出た分を次のページへ回す。
      切れ目はBOXの境界を使うので、文字が途中で割れない。 */
+/* BOXを横切らない切れ目を作る。
+   ★縦でも横でも考え方は同じ。
+     「1ページに入らないBOXが来たら、そのBOXの手前で切る」。
+     BOXの途中では絶対に切らない(①の方式)。
+   ★以前は内容の向き(vertFlow)によって片方しかこのルールを
+     使っておらず、横長のノートでは全く効いていなかった。
+     それが右端が欠け続けた原因。向きに関係なく両方向に適用する。 */
+function boxEdgeCuts(items, lo, hi, lim, horiz) {
+  var arr = items.slice().sort(function(a, c){
+    return horiz ? (a.x - c.x) : (a.y - c.y);
+  });
+  var cuts = [lo], cur = lo;
+  for (var i = 0; i < arr.length; i++) {
+    var s1 = horiz ? arr[i].x : arr[i].y;
+    var e1 = horiz ? (arr[i].x + arr[i].w) : (arr[i].y + arr[i].h);
+    if (e1 - cur <= lim) continue;            // まだ収まる
+    if (s1 > cur + 1) { cuts.push(s1); cur = s1; }
+    /* BOX単体が1ページより大きい場合は、ここでは切らない。
+       切ると必ず横切ることになるため、そのページだけ縮めて収める。 */
+  }
+  if (cuts[cuts.length - 1] !== hi) cuts.push(hi);
+  return cuts;
+}
 function exportHiResMulti(b, m, scale, pcols, prows) {
   var pageLen = HIRES_MAXSIDE / scale;
   var items = scanLayout(objects);
   var vertFlow = (b.h >= b.w);
-  /* 長い方向を、内容を切らない位置で区切る */
-  var cuts = vertFlow ? safeCutsY(b, objects, pageLen - m * 2, (pageLen - m * 2) * 0.3)
-                      : safeCutsX(b, objects, pageLen - m * 2, (pageLen - m * 2) * 0.3);
+  /* 長い方向を、BOXを横切らない位置で区切る */
+  var cuts = vertFlow
+    ? boxEdgeCuts(items, b.y, b.y + b.h, pageLen - m * 2, false)
+    : boxEdgeCuts(items, b.x, b.x + b.w, pageLen - m * 2, true);
   /* 短い方向も入りきらないなら、そちらも区切る。
      ★横方向は「列の境目」で切るのが正しい。
        文字幅の単位で切ると、列のまん中で割れて右端が切れたように見える。
@@ -13670,30 +13699,10 @@ function exportHiResMulti(b, m, scale, pcols, prows) {
   var acrossCuts = [];
   if (acrossN > 1) {
     var lim = pageLen - m * 2;
-    if (vertFlow) {
-      /* ★横の切れ目は「テキストBOXの左端」だけ。
-         BOXを横切る位置では絶対に切らない。
-         1ページに入らないBOXが出てきたら、そのBOXの左端で切って
-         BOXごと次のページへ送る(①の方式)。
-         ★以前は「列が広ければ列の中でも切る」としていたが、
-           それはBOXを横切る切り方で、まさに欠けの原因だった。 */
-      var lefts = [];
-      for (var li2 = 0; li2 < items.length; li2++) lefts.push(items[li2].x);
-      lefts.sort(function(p2, q2){ return p2 - q2; });
-      acrossCuts = [b.x];
-      var curX = b.x;
-      for (var k2 = 0; k2 < items.length; k2++) {
-        var it2 = items[k2];
-        var right2 = it2.x + it2.w;
-        if (right2 - curX <= lim) continue;        // まだ収まる
-        /* 収まらない → このBOXの左端で切る。
-           ただし既にその位置で切っている/戻ってしまう時は飛ばす。 */
-        if (it2.x > curX + 1) { acrossCuts.push(it2.x); curX = it2.x; }
-      }
-      if (acrossCuts[acrossCuts.length - 1] !== b.x + b.w) acrossCuts.push(b.x + b.w);
-    } else {
-      acrossCuts = safeCutsY(b, objects, lim, lim * 0.3);
-    }
+    /* ★こちらも同じルール。BOXの手前でだけ切る。 */
+    acrossCuts = vertFlow
+      ? boxEdgeCuts(items, b.x, b.x + b.w, lim, true)
+      : boxEdgeCuts(items, b.y, b.y + b.h, lim, false);
   } else {
     acrossCuts = vertFlow ? [b.x, b.x + b.w] : [b.y, b.y + b.h];
   }
@@ -14081,6 +14090,75 @@ function renderToPaperCanvas(box, m, PW, PH) {
   return out;
 }
 /* ページの並びを実際に描いて書き出す(PNG/PDF共通) */
+/* 切れ目の列を、実際の描画を見て直す。
+   各ページを小さめに試し描きして、下端に文字がかかっていれば
+   その手前の行間まで戻す。 */
+function refineCutsByInk(bd, cuts, step) {
+  var out = [cuts[0]];
+  var PROBE = 0.35;                         // 試し描きの倍率(軽くするため)
+  for (var i = 1; i < cuts.length; i++) {
+    var top = out[out.length - 1];
+    var bottom = cuts[i];
+    if (i === cuts.length - 1) { out.push(bottom); break; }
+    var h = bottom - top;
+    if (!(h > 20)) { out.push(bottom); continue; }
+    var cv = null;
+    try {
+      window.__pdfBulkScale = PROBE;
+      cv = renderPageToCanvas({ x: bd.x, y: top, w: bd.w, h: h }, 0);
+    } catch (e) {}
+    window.__pdfBulkScale = 0;
+    if (cv) {
+      /* 下端から2行ぶんくらいを見て、空いている所まで戻す */
+      var back = inkFreeRowNear(cv, Math.round(70 * PROBE));
+      try { cv.width = 1; cv.height = 1; cv.width = 0; cv.height = 0; } catch (e2) {}
+      if (back > 0) {
+        var world = back / PROBE;             // 画面px → ノート座標
+        if (world > 2 && world < h * 0.5) bottom = bottom - world;
+      }
+    }
+    out.push(bottom);
+  }
+  return out;
+}
+/* =========================================================
+   描いた絵を見て、文字を横切らない高さへ切り直す
+   ---------------------------------------------------------
+   ★DOMから行の位置を測る方法は、画面に出ていないBOX(o.elが無い)
+     では測れず、結局どこかで文字を割っていた。
+     こちらは「実際に描いた絵」を調べるので、
+     BOXの作りや行の高さに一切依存しない。確実に効く。
+   ★ページの下端近くを1行ずつ見て、インクが無い高さ(行間)を探す。
+     見つかったらそこを新しい下端にする。
+========================================================= */
+function inkFreeRowNear(cv, fromBottomPx) {
+  try {
+    var g = cv.getContext("2d");
+    var w = cv.width, h = cv.height;
+    if (!w || !h) return 0;
+    var look = Math.min(h - 2, Math.max(8, fromBottomPx));
+    var data = g.getImageData(0, h - look, w, look).data;
+    /* 紙の色は左上の1点から拾う(余白なので内容は無い) */
+    var p0 = g.getImageData(1, 1, 1, 1).data;
+    var r0 = p0[0], g0 = p0[1], b0 = p0[2];
+    var rowHasInk = function(y){
+      var off = y * w * 4;
+      for (var x = 0; x < w; x += 2) {
+        var i = off + x * 4;
+        if (Math.abs(data[i] - r0) + Math.abs(data[i+1] - g0) + Math.abs(data[i+2] - b0) > 40)
+          return true;
+      }
+      return false;
+    };
+    /* 下端から上へ、連続して空いている帯を探す */
+    var run = 0;
+    for (var y = look - 1; y >= 0; y--) {
+      if (!rowHasInk(y)) { run++; if (run >= 3) return look - y; }
+      else run = 0;
+    }
+    return 0;
+  } catch (e) { return 0; }
+}
 function renderPagesOut(pages, m, PW, PH) {
   if (exportFmt === "png") {
     var n = 0;
