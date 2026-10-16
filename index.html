@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.44">InkNote <small>v22.44</small></div>
+  <div class="brand" title="InkNote v22.45">InkNote <small>v22.45</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.44";
+var APP_VERSION = "22.45";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13504,6 +13504,126 @@ function exportSplitPages(b, margin) {
   renderPagesOut(pages, m, PW, PH);
 }
 /* =========================================================
+   無限ノート専用: 1枚絵のまま超高解像度で出す
+   ---------------------------------------------------------
+   ★「全体」は分割せず1枚絵にするのが理想だが、
+     canvasは長辺4096pxに抑えていたため、広いノートでは
+     倍率0.2まで落ちて拡大しても読めなかった。
+   ★かといって倍率2のまま1枚のcanvasを作ると、
+     40000x16000 = 2.4GB のような現実的でない大きさになり、
+     ブラウザのcanvas上限(一般に16384px)も超えて真っ白になる。
+   ★そこで、小さなタイルに分けて描き、
+     それを1枚の大きな画像として書き出す。
+     canvasは一度に1タイル分しか作らないので端末が落ちない。
+     出来上がりは「1枚の絵」で、拡大すれば読める。
+========================================================= */
+var HIRES_TILE = 2048;          // 1タイルの一辺(px)
+var HIRES_MAXSIDE = 16384;      // 出来上がりの長辺の上限
+
+function exportHiResSingle(b, margin) {
+  if (!b) { alert("書き出す内容がありません"); return; }
+  var m = (margin == null) ? 40 : margin;
+  var wW = b.w + m * 2, wH = b.h + m * 2;          // ノート座標での大きさ
+  /* 読める倍率(2)を基本に、長辺の上限に収まるよう調整する */
+  var scale = Math.min(2, HIRES_MAXSIDE / Math.max(wW, wH));
+  var outW = Math.round(wW * scale), outH = Math.round(wH * scale);
+  var cols = Math.ceil(outW / HIRES_TILE), rows = Math.ceil(outH / HIRES_TILE);
+  var tiles = cols * rows;
+  var est = outW * outH * 4 / 1048576;
+  var go = function(){
+    statusEl.textContent = "高解像度で書き出しています…(0/" + tiles + ")";
+    /* 出来上がりを受け取る1枚のcanvas。
+       ここだけは全体分を確保する必要があるが、
+       描画用のタイルは1枚ずつ作って捨てるので
+       同時に使う量は抑えられる。 */
+    var out = document.createElement("canvas");
+    out.width = outW; out.height = outH;
+    var og = out.getContext("2d");
+    if (!og) { statusEl.textContent = "この端末では大きすぎて作れませんでした"; return; }
+    outWhite = printWhite;
+    og.fillStyle = paperForOutput();
+    og.fillRect(0, 0, outW, outH);
+    var i = 0;
+    var step = function(){
+      if (i >= tiles) {
+        finish();
+        return;
+      }
+      var r = Math.floor(i / cols), c = i % cols;
+      i++;
+      statusEl.textContent = "高解像度で書き出しています…(" + i + "/" + tiles + ")";
+      /* このタイルが受け持つノート座標の範囲 */
+      var sx = (c * HIRES_TILE) / scale, sy = (r * HIRES_TILE) / scale;
+      var sw = Math.min(HIRES_TILE / scale, wW - sx);
+      var sh = Math.min(HIRES_TILE / scale, wH - sy);
+      if (sw <= 0 || sh <= 0) { setTimeout(step, 0); return; }
+      /* ★タイルは余白ぶんズラした位置から切り出す。
+         bは内容の範囲、wW/wHは余白込みなので、
+         描く時は余白分を引いた座標に戻す。 */
+      var box = { x: b.x - m + sx, y: b.y - m + sy, w: sw, h: sh };
+      var tile = null;
+      try {
+        window.__pdfBulkScale = scale;          // タイルも同じ倍率で描く
+        tile = renderPageToCanvas(box, 0);
+      } catch (e) {}
+      window.__pdfBulkScale = 0;
+      if (tile) {
+        try {
+          og.drawImage(tile, Math.round(c * HIRES_TILE), Math.round(r * HIRES_TILE),
+                       Math.round(sw * scale), Math.round(sh * scale));
+        } catch (e2) {}
+        try { tile.width = 1; tile.height = 1; tile.width = 0; tile.height = 0; } catch (e3) {}
+      }
+      setTimeout(step, 0);          // ブラウザに処理を返しながら進める
+    };
+    var finish = function(){
+      try {
+        if (exportFmt === "png") {
+          downloadURL(out.toDataURL("image/png"), exportName(findPage(currentId), "png"));
+          statusEl.textContent = "高解像度PNGを書き出しました(" + outW + "x" + outH + ")";
+          try { out.width = 0; out.height = 0; } catch (e) {}
+          return;
+        }
+        loadJsPdf().then(function(){
+          var isLand = outW > outH;
+          var pdf = new window.jspdf.jsPDF({
+            orientation: isLand ? "l" : "p", unit: "px", format: [outW, outH]
+          });
+          pdf.addImage(out.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, outW, outH);
+          pdf.save(exportName(findPage(currentId), "pdf"));
+          statusEl.textContent = "高解像度PDFを書き出しました(" + outW + "x" + outH + ")";
+          try { out.width = 0; out.height = 0; } catch (e) {}
+        }).catch(function(){
+          statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
+        });
+      } catch (e) {
+        statusEl.textContent = "大きすぎて書き出せませんでした。範囲を分けてお試しください";
+      }
+    };
+    step();
+  };
+  /* 大きい時は、できあがりの大きさと目安の重さを先に伝える */
+  if (est > 150 && !window.__hiresConfirmed) {
+    showSheet("1枚絵で書き出します(" + outW + "x" + outH + ")", [
+      { label: "🖼 このまま高解像度で出す(目安 " + Math.round(est) + "MB)",
+        fn: function(){
+          window.__hiresConfirmed = true;
+          exportHiResSingle(b, margin);
+          window.__hiresConfirmed = false;
+        } },
+      { label: "✂ 範囲をドラッグで指定して分ける", fn: function(){
+          pickingExport = true;
+          capture.className = "active";
+          statusEl.textContent = "範囲をドラッグで囲んでください(画面の端まで持っていくとスクロールします)";
+        } },
+      { label: "キャンセル", cancel: true }
+    ]);
+    return;
+  }
+  go();
+}
+
+/* =========================================================
    「全体」= 紙の形に縛られず、読める範囲で広く出す
    ---------------------------------------------------------
    ★A4に割る方と同じ挙動になっていたので差をつける。
@@ -13722,6 +13842,13 @@ function openExp() {
     (canvasMode === "inf")
       ? "📄 A4に割って書き出す(印刷用・推奨)"
       : "📄 A4ページとして書き出す(印刷用・推奨)";
+  /* ★「全体(1枚絵)」は無限ノート専用。
+     A4のノートは用紙ごとに出すのが自然なので、選択肢から外す。 */
+  var allRow = document.querySelector('.exp-opt[data-r="all"]');
+  if (allRow) {
+    allRow.style.display = (canvasMode === "inf") ? "" : "none";
+    allRow.querySelector(".pp-title").textContent = "🖼 全体を1枚絵で(高解像度・拡大して読む)";
+  }
   $("#expTitle").textContent = "書き出し範囲を選択(" + (exportFmt === "pdf" ? "PDF" : "PNG") + ")";
   $("#expSelRow").style.display = sel.length ? "" : "none";
   $("#expPanel").classList.add("show");
@@ -13747,10 +13874,10 @@ $("#exClose").onclick = closeExp;
         if (canvasMode === "inf") exportSplitPages(contentBBox(), 24);
         else exportSheets();                      // A4用紙をページ単位で正確に出力
       } else if (r === "all") {
-        /* ★「全体」はA4に縛られず、読める範囲でできるだけ広く取る。
-           A4に割る方と同じ結果になっていては選ぶ意味がないため。
-           文章の切れ目で分けるのは同じだが、1枚に入れる量を多くする。 */
-        exportWidePages(contentBBox(), 40);
+        /* ★「全体」は無限ノート専用の「1枚絵」。
+           分割すると意味が無いので割らず、拡大して読めるよう
+           超高解像度で出す(タイルに分けて描き、1枚に合成)。 */
+        exportHiResSingle(contentBBox(), 40);
       } else if (r === "view") {
         var tl = toWorld(0, 0), br = toWorld(innerWidth, innerHeight);
         doExport({ x: tl.x, y: tl.y, w: br.x - tl.x, h: br.y - tl.y }, 0);
