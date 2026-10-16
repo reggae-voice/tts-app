@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.43">InkNote <small>v22.43</small></div>
+  <div class="brand" title="InkNote v22.44">InkNote <small>v22.44</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.43";
+var APP_VERSION = "22.44";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -13476,8 +13476,22 @@ function exportSplitPages(b, margin) {
         } }
     ];
     if (cutThrough.length)
-      opts.push({ label: "↧ 先に「重なりを直す」で整える(" + cutThrough.length + "個が紙をまたぎます)",
-                  fn: function(){ closeExp && closeExp(); setTimeout(unstackWholePage, 150); } });
+      opts.push({ label: "↧ 先に重なりを直す(" + cutThrough.length + "個が紙をまたぎます)",
+                  fn: function(){
+        /* ★以前はここから unstackWholePage を呼んでいたが、
+           あちらも確認シートを出すため、閉じたばかりのシートと
+           入れ替わりになって打ち消され、何も起きなかった。
+           ここでは確認を挟まず、その場で直してしまう。 */
+        closeExp && closeExp();
+        var objs = unstackTargets(objects);
+        if (objs.length < 2) { statusEl.textContent = "直す対象がありません"; return; }
+        pushUndo();
+        var n = unstackAll(objs, 12);
+        inkDirty = true; refreshMeasures(); scheduleSave(); updateSelUI();
+        statusEl.textContent = n
+          ? (n + "個を下へずらして重なりを直しました(↩で戻せます)。もう一度書き出してください")
+          : "重なりはありませんでした";
+      } });
     opts.push({ label: "✂ 範囲をドラッグで指定して分ける", fn: function(){
         pickingExport = true;
         capture.className = "active";
@@ -13607,12 +13621,46 @@ function safeCutsX(b, list, maxStep, minStep) {
   cuts.push(end);
   return cuts;
 }
+/* ★指定した範囲だけを描き、それを紙の形の中央に置く。
+   以前は紙の比率に合わせて「範囲そのものを広げて」いたため、
+   広げた分だけ隣のページの内容を引き込み、
+   前ページの末尾と次ページの冒頭が重複していた。
+   範囲は一切広げず、足りないところは余白で埋める。 */
+function renderToPaperCanvas(box, m, PW, PH) {
+  var inner = renderPageToCanvas(box, m);
+  if (!inner) return null;
+  if (!PW || !PH) return inner;                   // 紙に合わせない場合はそのまま
+  var want = PW / PH;
+  var have = inner.width / inner.height;
+  if (Math.abs(have - want) < 0.01) return inner; // すでに紙の形
+  var ow, oh;
+  if (have > want) { ow = inner.width; oh = Math.round(inner.width / want); }
+  else { oh = inner.height; ow = Math.round(inner.height * want); }
+  var cap = 4096;
+  if (Math.max(ow, oh) > cap) {
+    var k = cap / Math.max(ow, oh);
+    ow = Math.round(ow * k); oh = Math.round(oh * k);
+  }
+  var out = document.createElement("canvas");
+  out.width = ow; out.height = oh;
+  var g = out.getContext("2d");
+  // 紙の色は本体の書き出しと同じ関数で決める(印刷時の白背景設定も効く)
+  outWhite = printWhite;
+  g.fillStyle = paperForOutput();
+  g.fillRect(0, 0, ow, oh);
+  /* 中身は縦横比を保ったまま、収まる大きさで中央に置く */
+  var k2 = Math.min(ow / inner.width, oh / inner.height);
+  var dw = Math.round(inner.width * k2), dh = Math.round(inner.height * k2);
+  g.drawImage(inner, Math.round((ow - dw) / 2), Math.round((oh - dh) / 2), dw, dh);
+  try { inner.width = 1; inner.height = 1; inner.width = 0; inner.height = 0; } catch (e) {}
+  return out;
+}
 /* ページの並びを実際に描いて書き出す(PNG/PDF共通) */
 function renderPagesOut(pages, m, PW, PH) {
   if (exportFmt === "png") {
     var n = 0;
     for (var i = 0; i < pages.length; i++) {
-      var cv = renderPageToCanvas(PW ? fitBoxToPaper(pages[i], PW, PH) : pages[i], m);
+      var cv = renderToPaperCanvas(pages[i], m, PW, PH);
       if (!cv || !canvasHasInk(cv)) continue;
       n++;
       downloadURL(cv.toDataURL("image/png"), "inknote_p" + n + ".png");
@@ -13634,7 +13682,7 @@ function renderPagesOut(pages, m, PW, PH) {
       }
       var p = pages[i2]; i2++;
       statusEl.textContent = "PDF生成中…(" + i2 + "/" + pages.length + ")";
-      var cv = renderPageToCanvas(PW ? fitBoxToPaper(p, PW, PH) : p, m);
+      var cv = renderToPaperCanvas(p, m, PW, PH);
       if (cv && canvasHasInk(cv)) {
         var isLand = cv.width > cv.height;
         if (!pdf) {
@@ -13654,24 +13702,6 @@ function renderPagesOut(pages, m, PW, PH) {
   }).catch(function(){
     statusEl.textContent = "PDF生成失敗(初回は通信が必要です)";
   });
-}
-/* ★ページをA4の形に合わせる。
-   紙より高いぶんを入れた時は、その比率になるよう範囲を広げる。
-   広げたぶん内容は小さく描かれる=A4に収めて縮小したのと同じ結果になり、
-   紙からはみ出して切れることがなくなる。
-   広げる向きは内容の中心を保つので、左右に寄ることもない。 */
-function fitBoxToPaper(box, paperW, paperH) {
-  var want = paperW / paperH;
-  var have = box.w / Math.max(1, box.h);
-  var x = box.x, y = box.y, w = box.w, h = box.h;
-  if (have < want) {                  // 縦長すぎ → 横に広げる
-    var nw = h * want;
-    x -= (nw - w) / 2; w = nw;
-  } else if (have > want) {           // 横長すぎ → 縦に広げる
-    var nh = w / want;
-    y -= (nh - h) / 2; h = nh;
-  }
-  return { x: x, y: y, w: w, h: h };
 }
 function doExport(b, margin) {
   var bb = b || contentBBox();
