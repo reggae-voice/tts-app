@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.52">InkNote <small>v22.52</small></div>
+  <div class="brand" title="InkNote v22.53">InkNote <small>v22.53</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.52";
+var APP_VERSION = "22.53";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -10374,7 +10374,46 @@ function roundRectPath(g, x, y, w, h, r) {
   g.arcTo(x, y, x + w, y, r);
   g.closePath();
 }
+/* ★表・数式・装飾を含むBOXは、素の文字だけでは再現できない。
+   drawTextToCanvas は o.text しか見ないため、表は丸ごと空白、
+   組版した数式も消えていた(書き出しの不自然な空白の正体)。
+   そうしたBOXは、画面に出ている実物をそのまま絵にして描く。 */
+function richSnapshotFor(o) {
+  if (!hasRich(o) || !o.el) return null;
+  var cached = o.__richSnap;
+  if (cached && cached.html === o.rich && cached.w === o.w) return cached.cv;
+  try {
+    var r = o.el.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    /* 画面の見た目をSVGのforeignObjectに包んで画像にする。
+       表も数式も装飾も、見えているとおりに出る。 */
+    var cs = getComputedStyle(o.el);
+    var css = "font-family:" + cs.fontFamily + ";font-size:" + cs.fontSize +
+              ";line-height:" + cs.lineHeight + ";color:" + inkForOutput(cs.color) +
+              ";white-space:pre-wrap;word-break:break-word;";
+    var inner = sanitizeRich(o.el.innerHTML);
+    var W = Math.max(1, Math.round(o.w)), H = Math.max(1, Math.round(r.height * (o.w / r.width)));
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">' +
+              '<foreignObject width="100%" height="100%">' +
+              '<div xmlns="http://www.w3.org/1999/xhtml" style="' + css + '">' +
+              inner + '</div></foreignObject></svg>';
+    var img = new Image();
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+    o.__richSnap = { html: o.rich, w: o.w, cv: img, h: H };
+    return img;
+  } catch (e) { return null; }
+}
 function drawTextToCanvas(g, o) {
+  /* リッチなBOXは実物の絵を優先して描く(表・数式が消えないように) */
+  if (hasRich(o)) {
+    var snap = o.__richSnap;
+    if (snap && snap.cv && snap.cv.complete && snap.cv.naturalWidth) {
+      try {
+        g.drawImage(snap.cv, o.x, o.y, o.w, snap.h);
+        return;
+      } catch (e) {}
+    }
+  }
   if (o.opacity != null && o.opacity < 1) {
     var sa = g.globalAlpha;
     g.globalAlpha = sa * o.opacity;
@@ -13654,7 +13693,15 @@ function exportSplitPages(b, margin) {
      出来上がりは「1枚の絵」で、拡大すれば読める。
 ========================================================= */
 var HIRES_TILE = 2048;          // 1タイルの一辺(px)
-var HIRES_MAXSIDE = 16384;      // 出来上がりの長辺の上限
+/* ★1枚の大きさの上限。
+   長辺だけでなく「面積」にも上限がある点を見落としていた。
+   16384 x 10620 = 174メガピクセルは端末の限界を大きく超え、
+   ブラウザが黙って描画を打ち切るため、右端の列がまるごと
+   消えていた(14列のうち3列が出ない原因)。
+   長辺8192・面積48メガピクセルまでに抑え、
+   入らない分はページを増やす。 */
+var HIRES_MAXSIDE = 8192;       // 出来上がりの長辺の上限
+var HIRES_MAXAREA = 48e6;       // 出来上がりの面積の上限(px)
 
 /* 1枚に入りきらない時は、内容を切らない位置で区切って複数ページにする。
    ★「一枚絵」の見え方は保ったまま、はみ出た分を次のページへ回す。
@@ -13683,7 +13730,7 @@ function boxEdgeCuts(items, lo, hi, lim, horiz) {
   return cuts;
 }
 function exportHiResMulti(b, m, scale, pcols, prows) {
-  var pageLen = HIRES_MAXSIDE / scale;
+  var pageLen = Math.min(HIRES_MAXSIDE, Math.sqrt(HIRES_MAXAREA)) / scale;
   var items = scanLayout(objects);
   var vertFlow = (b.h >= b.w);
   /* 長い方向を、BOXを横切らない位置で区切る */
@@ -13772,6 +13819,9 @@ function buildHiResCanvas(b, m, scale, done) {
      出ることがある。そこで切るのではなく、そのページだけ
      少し縮めて全部入れる(欠けさせない)。 */
   var sc2 = Math.min(scale, HIRES_MAXSIDE / Math.max(wW, wH));
+  /* 面積の上限も守る(長辺が収まっていても面積で破綻するため) */
+  var scArea = Math.sqrt(HIRES_MAXAREA / Math.max(1, wW * wH));
+  sc2 = Math.min(sc2, scArea);
   if (sc2 < scale) scale = sc2;
   var outW = Math.round(wW * scale), outH = Math.round(wH * scale);
   var out = document.createElement("canvas");
@@ -13821,8 +13871,11 @@ function exportHiResSingle(b, margin) {
   var MINSCALE = 1.5;
   var scale = Math.min(2, HIRES_MAXSIDE / Math.max(wW, wH));
   if (scale < MINSCALE) scale = MINSCALE;
-  /* 1ページに収まるノート座標の大きさ */
-  var pageW = HIRES_MAXSIDE / scale, pageH = HIRES_MAXSIDE / scale;
+  /* 1ページに収まるノート座標の大きさ。
+     ★長辺だけでなく面積でも決まるので、両方から求めて狭い方を使う。 */
+  var sideLim = HIRES_MAXSIDE / scale;
+  var areaLim = Math.sqrt(HIRES_MAXAREA) / scale;
+  var pageW = Math.min(sideLim, areaLim), pageH = Math.min(sideLim, areaLim);
   var pcols = Math.max(1, Math.ceil(wW / pageW));
   var prows = Math.max(1, Math.ceil(wH / pageH));
   if (pcols * prows > 1) { exportHiResMulti(b, m, scale, pcols, prows); return; }
@@ -13831,6 +13884,10 @@ function exportHiResSingle(b, margin) {
   var tiles = cols * rows;
   var est = outW * outH * 4 / 1048576;
   var go = function(){
+    statusEl.textContent = "表や数式を準備しています…";
+    prepareRichSnapshots().then(function(){ go2(); });
+  };
+  var go2 = function(){
     statusEl.textContent = "高解像度で書き出しています…(0/" + tiles + ")";
     /* 出来上がりを受け取る1枚のcanvas。
        ここだけは全体分を確保する必要があるが、
@@ -14159,7 +14216,33 @@ function inkFreeRowNear(cv, fromBottomPx) {
     return 0;
   } catch (e) { return 0; }
 }
+/* 書き出しの前に、リッチなBOXの絵を用意しておく。
+   画像の読み込みは非同期なので、描く前に待たないと
+   表や数式が間に合わず空白のまま出てしまう。 */
+function prepareRichSnapshots() {
+  var jobs = [];
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "text" || !hasRich(o)) continue;
+    var img = richSnapshotFor(o);
+    if (!img) continue;
+    if (img.complete && img.naturalWidth) continue;
+    jobs.push(new Promise(function(res){
+      img.onload = function(){ res(); };
+      img.onerror = function(){ res(); };
+      setTimeout(res, 4000);               // 念のための打ち切り
+    }));
+  }
+  return jobs.length ? Promise.all(jobs) : Promise.resolve();
+}
 function renderPagesOut(pages, m, PW, PH) {
+  /* 表や数式の絵が間に合うのを待ってから描き始める */
+  statusEl.textContent = "表や数式を準備しています…";
+  prepareRichSnapshots().then(function(){
+    renderPagesOutInner(pages, m, PW, PH);
+  });
+}
+function renderPagesOutInner(pages, m, PW, PH) {
   if (exportFmt === "png") {
     var n = 0;
     for (var i = 0; i < pages.length; i++) {
