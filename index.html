@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.53">InkNote <small>v22.53</small></div>
+  <div class="brand" title="InkNote v22.54">InkNote <small>v22.54</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.53";
+var APP_VERSION = "22.54";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -10388,15 +10388,35 @@ function richSnapshotFor(o) {
     /* 画面の見た目をSVGのforeignObjectに包んで画像にする。
        表も数式も装飾も、見えているとおりに出る。 */
     var cs = getComputedStyle(o.el);
-    var css = "font-family:" + cs.fontFamily + ";font-size:" + cs.fontSize +
-              ";line-height:" + cs.lineHeight + ";color:" + inkForOutput(cs.color) +
-              ";white-space:pre-wrap;word-break:break-word;";
+    /* ★表の罫線や見出しの大きさは、別のCSS規則で決まっている。
+       本文の指定だけを渡していたため、表が「文字の羅列」に
+       なっていた。ノートで使っている規則をそのまま埋め込む。 */
+    var style =
+      "*{margin:0;padding:0;box-sizing:border-box}" +
+      "div.rt{font-family:" + cs.fontFamily + ";font-size:" + cs.fontSize +
+      ";line-height:" + cs.lineHeight + ";color:" + inkForOutput(cs.color) +
+      ";white-space:pre-wrap;word-break:break-word}" +
+      "table{border-collapse:collapse;width:100%;table-layout:fixed;" +
+      "font-size:.92em;margin:2px 0}" +
+      "th,td{border:1px solid " + inkForOutput("rgba(60,60,60,.45)") +
+      ";padding:4px 6px;vertical-align:middle;word-break:break-word;white-space:normal}" +
+      "th{font-weight:700;text-align:left}" +
+      "img[data-latex]{max-height:1.2em;max-width:100%;vertical-align:-0.2em;display:inline-block}" +
+      "h1{font-size:1.5em;font-weight:800;line-height:1.35;margin:.5em 0 .3em}" +
+      "h2{font-size:1.3em;font-weight:800;line-height:1.35;margin:.5em 0 .3em}" +
+      "h3{font-size:1.12em;font-weight:800;line-height:1.35;margin:.5em 0 .3em}" +
+      "ul,ol{padding-left:1.4em;margin:.2em 0}" +
+      "b,strong{font-weight:800}" +
+      "pre,code{font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre}";
+    var css = "";
     var inner = sanitizeRich(o.el.innerHTML);
     var W = Math.max(1, Math.round(o.w)), H = Math.max(1, Math.round(r.height * (o.w / r.width)));
     var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + W + '" height="' + H + '">' +
               '<foreignObject width="100%" height="100%">' +
-              '<div xmlns="http://www.w3.org/1999/xhtml" style="' + css + '">' +
-              inner + '</div></foreignObject></svg>';
+              '<div xmlns="http://www.w3.org/1999/xhtml">' +
+              '<style>' + style + '</style>' +
+              '<div class="rt">' + inner + '</div>' +
+              '</div></foreignObject></svg>';
     var img = new Image();
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
     o.__richSnap = { html: o.rich, w: o.w, cv: img, h: H };
@@ -10406,7 +10426,16 @@ function richSnapshotFor(o) {
 function drawTextToCanvas(g, o) {
   /* リッチなBOXは実物の絵を優先して描く(表・数式が消えないように) */
   if (hasRich(o)) {
+    /* ★縮小表示(canvas描画)でも表は表として見せる。
+       以前は素の文字だけを描いていたため、拡大率を下げると
+       表が「文字の羅列」に変わって見えていた。
+       絵がまだ無ければここで作り、出来たら描き直す。 */
     var snap = o.__richSnap;
+    if (!snap) {
+      var mk = richSnapshotFor(o);
+      if (mk && !mk.complete) mk.onload = function(){ inkDirty = true; };
+      snap = o.__richSnap;
+    }
     if (snap && snap.cv && snap.cv.complete && snap.cv.naturalWidth) {
       try {
         g.drawImage(snap.cv, o.x, o.y, o.w, snap.h);
@@ -13718,11 +13747,21 @@ function boxEdgeCuts(items, lo, hi, lim, horiz) {
     return horiz ? (a.x - c.x) : (a.y - c.y);
   });
   var cuts = [lo], cur = lo;
+  /* 直前のBOXの終端を覚えておく。切る位置はBOXの左端そのものではなく、
+     ★直前のBOXの右端と次のBOXの左端の「まん中」にする。
+       左端ちょうどで切ると、前のページは最後のBOXの右端で終わり、
+       紙の端ギリギリまで文字が来て余白が無くなっていた。
+       まん中で切れば、前のページにも次のページにも余白ができる。 */
+  var prevEnd = lo;
   for (var i = 0; i < arr.length; i++) {
     var s1 = horiz ? arr[i].x : arr[i].y;
     var e1 = horiz ? (arr[i].x + arr[i].w) : (arr[i].y + arr[i].h);
-    if (e1 - cur <= lim) continue;            // まだ収まる
-    if (s1 > cur + 1) { cuts.push(s1); cur = s1; }
+    if (e1 - cur <= lim) { prevEnd = Math.max(prevEnd, e1); continue; }
+    if (s1 > cur + 1) {
+      var mid = (prevEnd > cur && s1 > prevEnd) ? (prevEnd + s1) / 2 : s1;
+      cuts.push(mid); cur = mid;
+    }
+    prevEnd = Math.max(prevEnd, e1);
     /* BOX単体が1ページより大きい場合は、ここでは切らない。
        切ると必ず横切ることになるため、そのページだけ縮めて収める。 */
   }
@@ -13730,42 +13769,27 @@ function boxEdgeCuts(items, lo, hi, lim, horiz) {
   return cuts;
 }
 function exportHiResMulti(b, m, scale, pcols, prows) {
-  var pageLen = Math.min(HIRES_MAXSIDE, Math.sqrt(HIRES_MAXAREA)) / scale;
+  /* ★縦(列の長さ)は絶対に割らない。
+     列が複数ページにまたがると、どこからどこへ続くのか
+     分からなくなるため。横だけで分ける。
+     縦が1枚に入るよう倍率を決め、その倍率で横に何列入るかを計算する。 */
   var items = scanLayout(objects);
-  var vertFlow = (b.h >= b.w);
-  /* 長い方向を、BOXを横切らない位置で区切る */
-  var cuts = vertFlow
-    ? boxEdgeCuts(items, b.y, b.y + b.h, pageLen - m * 2, false)
-    : boxEdgeCuts(items, b.x, b.x + b.w, pageLen - m * 2, true);
-  /* 短い方向も入りきらないなら、そちらも区切る。
-     ★横方向は「列の境目」で切るのが正しい。
-       文字幅の単位で切ると、列のまん中で割れて右端が切れたように見える。
-       列をまたがないよう、検出した列の境界だけを候補にする。 */
-  var acrossLen = vertFlow ? b.w : b.h;
-  var acrossN = Math.max(1, Math.ceil((acrossLen + m * 2) / pageLen));
-  var acrossCuts = [];
-  if (acrossN > 1) {
-    var lim = pageLen - m * 2;
-    /* ★こちらも同じルール。BOXの手前でだけ切る。 */
-    acrossCuts = vertFlow
-      ? boxEdgeCuts(items, b.x, b.x + b.w, lim, true)
-      : boxEdgeCuts(items, b.y, b.y + b.h, lim, false);
-  } else {
-    acrossCuts = vertFlow ? [b.x, b.x + b.w] : [b.y, b.y + b.h];
-  }
+  var wH = b.h + m * 2;
+  /* 高さが上限に収まる倍率(ここが天井) */
+  var sByH = HIRES_MAXSIDE / wH;
+  var useScale = Math.min(2, sByH);
+  if (useScale < 0.6) useScale = 0.6;          // これ以上は小さくしない
+  /* その倍率で、面積と長辺から1ページに入る横幅を出す */
+  var limW = Math.min(HIRES_MAXSIDE / useScale,
+                      (HIRES_MAXAREA / useScale / useScale) / wH) - m * 2;
+  if (limW < 500) limW = 500;
+  var cuts = boxEdgeCuts(items, b.x, b.x + b.w, limW, true);
   var boxes = [];
-  for (var a = 0; a + 1 < acrossCuts.length; a++) {
-    for (var c = 0; c + 1 < cuts.length; c++) {
-      boxes.push(vertFlow
-        ? { x: acrossCuts[a], y: cuts[c],
-            w: acrossCuts[a + 1] - acrossCuts[a], h: cuts[c + 1] - cuts[c] }
-        : { x: cuts[c], y: acrossCuts[a],
-            w: cuts[c + 1] - cuts[c], h: acrossCuts[a + 1] - acrossCuts[a] });
-    }
+  for (var c = 0; c + 1 < cuts.length; c++) {
+    boxes.push({ x: cuts[c], y: b.y, w: cuts[c + 1] - cuts[c], h: b.h });
   }
   if (!boxes.length) { statusEl.textContent = "書き出す内容がありません"; return; }
   statusEl.textContent = boxes.length + "枚に分けて高解像度で書き出します…";
-  /* 1枚ずつタイル合成して書き出す */
   var idx = 0, pdf = null, added = 0;
   var one = function(){
     if (idx >= boxes.length) {
@@ -13775,12 +13799,12 @@ function exportHiResMulti(b, m, scale, pcols, prows) {
       }
       if (!pdf || !added) { statusEl.textContent = "書き出せませんでした"; return; }
       pdf.save(exportName(findPage(currentId), "pdf"));
-      statusEl.textContent = added + "枚の高解像度PDFを書き出しました";
+      statusEl.textContent = added + "枚の高解像度PDFを書き出しました(縦は分割なし)";
       return;
     }
     var bx = boxes[idx]; idx++;
     statusEl.textContent = "高解像度で書き出しています…(" + idx + "/" + boxes.length + ")";
-    buildHiResCanvas(bx, m, scale, function(cv){
+    buildHiResCanvas(bx, m, useScale, function(cv){
       if (cv) {
         try {
           if (exportFmt === "png") {
