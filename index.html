@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.54">InkNote <small>v22.54</small></div>
+  <div class="brand" title="InkNote v22.55">InkNote <small>v22.55</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.54";
+var APP_VERSION = "22.55";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -12386,6 +12386,101 @@ function dataURLToBytes(u) {
    を入れる。文字は文字のまま、絵は絵のまま残るので、
    InkNodeが無くても中身が分かる。
 ========================================================= */
+/* =========================================================
+   画像だけをまとめて取り出す
+   ---------------------------------------------------------
+   ★文章は .md で足りるが、手書きや貼った画像は文字にならない。
+     それだけを全ノートから集めて1つのZIPにする。
+   ★本文の 〔画像 #番号〕 と突き合わせられるよう、
+     ファイル名に番号を入れ、どのノートの何番かが分かるようにする。
+   ★手書き・図形は1枚ずつでは意味が分からないので、
+     ノート全体を1枚の絵にしたものを添える。
+========================================================= */
+function exportImagesOnlyZip(ids, withInk) {
+  if (!ids || !ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
+  statusEl.textContent = "画像を集めています…(0/" + ids.length + ")";
+  var files = [], used = {}, chain = Promise.resolve();
+  var picTotal = 0, inkTotal = 0, failed = 0;
+  var listLines = ["# 画像の一覧", "",
+                   "本文の 〔画像 #番号〕 と、ファイル名の番号が対応します。", ""];
+  ids.forEach(function(id, n){
+    chain = chain.then(function(){
+      statusEl.textContent = "画像を集めています…(" + (n + 1) + "/" + ids.length + ")";
+      return pageObjectsFor(id).then(function(list){
+        var pg = findPage(id);
+        var title = (pg && pg.title) || ("note" + (n + 1));
+        var base = zipSafeName(title, "note" + (n + 1));
+        var dir = base, k = 2;
+        while (used[dir]) { dir = base + "_" + k; k++; }
+        used[dir] = 1;
+        var here = [];
+        /* --- 貼った画像(数式の画像は本文に入るので除く) --- */
+        var picN = 0;
+        for (var i = 0; i < list.length; i++) {
+          var o = list[i];
+          if (o.type !== "image" || o.latex || !o.src) continue;
+          var d = dataURLToBytes(o.src);
+          if (!d) continue;
+          picN++;
+          var fn = ("00" + picN).slice(-2) + "_id" + (o.id || 0) + "." + d.ext;
+          files.push({ name: dir + "/" + fn, data: d.bytes });
+          here.push("- " + fn + "  ← 本文の 〔画像 #" + (o.id || 0) + "〕");
+          picTotal++;
+        }
+        /* --- 手書き・図形を含むノート全体の絵 --- */
+        if (withInk) {
+          var hasInk = list.some(function(o2){
+            return o2.type === "stroke" || o2.type === "shape";
+          });
+          if (hasInk) {
+            try {
+              var c = renderPageToCanvas(null, 40, list);
+              if (c) {
+                var d2 = dataURLToBytes(c.toDataURL("image/jpeg", 0.85));
+                if (d2) {
+                  files.push({ name: dir + "/_ノート全体." + d2.ext, data: d2.bytes });
+                  here.push("- _ノート全体." + d2.ext + "  ← 手書き・図形を含む全体像");
+                  inkTotal++;
+                }
+                try { c.width = 1; c.height = 1; c.width = 0; c.height = 0; } catch (e3) {}
+              }
+            } catch (e) {}
+          }
+        }
+        if (here.length) {
+          listLines.push("## " + title);
+          listLines = listLines.concat(here);
+          listLines.push("");
+        }
+      }).catch(function(){ failed++; });
+    }).then(function(){
+      // 1ノートごとにブラウザへ処理を返す(固まり・強制終了を防ぐ)
+      return new Promise(function(res){ setTimeout(res, 0); });
+    });
+  });
+  chain.catch(function(){}).then(function(){
+    if (!files.length) {
+      statusEl.textContent = "取り出せる画像がありませんでした";
+      return;
+    }
+    files.unshift({ name: "画像の一覧.md",
+                    data: new TextEncoder().encode(listLines.join("\n") + "\n") });
+    try {
+      var blob = makeZip(files);
+      var url = URL.createObjectURL(blob);
+      var d3 = new Date(), p = function(x){ return (x < 10 ? "0" : "") + x; };
+      downloadURL(url, "inknote_画像_" + d3.getFullYear() + p(d3.getMonth() + 1) +
+                       p(d3.getDate()) + "_" + p(d3.getHours()) + p(d3.getMinutes()) + ".zip");
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 8000);
+      statusEl.textContent = "画像を書き出しました(貼った画像 " + picTotal + "枚" +
+        (inkTotal ? " / 手書きを含む全体像 " + inkTotal + "枚" : "") + ")" +
+        (failed ? " ※" + failed + "件は読めませんでした" : "");
+    } catch (e) {
+      statusEl.textContent = "ZIPの書き出しに失敗しました";
+    }
+  });
+}
+
 function exportAllAsZip(ids) {
   if (!ids || !ids.length) { statusEl.textContent = "書き出すノートがありません"; return; }
   /* ★ZIPは全ファイルをメモリに持ってから1つにまとめる作りなので、
@@ -12609,6 +12704,17 @@ function openAiExportSheet() {
          1件ずつ出す道を先に出しておく。 */
       { label: "🗜 ZIPでまるごと(" + ids.length + "件まとめて)",
         fn: function(){ exportAllAsZip(ids); } },
+      /* ★.mdで文章は足りるが、手書きと貼った画像だけは文字にならない。
+         そこだけを全ノートから集められるようにする。 */
+      { label: "🖼 画像だけ全部まとめる(" + ids.length + "件ぶん)", fn: function(){
+          showSheet("画像だけ取り出す", [
+            { label: "🖼 貼った画像のみ(軽い)",
+              fn: function(){ exportImagesOnlyZip(ids, false); } },
+            { label: "✏ 手書きを含む全体像も付ける",
+              fn: function(){ exportImagesOnlyZip(ids, true); } },
+            { label: "キャンセル", cancel: true }
+          ]);
+        } },
       { label: "🗜 ZIPを1ノートずつ出す(確実)", fn: function(){
           var sub = ids.slice(0, 40).map(function(id){
             var pg2 = findPage(id);
