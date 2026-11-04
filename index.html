@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.57">InkNote <small>v22.57</small></div>
+  <div class="brand" title="InkNote v22.58">InkNote <small>v22.58</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.57";
+var APP_VERSION = "22.58";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3208,7 +3208,17 @@ function pushSnapshot(snap) {
   scheduleSave();
   updateUndoUI();
 }
-function pushUndo() { pushSnapshot(snapshotForUndo()); }
+/* ★開いてから、この端末で何回手を入れたか。
+   0 のまま中身が変わっていたら、ユーザーの操作ではない。 */
+var editsSinceLoad = 0;
+var loadedStamp = null;           // 開いた時の中身の指紋
+function pushUndo() {
+  /* ★「この端末で実際に手を入れた」回数を数える。
+     編集していないのに中身が変わっているなら、
+     それは操作ではなく不具合なので、保存を止める判断に使う。 */
+  editsSinceLoad++;
+  pushSnapshot(snapshotForUndo());
+}
 function updateUndoUI() {
   $("#undoBtn").classList.toggle("disabled", !undoStack.length);
   $("#redoBtn").classList.toggle("disabled", !redoStack.length);
@@ -7900,6 +7910,11 @@ function scheduleSave() {
      編集そのものは画面上でそのまま続けられる。取り込みが終わってから
      改めて編集すれば、その時点の全内容を正しく保存できる。 */
   if (booting || isLoadingPage) return;
+  /* ★編集として数える。pushUndoを通らない変更(文字の入力など)も
+     ここは必ず通るので、取りこぼしなく「手を入れた」と分かる。
+     これが無いと、普通に編集したのに「編集していないのに変わった」と
+     誤って判定して保存を止めてしまう。 */
+  editsSinceLoad++;
   /* ★編集された事実は必ず記録する。
      以前は同期中(syncing)に「何も記録せず」戻っていたため、
      その間の編集は保存対象にすらならず、閉じると消えていた。
@@ -7974,6 +7989,19 @@ function contentWeight(json) {
 /* 保存してよいか。だめな時は理由を返す */
 function checkSaveSafety(pid, nextJson) {
   if (allowShrinkSave) return Promise.resolve(null);       // 明示的に許可済み
+  /* ★いちばん危ないのはここ。
+     この端末で一度も手を入れていないのに、開いた時と中身が違う。
+     操作していないなら中身は変わらないはずなので、
+     差があれば不具合か取り違えであって、保存してはいけない。
+     減った量の大小に関係なく止める(1個でも消えたら異常)。 */
+  if (editsSinceLoad === 0 && loadedStamp != null) {
+    var nowStamp = contentStamp(nextJson);
+    if (nowStamp !== loadedStamp) {
+      var a0 = contentWeight("[]"), b0 = contentWeight(nextJson);
+      return Promise.resolve({ before: { n: -1, chars: 0 }, after: b0, noEdit: true });
+    }
+    return Promise.resolve(null);                          // 無編集かつ同一 → 保存不要だが安全
+  }
   return kvGet("page_" + pid).then(function(prev){
     if (!prev || !prev.json) return null;                  // 前が無いなら何でも保存可
     var a = contentWeight(prev.json), b = contentWeight(nextJson);
@@ -8018,9 +8046,10 @@ function saveDoc() {
       return kvGet("page_" + pid).then(function(prev){
         if (prev && prev.json) keepRescueCopy(pid, prev.json);
         dirtySinceSave = true;                 // 保存していないことを覚えておく
-        statusEl.textContent =
-          "⚠ 中身が消える保存を止めました(" + risk.before.n + "個 → " +
-          risk.after.n + "個)。⚙→🩺 で確認できます";
+        statusEl.textContent = risk.noEdit
+          ? "⚠ 編集していないのに中身が変わっていたため、保存を止めました(中身は無事です)"
+          : ("⚠ 中身が消える保存を止めました(" + risk.before.n + "個 → " +
+             risk.after.n + "個)。⚙→🩺 で確認できます");
         return false;
       }).catch(function(){ return false; });
     }
@@ -8310,6 +8339,10 @@ function loadPage(id, onReady) {
     pageRev = (rec && rec.rev) || 0;      // このページの版番号を覚える
     unsyncedEdits = false;                // 開いただけでは未送信ではない
     dirtySinceSave = false;
+    /* ★開いた時点の中身を指紋で覚え、編集回数を0に戻す。
+       「手を入れていないのに中身が違う」を見抜くための基準。 */
+    editsSinceLoad = 0;
+    loadedStamp = contentStamp((rec && rec.json) || "[]");
     if (rec && rec.json) {
       rebuildScene(rec.json);
       if (rec.view) view = rec.view;
