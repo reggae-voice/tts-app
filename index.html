@@ -1371,7 +1371,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.55">InkNote <small>v22.55</small></div>
+  <div class="brand" title="InkNote v22.57">InkNote <small>v22.57</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1973,7 +1973,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.55";
+var APP_VERSION = "22.57";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3233,7 +3233,8 @@ $("#saveBtn").onclick = function(){
 $("#undoBtn").onclick = function(){
   if (!undoStack.length) return;
   redoStack.push(snapshotForUndo());
-  rebuildScene(expandSnapshot(undoStack.pop()));
+  /* 取り消しは「減る」こともある正当な操作なので、保存の制限を外す */
+  withShrinkAllowed(function(){ rebuildScene(expandSnapshot(undoStack.pop())); });
   // 空白ページの挿入/削除も戻せるよう、用紙の枚数と表示を作り直す
   try { updateSheets(); applyView(); } catch (e) {}
   /* ★戻した直後に続けて見た目を変えた時、それが同じ一続きと
@@ -3246,7 +3247,7 @@ $("#undoBtn").onclick = function(){
 $("#redoBtn").onclick = function(){
   if (!redoStack.length) return;
   undoStack.push(snapshotForUndo());
-  rebuildScene(expandSnapshot(redoStack.pop()));
+  withShrinkAllowed(function(){ rebuildScene(expandSnapshot(redoStack.pop())); });
   try { updateSheets(); applyView(); } catch (e) {}
   lastStyleUndo.id = null;
   try { refreshStylePanel(); } catch (e) {}
@@ -3266,7 +3267,7 @@ $("#clearBtn").onclick = function(){
                "・↩(取り消し)で元に戻せます\n\nよろしいですか?")) return;
   closePages();
   pushUndo();
-  rebuildScene("[]");
+  withShrinkAllowed(function(){ rebuildScene("[]"); });   // 意図して消す操作
   /* ★白紙化と同じ理由。中身を消したら用紙の枚数と表示範囲を
      作り直さないと、スクロールが実際の紙と合わなくなる。 */
   refreshMeasures();
@@ -7934,6 +7935,66 @@ function flushPendingSave() {
   }
   updateSyncChip();
 }
+/* =========================================================
+   中身が消える保存を防ぐ
+   ---------------------------------------------------------
+   ★これまでは「後に保存した方が勝つ」だけだったので、
+     ・読み込みに失敗して空になった状態
+     ・他の端末の、まだ同期されていない空のノート
+     が、中身のあるノートをそのまま上書きできた。
+   ★保存の直前に、いま保存しようとしている中身と
+     すでに保存されている中身を比べ、
+     「大きく減る」時は書き込まずに止める。
+     消すつもりの操作(全消去・白紙化・取り消し)は
+     明示的に許可するので、普通の編集は妨げない。
+========================================================= */
+var allowShrinkSave = false;      // 「減らす」操作を明示的に許可する時だけ立てる
+function withShrinkAllowed(fn) {
+  allowShrinkSave = true;
+  try { return fn(); }
+  finally { setTimeout(function(){ allowShrinkSave = false; }, 1500); }
+}
+/* 中身の重さ。オブジェクト数と文字数の両方で見る。
+   数だけだと、長文1つが消えた時に気づけない。 */
+function contentWeight(json) {
+  try {
+    var arr = (typeof json === "string") ? JSON.parse(json) : json;
+    if (!Array.isArray(arr)) return { n: 0, chars: 0 };
+    var chars = 0;
+    for (var i = 0; i < arr.length; i++) {
+      var o = arr[i];
+      if (!o) continue;
+      if (o.text) chars += String(o.text).length;
+      if (o.rich) chars += String(o.rich).length;
+      if (o.points) chars += o.points.length;      // 手書きは点の数で測る
+    }
+    return { n: arr.length, chars: chars };
+  } catch (e) { return { n: 0, chars: 0 }; }
+}
+/* 保存してよいか。だめな時は理由を返す */
+function checkSaveSafety(pid, nextJson) {
+  if (allowShrinkSave) return Promise.resolve(null);       // 明示的に許可済み
+  return kvGet("page_" + pid).then(function(prev){
+    if (!prev || !prev.json) return null;                  // 前が無いなら何でも保存可
+    var a = contentWeight(prev.json), b = contentWeight(nextJson);
+    if (!a.n && !a.chars) return null;                     // 前も空
+    /* 全部消える、または8割以上減る時だけ止める。
+       書き直しや整理で多少減るのは普通なので、そこは通す。 */
+    var gone = (b.n === 0 && a.n > 0);
+    var shrank = (a.n >= 3 && b.n <= a.n * 0.2) ||
+                 (a.chars >= 200 && b.chars <= a.chars * 0.2);
+    if (!gone && !shrank) return null;
+    return { before: a, after: b };
+  }).catch(function(){ return null; });                    // 調べられない時は通す
+}
+/* 止めた時に、取り返しがつくよう控えを残す */
+function keepRescueCopy(pid, prevJson) {
+  try {
+    var key = "inknote_rescue_" + pid;
+    localStorage.setItem(key, JSON.stringify({ json: prevJson, ts: Date.now() }));
+  } catch (e) {}
+}
+
 function saveDoc() {
   if (currentId == null) return Promise.resolve();
   dirtySinceSave = false;
@@ -7947,12 +8008,27 @@ function saveDoc() {
                   colW: READ_W,
                   rev: pageRev, ts: Date.now() };
   var pid = currentId;
-  // ★書き込みの完了を返す。同期はこれを待ってから始める
-  //   (待たないと、書き終わる前の古い中身をクラウドへ送ってしまう)
-  var done = kvSet("page_" + pid, payload).then(function(ok){
-    statusEl.textContent = ok ? "保存済み ✓" : "保存エラー";
-    scheduleCloudPush(pid);
-    return ok;
+  /* ★書き込む前に「中身が消える保存」でないか確かめる。
+     読み込み失敗で空になった状態や、他端末の未同期な空ノートが
+     中身のあるノートを上書きするのを、ここで止める。 */
+  var done = checkSaveSafety(pid, payload.json).then(function(risk){
+    if (risk) {
+      /* 止める。元の中身は触らない。控えも残して、
+         取り返しがつく状態にしてから知らせる。 */
+      return kvGet("page_" + pid).then(function(prev){
+        if (prev && prev.json) keepRescueCopy(pid, prev.json);
+        dirtySinceSave = true;                 // 保存していないことを覚えておく
+        statusEl.textContent =
+          "⚠ 中身が消える保存を止めました(" + risk.before.n + "個 → " +
+          risk.after.n + "個)。⚙→🩺 で確認できます";
+        return false;
+      }).catch(function(){ return false; });
+    }
+    return kvSet("page_" + pid, payload).then(function(ok){
+      statusEl.textContent = ok ? "保存済み ✓" : "保存エラー";
+      scheduleCloudPush(pid);
+      return ok;
+    });
   });
   var pg = findPage(currentId);
   if (pg) {
@@ -8206,7 +8282,31 @@ function loadPage(id, onReady) {
   isLoadingPage = true;                   // ★開いている間は自動保存を止める
   undoStack = []; redoStack = []; updateUndoUI();
   saveIndex();
-  kvGet("page_" + id).then(function(rec){
+  kvGet("page_" + id).catch(function(){
+    /* ★読み込みに失敗した時、以前はここで何も起きず、
+       前のページの中身が残ったまま/空のまま編集できてしまい、
+       そこで何か触ると空が保存されてノートが消えていた。
+       失敗が分かるよう目印を付けて渡す。 */
+    return { __loadFailed: true };
+  }).then(function(rec){
+    if (rec && rec.__loadFailed) {
+      /* 読めなかったノートは、触らせない。
+         保存も止める(isLoadingPageのまま)ので上書きされない。 */
+      rebuildScene("[]");
+      isLoadingPage = true;
+      statusEl.textContent = "⚠ このノートを読み込めませんでした。中身は消えていません";
+      setTimeout(function(){
+        showSheet("ノートを読み込めませんでした", [
+          { label: "↻ もう一度開く", fn: function(){ loadPage(id, onReady); } },
+          { label: "🔍 消えたノートを探す", fn: function(){
+              var b = document.getElementById("findLost");
+              if (b) b.click();
+            } },
+          { label: "閉じる", cancel: true }
+        ]);
+      }, 300);
+      return;
+    }
     pageRev = (rec && rec.rev) || 0;      // このページの版番号を覚える
     unsyncedEdits = false;                // 開いただけでは未送信ではない
     dirtySinceSave = false;
@@ -9812,7 +9912,7 @@ $("#wipePage").onclick = function(){
                "・他のノートには影響しません\n\n" +
                "中身だけ消して戻せるようにしたい場合は、一覧の\n" +
                "「🧽 開いているノートを空に」を使ってください。\n\nよろしいですか?")) return;
-  rebuildScene("[]");
+  withShrinkAllowed(function(){ rebuildScene("[]"); });   // 意図して消す操作
   bookmarks = [];
   view = { x: 0, y: 0, s: sheetFitScale() };
   undoStack = []; redoStack = []; updateUndoUI();
@@ -9978,7 +10078,7 @@ function deleteUnit(e) {
   pushUndo();
   if (e.kind === "obj") { e.o.anch = null; e.o.anchLv = null; e.o.anchTheme = null; }
   else bookmarks = bookmarks.filter(function(b){ return b.id !== e.id; });
-  inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
+  refreshMeasures(); inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
 }
 /* テーマ割り当てシート。「未分類に戻す」も必ず出す */
 function pickThemeFor(e) {
@@ -10039,7 +10139,7 @@ function retargetUnit(e) {
         if (e.kind === "obj") { e.o.anch = null; e.o.anchLv = null; e.o.anchTheme = null; }
         else bookmarks = bookmarks.filter(function(b){ return b.id !== e.id; });
         target.anch = nm; target.anchLv = 2; target.anchTheme = th;
-        inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
+        refreshMeasures(); inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
         closePos();
         jumpToAnchor(target);        // 移った先を見せる(消えたと誤解しないように)
         statusEl.textContent = "「" + nm + "」の印をここに移しました(↩で戻せます)";
@@ -10181,7 +10281,7 @@ function addUnitBookmark() {
       target.anch = name;
       target.anchLv = 2;
       if (target.anchTheme === undefined) target.anchTheme = null;
-      inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+      refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
       setTimeout(function(){
         statusEl.textContent = "単元「" + name + "」を記憶しました(テーマは☆から割り当て)";
       }, 40);
@@ -10819,7 +10919,7 @@ function toggleAnchor() {
       { label: "✎ 名前を変える", fn: function(){ askAnchorName(o, 1); } },
       { label: "📑 テーマをやめる(中身は残ります)", danger: true, fn: function(){
           pushUndo(); o.anch = null; o.anchLv = null; o.anchTheme = null;
-          inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+          refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
           setTimeout(function(){ statusEl.textContent = "テーマをやめました"; }, 40);
         } },
       { label: "キャンセル", cancel: true }
@@ -10833,12 +10933,12 @@ function toggleAnchor() {
       { label: "🗂 単元の整理をひらく(テーマの割り当て)", fn: function(){ openPos(); } },
       { label: "📑 これをテーマにする", fn: function(){
           pushUndo(); o.anchLv = 1; o.anchTheme = null; ensureThemeSeq(o);
-          inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+          refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
           setTimeout(function(){ statusEl.textContent = "テーマにしました"; }, 40);
         } },
       { label: "🔖 単元をやめる", danger: true, fn: function(){
           pushUndo(); o.anch = null; o.anchLv = null; o.anchTheme = null;
-          inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
+          refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
           setTimeout(function(){ statusEl.textContent = "単元をやめました"; }, 40);
         } },
       { label: "キャンセル", cancel: true }
@@ -11955,6 +12055,62 @@ function exportMarkdown() {
   }
 }
 /* 学習用プロンプト付きコピー: NotebookLM/Claudeに貼るだけでクイズ生成できる形 */
+/* =========================================================
+   書き出しの冒頭に付ける指示文(テンプレート)
+   ---------------------------------------------------------
+   ★中身だけ欲しい時や、指示を自分で書き換えたい時がある。
+     使う・使わない・書き換えるを選べるようにする。
+     書き換えた内容は端末に覚えておく。
+========================================================= */
+var PROMPT_KEYS = { study: "inknote_prompt_study", ai: "inknote_prompt_ai" };
+var promptUse = { study: true, ai: true };
+try {
+  var _pu = localStorage.getItem("inknote_prompt_use");
+  if (_pu) promptUse = JSON.parse(_pu);
+} catch (e) {}
+function promptDefault(kind) {
+  return (kind === "study") ? STUDY_PROMPT : AI_PROMPT_HEAD;
+}
+function promptPrefix(kind) {
+  if (!promptUse[kind]) return "";                  // 中身だけ欲しい時
+  try {
+    var v = localStorage.getItem(PROMPT_KEYS[kind]);
+    if (v != null && v !== "") return v;
+  } catch (e) {}
+  return promptDefault(kind);
+}
+function savePromptUse() {
+  try { localStorage.setItem("inknote_prompt_use", JSON.stringify(promptUse)); } catch (e) {}
+}
+/* 指示文の編集画面 */
+function editPromptSheet(kind, after) {
+  var name = (kind === "study") ? "学習用コピー" : "AIへ書き出す";
+  showSheet(name + " の冒頭文", [
+    { label: (promptUse[kind] ? "✅ " : "⬜ ") + "冒頭に指示文を付ける",
+      fn: function(){
+        promptUse[kind] = !promptUse[kind];
+        savePromptUse();
+        statusEl.textContent = promptUse[kind] ? "指示文を付けます" : "中身だけ書き出します";
+        if (after) setTimeout(after, 150);
+      } },
+    { label: "✎ 指示文を書き換える", fn: function(){
+        askText(name + " の冒頭文", promptPrefix(kind) || promptDefault(kind), function(v){
+          if (v == null) return;
+          try { localStorage.setItem(PROMPT_KEYS[kind], v); } catch (e) {}
+          promptUse[kind] = true; savePromptUse();
+          statusEl.textContent = "冒頭文を変えました";
+          if (after) setTimeout(after, 150);
+        });
+      } },
+    { label: "↺ 元の文に戻す", fn: function(){
+        try { localStorage.removeItem(PROMPT_KEYS[kind]); } catch (e) {}
+        promptUse[kind] = true; savePromptUse();
+        statusEl.textContent = "冒頭文を元に戻しました";
+        if (after) setTimeout(after, 150);
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
+}
 var STUDY_PROMPT =
   "以下は私の学習ノートです(数式は $$...$$ のLaTeX表記)。" +
   "この内容から試験対策用の問題を作成してください。\n" +
@@ -11965,7 +12121,7 @@ var STUDY_PROMPT =
 function copyForStudy() {
   var md = buildMarkdown();
   if (!md) { statusEl.textContent = "コピーできるテキストがありません"; return; }
-  var payload = STUDY_PROMPT + md;
+  var payload = promptPrefix("study") + md;
   var done = function(){ statusEl.textContent = "学習用プロンプト付きでコピーしました → NotebookLM/Claudeに貼り付け"; };
   var fail = function(){ statusEl.textContent = "コピーに失敗しました(もう一度お試しください)"; };
   try {
@@ -12649,7 +12805,7 @@ function runAiExport(ids, label, asFile) {
       statusEl.textContent = "書き出せる文字がありませんでした(手書きだけのノートはPDF書出を使ってください)";
       return;
     }
-    var payload = AI_PROMPT_HEAD + md;
+    var payload = promptPrefix("ai") + md;
     if (!asFile) {
       copyTextToClipboard(payload,
         "AI用にコピーしました(" + label + " / " + ids.length + "ページ) → AIに貼り付け、返ってきた内容を「ファイル/AIから取り込む」へ");
@@ -12706,6 +12862,9 @@ function openAiExportSheet() {
         fn: function(){ exportAllAsZip(ids); } },
       /* ★.mdで文章は足りるが、手書きと貼った画像だけは文字にならない。
          そこだけを全ノートから集められるようにする。 */
+      { label: "✎ 冒頭の指示文を編集/ON・OFF" +
+               (promptUse.ai ? "" : "(いまOFF)"),
+        fn: function(){ editPromptSheet("ai", function(){ openAiExportSheet(); }); } },
       { label: "🖼 画像だけ全部まとめる(" + ids.length + "件ぶん)", fn: function(){
           showSheet("画像だけ取り出す", [
             { label: "🖼 貼った画像のみ(軽い)",
@@ -14526,7 +14685,17 @@ $("#expMd").onclick = function(){
 };
 $("#expStudy").onclick = function(){
   closeExp();
-  setTimeout(copyForStudy, 80);
+  /* ★冒頭の指示文を使うか、書き換えるかをここで選べるようにする。
+     中身だけ欲しい時や、指示を自分で直したい時があるため。 */
+  setTimeout(function(){
+    showSheet("学習用コピー", [
+      { label: "🎓 このままコピー" + (promptUse.study ? "(指示文つき)" : "(中身だけ)"),
+        fn: copyForStudy },
+      { label: "✎ 冒頭の指示文を編集/ON・OFF",
+        fn: function(){ editPromptSheet("study"); } },
+      { label: "キャンセル", cancel: true }
+    ]);
+  }, 240);
 };
 $("#expAiOut").onclick = function(){
   closeExp();
@@ -18612,6 +18781,24 @@ function cloudPushPage(id, force) {
       // 中身が同じなら送らない(開いただけで上書きするのを防ぐ)
       if (!force && rd.stamp && rd.stamp === stamp) return;
 
+      /* ★空(またはほぼ空)で、中身のあるクラウド版を塗り潰さない。
+         別の端末でまだ同期していない空のノートが、
+         書き込み済みのノートを消してしまう事故をここで止める。
+         版番号は進んでいても、中身が消えるなら送らない。 */
+      if (!force && rd.json) {
+        var rw = contentWeight(rd.json), lw = contentWeight(payload.json);
+        var wipes = (lw.n === 0 && rw.n > 0) ||
+                    (rw.n >= 3 && lw.n <= rw.n * 0.2) ||
+                    (rw.chars >= 200 && lw.chars <= rw.chars * 0.2);
+        if (wipes) {
+          setTimeout(function(){
+            statusEl.textContent =
+              "⚠ クラウドの中身を消す送信を止めました(" + rw.n + "個 → " + lw.n + "個)";
+          }, 50);
+          return;
+        }
+      }
+
       /* ★相手の方が進んでいる版なら、こちらの古い内容で塗り潰さない。
          先に取り込んでもらう(この端末に未保存の編集がある時だけ上書きする)。 */
       /* ★この端末がまだ見ていない新しい版がクラウドにある場合は、
@@ -20131,12 +20318,24 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
     .then(function(reg){
       reg.update();                                   // 起動のたびに新版を確認
       setInterval(function(){ reg.update(); }, 60 * 60 * 1000);
+      /* ★すでに新版が控えている(waiting)なら、すぐ出番を渡す。
+         これが無いと、次に全タブを閉じるまで古いまま使い続けることになり、
+         「設定から手で更新」が必要だった。常に最新で使えるようにする。 */
+      var activateNew = function(w){
+        if (!w) return;
+        try { w.postMessage({ type: "SKIP_WAITING" }); } catch (e) {}
+      };
+      if (reg.waiting) {
+        statusEl.textContent = "新しいバージョンに更新しています…";
+        activateNew(reg.waiting);
+      }
       reg.addEventListener("updatefound", function(){
         var nw = reg.installing;
         if (!nw) return;
         nw.addEventListener("statechange", function(){
           if (nw.state === "installed" && navigator.serviceWorker.controller) {
-            statusEl.textContent = "新しいバージョンを取得しました。まもなく再読み込みします…";
+            statusEl.textContent = "新しいバージョンに更新しています…";
+            activateNew(reg.waiting || nw);
           }
         });
       });

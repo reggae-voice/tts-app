@@ -2,14 +2,29 @@
    - HTML(アプリ本体): ネットワーク優先 → 常に最新版を取得、オフライン時のみキャッシュを使用
    - 静的アセット(CDNライブラリ等): キャッシュ優先 → 高速起動
 */
-var CACHE = "inknote-v5";
+var CACHE = "inknote-v6";   /* ★中身を変えたら必ず上げる。
+   activate で古い名前のキャッシュを捨てる作りなので、
+   ここを据え置くと古いファイルが残り続ける。 */
 
 self.addEventListener("install", function(e){
   self.skipWaiting();   // 新しいSWを即座に有効化
 });
+/* ★本体(index.html)から現在のバージョンを問い合わせられるようにする。
+   「更新がある/ない」を画面で正しく出すために使う。 */
+self.addEventListener("message", function(e){
+  if (e.data && e.data.type === "WHICH_CACHE" && e.source) {
+    try { e.source.postMessage({ type: "CACHE_NAME", name: CACHE }); } catch (err) {}
+  }
+});
 
 self.addEventListener("message", function(e){
-  if (e.data === "skipWaiting") self.skipWaiting();
+  /* ★本体から「新版に代われ」と伝える合図。
+     以前は文字列 "skipWaiting" だけを見ていたが、
+     本体側は { type: "SKIP_WAITING" } の形でも送るようになった。
+     片方しか受けないと合図が届かず、新版が出番待ちのまま
+     古い版が使われ続けるので、両方の形を受け取る。 */
+  var d = e.data;
+  if (d === "skipWaiting" || (d && d.type === "SKIP_WAITING")) self.skipWaiting();
 });
 
 self.addEventListener("activate", function(e){
