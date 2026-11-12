@@ -431,6 +431,17 @@
   #zoomChip{bottom:calc(env(safe-area-inset-bottom) + 84px)}
   #fitChip{bottom:calc(env(safe-area-inset-bottom) + 122px)}
   #posChip{bottom:calc(env(safe-area-inset-bottom) + 160px);color:#ffd98a}
+  /* 送れていないノートがある時の印 */
+  .push-warn{position:relative}
+  .push-warn::after{content:"⚠";position:absolute;top:-4px;right:-4px;font-size:12px;
+    background:#B3261E;color:#fff;border-radius:999px;padding:1px 4px;line-height:1.2}
+  /* ★右下のボタンは、スライダーより手前に置く。
+     スライダーは画面の端から端まで続く細長い帯で、重なり順が上だと
+     ボタンの上にかぶさって、押したつもりがスライダーの位置へ飛んでいた。
+     ボタンは小さく、帯は長いので、重なった所はボタンを優先する。 */
+  #zoomChip,#fitChip,#posChip,#pasteChip,#mapChip,#topChip{z-index:27}
+  /* よく使うので、指で押しやすい大きさにする */
+  #posChip{padding:10px 14px;font-size:12.5px;font-weight:700}
   /* ===== 縦スクロールスライダー(A4モード) ===== */
   #vscroll{
     position:fixed;z-index:26;display:none;
@@ -1241,6 +1252,9 @@
   #idOk{background:var(--accent);color:#fff}
   .pp-row button{border:none;background:transparent;color:var(--ui-dim);font-size:15px;padding:6px 8px;cursor:pointer}
   .pp-foot{display:flex;gap:8px;padding-top:10px}
+  /* ブックマークの「＋ 見出し」。主役は「保存」なので、こちらは控えめな見た目にする */
+  #psHead{flex:1;border:1px solid var(--ui-line);border-radius:12px;padding:12px;
+    background:transparent;color:var(--ui-text);font-size:13.5px;font-weight:700;cursor:pointer}
   #ppAdd,#psAdd,.sync-primary{flex:1;border:none;border-radius:12px;padding:12px;background:var(--accent);color:#fff;font-size:13.5px;font-weight:700;cursor:pointer}
   .sync-primary{width:100%}
   .pp-clear{border:none;border-radius:12px;padding:12px;background:var(--ui-bg2);color:#ff9d97;font-size:12.5px;font-weight:600;cursor:pointer}
@@ -1371,7 +1385,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v22.58">InkNote <small>v22.58</small></div>
+  <div class="brand" title="InkNote v24.00">InkNote <small>v24.00</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1522,7 +1536,7 @@ window.onerror = function(msg, src, line){
 <button id="zoomChip">100%</button>
 <button id="fitChip">⛶ 20%</button>
 
-<button id="posChip">☆ 単元</button><button id="pasteChip">📋 貼り付け</button>
+<button id="posChip">🔖 ブックマーク</button><button id="pasteChip">📋 貼り付け</button>
 <button id="mapChip">🗺 マップ</button>
 <button id="topChip" style="display:none">⤒ 先頭</button>
 <div id="vscroll">
@@ -1676,7 +1690,18 @@ window.onerror = function(msg, src, line){
     <span>🛠 書き出し・バックアップ</span><span id="toolsArrow">⌃</span>
   </button>
   <div id="toolsWrap">
-    <div class="pp-foot pp-tools-grid">
+    <!-- ★用途ごとに4つへ絞った。
+         以前は11個が同じ大きさで並び、「文字として外へ出す」だけで4つ
+         (テキスト書出・学習用コピー・AIへ書き出す・画像シート)あり、
+         どれが何を含むのか分からなかった。
+         「何をしたいか」で選び、細かい違いは開いた先で選ぶ。 -->
+    <div class="pp-foot pp-tools-grid" style="grid-template-columns:1fr 1fr">
+      <button class="pp-tool" id="useOut">📄 紙・PDFにする</button>
+      <button class="pp-tool" id="useAi">🤖 AI・学習に使う</button>
+      <button class="pp-tool" id="useIn">📥 取り込む</button>
+      <button class="pp-tool" id="useBak">💾 バックアップ・ごみ箱</button>
+    </div>
+    <div class="pp-foot pp-tools-grid" style="display:none">
       <button class="pp-tool" id="expPng">🖼 PNG書出</button>
       <button class="pp-tool" id="expPdf">📄 PDF書出</button>
       <button class="pp-tool" id="expPrint">🖨 印刷</button>
@@ -1919,11 +1944,12 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="posPanel">
-  <div class="pp-head"><span>🗂 単元の整理</span><button id="psClose">✕</button></div>
-  <div id="psList" class="scrollable" style="overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1;min-height:60px"></div>
-  <div class="pp-foot">
-    <button id="psAdd">☆ ここを単元として記憶</button>
+  <div class="pp-head"><span>🔖 ブックマーク</span><button id="psClose">✕</button></div>
+  <div class="pp-foot" style="padding-top:0;padding-bottom:8px">
+    <button id="psAdd" style="flex:2">＋ いまの表示を保存</button>
+    <button id="psHead" style="flex:1">＋ 見出し</button>
   </div>
+  <div id="psList" class="scrollable" style="overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1;min-height:60px"></div>
 </div>
 
 <input type="file" id="fileInput" accept="image/*,application/pdf" multiple>
@@ -1973,7 +1999,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "22.58";
+var APP_VERSION = "24.00";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4408,12 +4434,19 @@ if (window.visualViewport) {
 function syncEditingObjFromDom() {
   if (!editingObj) return;
   var o = editingObj, el = o.el;
+  var before = String(o.text || "") + "\u0000" + String(o.rich || "");
   var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
   o.text = raw.replace(/\n$/, "");
   if (o.autoW && el.offsetWidth) o.w = el.offsetWidth;
   var cleaned = sanitizeRich(el.innerHTML);
   o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
            ? cleaned : null;
+  /* ★入力中の文字も「編集した」と数える。
+     確定前の入力は pushUndo も scheduleSave も通らないため、
+     ノートを開いて最初の編集が入力中のままアプリを切り替えると、
+     「編集していないのに中身が変わった」と判定されて保存を止められ、
+     入力が消えていた(v22.58で入れた保護の副作用)。 */
+  if (before !== String(o.text || "") + "\u0000" + String(o.rich || "")) editsSinceLoad++;
 }
 function commitText() {
   if (!editingObj) return;
@@ -4511,7 +4544,13 @@ function makeImageEl(o) {
   el.style.width = o.w + "px";
   el.style.height = o.h + "px";
   var img = document.createElement("img");
-  img.src = o.src;
+  if (isImgRef(o.src)) {
+    /* 写真がまだ端末に無い(取り寄せ待ち)。名前は消さずに残し、仮の枠を出す */
+    el.style.background = "repeating-linear-gradient(45deg,rgba(128,128,128,.12) 0 10px,rgba(128,128,128,.22) 10px 20px)";
+    el.title = "写真を取り寄せています";
+  } else {
+    img.src = o.src;
+  }
   el.appendChild(img);
   o.el = el;
   attachObjHandlers(o);
@@ -5463,6 +5502,7 @@ capture.addEventListener("pointerdown", function(e){
       }
     });
   } else if (tool === "eraser") {
+    allowShrinkSave = true;      // 消しゴムで消すのは、減って当然の操作
     var er = { snapshot: serializeScene(), changed: false };
     resetEraserDyn();
     var rw = (eraser.size / 2) * eraserFactor(e) / view.s;  // ズームしても画面上のサイズ感を一定に
@@ -5605,6 +5645,7 @@ function partialEraseSegment(x1, y1, x2, y2, r) {
 }
 /* 指タップ時の単発消し */
 function eraseTap(w) {
+  allowShrinkSave = true;        // 消しゴムで消すのは、減って当然の操作
   var snap = snapshotForUndo();
   var rw = (eraser.size / 2) / view.s;
   var changed = false;
@@ -5657,6 +5698,17 @@ function computeMiniMapping(w, h) {
   var s = Math.min(w / (x2 - x1), h / (y2 - y1));
   return { x1: x1, y1: y1, x2: x2, y2: y2, s: s,
            ox: (w - (x2 - x1) * s) / 2, oy: (h - (y2 - y1) * s) / 2 };
+}
+var miniPins = [];            // マップに描いたブックマークの印(押した時の当たり判定用)
+/* ブックマークが指している場所の中心(ノート上の座標) */
+function bmWorldCenter(e) {
+  if (e.kind === "pos") {
+    var v = e.bm.view;
+    if (!v || !v.s) return null;
+    return { x: (innerWidth / 2 - v.x) / v.s, y: (innerHeight / 2 - v.y) / v.s };
+  }
+  if (e.o) { var b = objBBox(e.o); return b ? { x: b.x + b.w / 2, y: b.y + b.h / 2 } : null; }
+  return null;
 }
 function miniToWorld(mx, my) {
   if (!miniMap) return null;
@@ -5760,6 +5812,32 @@ function renderMini() {
       drawMiniText(o, m);
     }
   }
+  /* ★ブックマークの場所を、番号つきの印で重ねる。
+     マップは「全体のどこに何があるか」を見る画面なので、
+     覚えた場所もここで見えれば、一覧を開かずに行き先を選べる。
+     押した時に当たりを取れるよう、描いた位置を控えておく。 */
+  miniPins = [];
+  try {
+    var ents = unitEntries();
+    for (var pi = 0; pi < ents.length; pi++) {
+      var c0 = bmWorldCenter(ents[pi]);
+      if (!c0) continue;
+      var px = X(c0.x), py = Y(c0.y);
+      if (px < m.ox - 6 || py < m.oy - 6 ||
+          px > m.ox + (m.x2 - m.x1) * m.s + 6 || py > m.oy + (m.y2 - m.y1) * m.s + 6) continue;
+      miniPins.push({ x: px, y: py, e: ents[pi] });
+      mctx.beginPath();
+      mctx.arc(px, py, 9, 0, Math.PI * 2);
+      mctx.fillStyle = "#F5A623";
+      mctx.fill();
+      mctx.lineWidth = 1.5; mctx.strokeStyle = "#ffffff"; mctx.stroke();
+      mctx.fillStyle = "#1b1d22";
+      mctx.font = "700 10px system-ui, sans-serif";
+      mctx.textAlign = "center"; mctx.textBaseline = "middle";
+      mctx.fillText(String(pi + 1), px, py + 0.5);      // 一覧と同じ番号
+    }
+    mctx.textAlign = "start"; mctx.textBaseline = "alphabetic";
+  } catch (ePin) {}
   // 現在の表示範囲(青い枠)。マップの外へはみ出す分は切り詰めて端に張り付かせる
   var tl2 = toWorld(0, 0), br2 = toWorld(innerWidth, innerHeight);
   var vx1 = X(tl2.x), vy1 = Y(tl2.y), vx2 = X(br2.x), vy2 = Y(br2.y);
@@ -6026,7 +6104,21 @@ $("#barToggle").onclick = function(){
       addEventListener("pointerup", up);
     });
   })();
+  /* ★ボタンを逃がす目印(has-vscroll-v / has-hscroll)は、2本のスライダーの
+     「どちらかが出ているか」で決める。
+     以前は1本目だけを見ていたため、1本目が横・2本目が縦の時に
+     右端のボタンが逃げず、縦スライダーの真上に残っていた。 */
+  function updateScrollbarClasses() {
+    var a = vs, b2 = $("#vscroll2");
+    var on = function(el, k){ return !!(el && el.classList.contains("on") && el.classList.contains(k)); };
+    document.body.classList.toggle("has-vscroll-v", on(a, "v") || on(b2, "v"));
+    document.body.classList.toggle("has-hscroll", on(a, "h") || on(b2, "h"));
+  }
+  window.__updateScrollbarClasses = updateScrollbarClasses;
   window.__syncVScroll = function() {
+    try { syncVScrollInner(); } finally { updateScrollbarClasses(); }
+  };
+  var syncVScrollInner = function() {
     if (canvasMode === "inf") {
       var cb0 = contentBBox();
       if (!cb0) {                                             // 何も置かれていない
@@ -6155,8 +6247,16 @@ $("#topChip").onclick = function(){
 minimapEl.addEventListener("pointerdown", function(e){
   e.preventDefault();
   e.stopPropagation();
-  // マップ上のタップ位置へ移動(ズーム率は維持)
   var r = minimapEl.getBoundingClientRect();
+  /* ★ブックマークの印を押した時は、覚えた拡大率ごとその表示に戻す。
+     指で狙いやすいよう、印より広め(22px)に当たりを取る。 */
+  var hit = null, hitD = 22;
+  for (var hp = 0; hp < miniPins.length; hp++) {
+    var dd = Math.hypot(miniPins[hp].x - (e.clientX - r.left), miniPins[hp].y - (e.clientY - r.top));
+    if (dd <= hitD) { hitD = dd; hit = miniPins[hp]; }
+  }
+  if (hit) { collapseMini(); gotoUnit(hit.e); return; }
+  // マップ上のタップ位置へ移動(ズーム率は維持)
   var wpt = miniToWorld(e.clientX - r.left, e.clientY - r.top);
   if (wpt) {
     animateView({ s: view.s,
@@ -6957,6 +7057,9 @@ function removeObjects(list) {
   inkDirty = true;
 }
 function deleteSelection() {
+  /* ★自分で選んで消す操作は、中身が大きく減っても正しい。
+     これが無いと、全部選んで消した時に保存が止められてしまう。 */
+  allowShrinkSave = true;
   if (!sel.length) return;
   pushUndo();
   removeObjects(sel.slice());
@@ -7717,58 +7820,112 @@ var DB_NAME = "inknote", STORE = "docs";
 var pages = [];        // [{id, title, ts}]
 var currentId = null;
 
+/* =========================================================
+   保存領域(IndexedDB)の読み書き
+   ---------------------------------------------------------
+   ★以前の作りの問題
+     ・開く処理に時間切れが無く、返ってこないと「準備中…」で止まった
+     ・接続が切れても気づかず、以後の読み書きが全部失敗し続けた
+     ・読み取りの失敗を「中身なし(null)」として返していた
+       → 読めなかったノートを空として開き、上書きしうる
+     ・書き込みの中断(容量超過など)を拾っておらず、
+       保存の完了を待つ処理が永久に止まり、同期の列が詰まった
+   ★直したこと
+     ・開く処理に時間切れ。切れたら開き直す
+     ・読み書きが失敗したら1回だけ開き直してやり直す
+     ・kvGetStrict は失敗を失敗として返す(大事な読み取り用)
+     ・kvGet はこれまでどおり失敗を null にする(失っても困らない用途用)
+     ・書き込みは中断も失敗として必ず返す。理由は lastStoreError に残す
+========================================================= */
+var lastStoreError = "";
+var dbReopening = null;
 function openDB() {
   return new Promise(function(res, rej){
-    var rq = indexedDB.open(DB_NAME, 1);
+    var done = false;
+    var timer = setTimeout(function(){
+      if (done) return; done = true;
+      rej(new Error("open-timeout"));
+    }, 4000);
+    var rq;
+    try { rq = indexedDB.open(DB_NAME, 1); }
+    catch (e) { clearTimeout(timer); done = true; rej(e); return; }
     rq.onupgradeneeded = function(){ rq.result.createObjectStore(STORE); };
-    rq.onsuccess = function(){ res(rq.result); };
-    rq.onerror = function(){ rej(rq.error); };
+    rq.onsuccess = function(){
+      var d = rq.result;
+      if (done) { try { d.close(); } catch (e) {} return; }
+      done = true; clearTimeout(timer);
+      /* 接続が切れた・別のタブが更新した時は、次の読み書きで開き直す */
+      d.onclose = function(){ if (db === d) db = null; };
+      d.onversionchange = function(){ try { d.close(); } catch (e) {} if (db === d) db = null; };
+      res(d);
+    };
+    rq.onerror = function(){ if (done) return; done = true; clearTimeout(timer); rej(rq.error); };
+    rq.onblocked = function(){ if (done) return; done = true; clearTimeout(timer); rej(new Error("open-blocked")); };
   });
 }
-/* key-value抽象化: IndexedDB / localStorage を同じ呼び方で使う */
-function kvGet(key) {
+/* 接続が無い・切れた時に、1つだけ開き直す(同時に何本も開かない) */
+function reopenDB() {
+  if (useLocalStorage) return Promise.resolve(null);
+  if (!dbReopening) {
+    dbReopening = openDB().then(function(d){ db = d; return d; })
+      .then(function(d){ dbReopening = null; return d; },
+            function(e){ dbReopening = null; throw e; });
+  }
+  return dbReopening;
+}
+function ensureDB() { return db ? Promise.resolve(db) : reopenDB(); }
+/* 1回の読み書き。失敗したら reject(理由つき) */
+function idbOnce(mode, fn) {
+  return ensureDB().then(function(d){
+    if (!d) throw new Error("no-db");
+    return new Promise(function(res, rej){
+      var tx, out;
+      try { tx = d.transaction(STORE, mode); out = fn(tx.objectStore(STORE)); }
+      catch (e) { rej(e); return; }
+      tx.oncomplete = function(){ res(out && out.__req ? out.__req.result : true); };
+      tx.onerror = function(){ rej(tx.error || new Error("tx-error")); };
+      tx.onabort = function(){ rej(tx.error || new Error("tx-abort")); };
+    });
+  });
+}
+/* 失敗したら接続を開き直して、もう1回だけやり直す */
+function idbRetry(mode, fn) {
+  return idbOnce(mode, fn).catch(function(e){
+    var name = (e && e.name) || "";
+    if (name === "QuotaExceededError") throw e;      // 容量不足は開き直しても直らない
+    db = null;
+    return idbOnce(mode, fn);
+  });
+}
+function kvGetStrict(key) {
   if (useLocalStorage) {
     try { var r = localStorage.getItem("inknote_" + key); return Promise.resolve(r ? JSON.parse(r) : null); }
-    catch (e) { return Promise.resolve(null); }
+    catch (e) { return Promise.reject(e); }
   }
-  return new Promise(function(res){
-    if (!db) return res(null);
-    try {
-      var rq = db.transaction(STORE, "readonly").objectStore(STORE).get(key);
-      rq.onsuccess = function(){ res(rq.result || null); };
-      rq.onerror = function(){ res(null); };
-    } catch (e) { res(null); }
-  });
+  return idbRetry("readonly", function(st){ return { __req: st.get(key) }; })
+    .then(function(v){ return (v === undefined) ? null : v; });
+}
+function kvGet(key) {
+  return kvGetStrict(key).catch(function(){ return null; });
 }
 function kvSet(key, val) {
   if (useLocalStorage) {
     try { localStorage.setItem("inknote_" + key, JSON.stringify(val)); return Promise.resolve(true); }
-    catch (e) { return Promise.resolve(false); }
+    catch (e) { lastStoreError = (e && e.name) || "error"; return Promise.resolve(false); }
   }
-  return new Promise(function(res){
-    if (!db) return res(false);
-    try {
-      var tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE).put(val, key);
-      tx.oncomplete = function(){ res(true); };
-      tx.onerror = function(){ res(false); };
-    } catch (e) { res(false); }
-  });
+  return idbRetry("readwrite", function(st){ st.put(val, key); })
+    .then(function(){ return true; }, function(e){
+      lastStoreError = (e && e.name) || (e && e.message) || "error";
+      return false;
+    });
 }
 function kvDel(key) {
   if (useLocalStorage) {
     try { localStorage.removeItem("inknote_" + key); } catch (e) {}
     return Promise.resolve(true);
   }
-  return new Promise(function(res){
-    if (!db) return res(false);
-    try {
-      var tx = db.transaction(STORE, "readwrite");
-      tx.objectStore(STORE)["delete"](key);
-      tx.oncomplete = function(){ res(true); };
-      tx.onerror = function(){ res(false); };
-    } catch (e) { res(false); }
-  });
+  return idbRetry("readwrite", function(st){ st["delete"](key); })
+    .then(function(){ return true; }, function(){ return false; });
 }
 
 /* 保存されている全キーを取り出す(迷子ページの捜索に使う) */
@@ -7783,26 +7940,15 @@ function kvKeys() {
     } catch (e) {}
     return Promise.resolve(out);
   }
-  return new Promise(function(res){
-    if (!db) return res([]);
-    try {
-      var st = db.transaction(STORE, "readonly").objectStore(STORE);
-      if (st.getAllKeys) {
-        var rq = st.getAllKeys();
-        rq.onsuccess = function(){ res(rq.result || []); };
-        rq.onerror = function(){ res([]); };
-      } else {                       // 古い環境向け
-        var out2 = [];
-        var cur = st.openCursor();
-        cur.onsuccess = function(e){
-          var c = e.target.result;
-          if (!c) return res(out2);
-          out2.push(c.key); c["continue"]();
-        };
-        cur.onerror = function(){ res([]); };
-      }
-    } catch (e) { res([]); }
-  });
+  /* 失敗時は空の一覧。自動復帰などで「何も無い」と誤解しないよう、
+     呼ぶ側は空なら何もしない作りにしてある。 */
+  return idbRetry("readonly", function(st){
+    if (st.getAllKeys) return { __req: st.getAllKeys() };
+    var out2 = [];
+    var cur = st.openCursor();
+    cur.onsuccess = function(e){ var c = e.target.result; if (c) { out2.push(c.key); c["continue"](); } };
+    return { __req: { get result(){ return out2; } } };
+  }).then(function(v){ return v || []; }, function(){ return []; });
 }
 
 /* ===== 迷子ページの復元 =====
@@ -7965,9 +8111,11 @@ function flushPendingSave() {
 ========================================================= */
 var allowShrinkSave = false;      // 「減らす」操作を明示的に許可する時だけ立てる
 function withShrinkAllowed(fn) {
+  /* ★許可は「次の保存が済むまで」有効にする。
+     以前は1.5秒で切れていたが、保存は少し遅れて走るので、
+     切れた後に保存が来ると、正当な削除まで止められていた。 */
   allowShrinkSave = true;
-  try { return fn(); }
-  finally { setTimeout(function(){ allowShrinkSave = false; }, 1500); }
+  return fn();
 }
 /* 中身の重さ。オブジェクト数と文字数の両方で見る。
    数だけだと、長文1つが消えた時に気づけない。 */
@@ -7994,7 +8142,7 @@ function checkSaveSafety(pid, nextJson) {
      操作していないなら中身は変わらないはずなので、
      差があれば不具合か取り違えであって、保存してはいけない。
      減った量の大小に関係なく止める(1個でも消えたら異常)。 */
-  if (editsSinceLoad === 0 && loadedStamp != null) {
+  if (editsSinceLoad === 0 && loadedStamp != null && !editingObj) {   // 入力中は「無編集」ではない
     var nowStamp = contentStamp(nextJson);
     if (nowStamp !== loadedStamp) {
       var a0 = contentWeight("[]"), b0 = contentWeight(nextJson);
@@ -8002,7 +8150,17 @@ function checkSaveSafety(pid, nextJson) {
     }
     return Promise.resolve(null);                          // 無編集かつ同一 → 保存不要だが安全
   }
-  return kvGet("page_" + pid).then(function(prev){
+  /* ★開いているノートは、記憶している「前回の重さ」と、
+     画面のオブジェクトから数えた今の重さを比べる。
+     以前は毎回、前の本文20MBを読み直して解析し、今の分も解析していた。 */
+  if (pid === currentId && savedWeight) {
+    var a1 = savedWeight, b1 = weightOfObjects(objects);
+    if (!a1.n && !a1.chars) return Promise.resolve(null);
+    var gone1 = (b1.n === 0 && a1.n > 0);
+    var shrank1 = (a1.n >= 3 && b1.n <= a1.n * 0.2) || (a1.chars >= 200 && b1.chars <= a1.chars * 0.2);
+    return Promise.resolve((gone1 || shrank1) ? { before: a1, after: b1 } : null);
+  }
+  return kvGetStrict("page_" + pid).then(function(prev){
     if (!prev || !prev.json) return null;                  // 前が無いなら何でも保存可
     var a = contentWeight(prev.json), b = contentWeight(nextJson);
     if (!a.n && !a.chars) return null;                     // 前も空
@@ -8013,28 +8171,71 @@ function checkSaveSafety(pid, nextJson) {
                  (a.chars >= 200 && b.chars <= a.chars * 0.2);
     if (!gone && !shrank) return null;
     return { before: a, after: b };
-  }).catch(function(){ return null; });                    // 調べられない時は通す
-}
-/* 止めた時に、取り返しがつくよう控えを残す */
-function keepRescueCopy(pid, prevJson) {
-  try {
-    var key = "inknote_rescue_" + pid;
-    localStorage.setItem(key, JSON.stringify({ json: prevJson, ts: Date.now() }));
-  } catch (e) {}
+  }, function(){
+    /* ★前の中身を読めない時は、比べようがないので保存しない。
+       以前は「調べられない時は通す」になっていて、保存領域が不調な時に
+       保護が丸ごと外れていた。次の保存の機会にもう一度試す。 */
+    return { before: { n: -1, chars: 0 }, after: { n: -1, chars: 0 }, unreadable: true };
+  });
 }
 
-function saveDoc() {
-  if (currentId == null) return Promise.resolve();
-  dirtySinceSave = false;
+/* いま画面にあるノートを、保存する形にまとめる。
+   ★rev と base は「クラウドのどの版を土台にしているか」の記録。
+     保存のたびに引き継ぐ(ここで落とすと、同期の時に
+     手元が変わったのか相手が変わったのか分からなくなる)。 */
+function buildPagePayload() {
   // canvasModeはノートの属性(A4横で作ったノートはどの端末でもA4横)。
   // 端末ごとのlocalStorage設定だと他端末に伝わらないため、ページ側に持たせる。
-  var payload = { json: serializeScene(), view: view, bookmarks: bookmarks,
-                  canvasMode: canvasMode, bg: bgStyle,
-                  /* ★列幅もノートの属性。端末ごとのlocalStorageだけに持たせると、
-                     同じノートでも端末によって「どの列に入っているか」の判定が
-                     変わり、目次のまとまりや列送りの結果が食い違う。 */
-                  colW: READ_W,
-                  rev: pageRev, ts: Date.now() };
+  var p = { json: serializeForSave(), view: view, bookmarks: bookmarks,
+            canvasMode: canvasMode, bg: bgStyle,
+            /* ★列幅もノートの属性。端末ごとのlocalStorageだけに持たせると、
+               同じノートでも端末によって「どの列に入っているか」の判定が
+               変わり、目次のまとまりや列送りの結果が食い違う。 */
+            colW: READ_W,
+            rev: pageRev, ts: Date.now() };
+  if (pageBase != null) p.base = pageBase;
+  if (pageMBase != null) p.mbase = pageMBase;
+  p.mts = pageMetaTs;
+  p.fmt = IMG_FMT;
+  return p;
+}
+/* いま画面にある中身の重さ(数と文字数)。保存した文字列を解析し直さず、
+   画面のオブジェクトから直接数える(20MBの解析を避けるため)。 */
+function weightOfObjects(arr) {
+  var chars = 0, n = 0;
+  for (var i = 0; i < arr.length; i++) {
+    var o = arr[i];
+    if (!o) continue;
+    n++;
+    if (o.text) chars += String(o.text).length;
+    if (o.rich) chars += String(o.rich).length;
+    if (o.points) chars += o.points.length;
+  }
+  return { n: n, chars: chars };
+}
+var savedWeight = null;          // 開いているノートの、最後に保存(または読み込み)した時の重さ
+/* 他の端末から届いたブックマークを、開いているノートの画面に入れる。
+   ★ノートごと読み直さない。読み直すと表示位置まで相手のものに変わり、
+     見ていた場所から飛ばされるため。用紙の種類が変わった時だけ読み直す。 */
+function onRemoteMetaForCurrent(p) {
+  bookmarks = (p && p.bookmarks) ? p.bookmarks : [];
+  try { if ($("#posPanel").classList.contains("show")) renderPosList(); } catch (e) {}
+  if (p && p.canvasMode && p.canvasMode !== canvasMode &&
+      (p.canvasMode === "inf" || p.canvasMode === "a4v" || p.canvasMode === "a4h")) {
+    canvasMode = p.canvasMode;
+    try { applyCanvasMode(true); clampView(); applyView(); } catch (e2) {}
+  }
+}
+/* ★画面の中身が、保存してよい状態か。
+   読み込みに失敗した時は画面が空でも「本当の中身」ではないので、
+   どの経路からも保存させない。 */
+var sceneTrusted = true;
+function saveDoc() {
+  if (currentId == null) return Promise.resolve();
+  if (!sceneTrusted) return Promise.resolve(false);
+  dirtySinceSave = false;
+  var payload = buildPagePayload();
+  var payloadImgs = imgPending;          // この本文が使う写真(名前 → 中身)
   var pid = currentId;
   /* ★書き込む前に「中身が消える保存」でないか確かめる。
      読み込み失敗で空になった状態や、他端末の未同期な空ノートが
@@ -8043,9 +8244,15 @@ function saveDoc() {
     if (risk) {
       /* 止める。元の中身は触らない。控えも残して、
          取り返しがつく状態にしてから知らせる。 */
-      return kvGet("page_" + pid).then(function(prev){
-        if (prev && prev.json) keepRescueCopy(pid, prev.json);
+      /* ★止めた時点で、元の中身は保存領域にそのまま残っている。
+         以前はここで localStorage にも控えを書いていたが、
+         枠(約5MB)をすぐ使い切り、設定の保存まで失敗させていたのでやめた。 */
+      return Promise.resolve().then(function(){
         dirtySinceSave = true;                 // 保存していないことを覚えておく
+        if (risk.unreadable) {
+          showStoreTrouble("保存領域を読めないため、保存を見合わせています");
+          return false;
+        }
         statusEl.textContent = risk.noEdit
           ? "⚠ 編集していないのに中身が変わっていたため、保存を止めました(中身は無事です)"
           : ("⚠ 中身が消える保存を止めました(" + risk.before.n + "個 → " +
@@ -8053,10 +8260,44 @@ function saveDoc() {
         return false;
       }).catch(function(){ return false; });
     }
-    return kvSet("page_" + pid, payload).then(function(ok){
-      statusEl.textContent = ok ? "保存済み ✓" : "保存エラー";
+    /* ★土台の記録(rev / base)は、書き込む瞬間の値を付け直す。
+       中身をまとめた時点の値のまま書くと、その間に送信が終わって
+       土台が進んでいた場合に、古い土台へ巻き戻してしまう。 */
+    if (pid === currentId) {
+      payload.rev = pageRev;
+      if (pageBase != null) payload.base = pageBase; else delete payload.base;
+      if (pageMBase != null) payload.mbase = pageMBase; else delete payload.mbase;
+      payload.mts = pageMetaTs;
+    }
+    /* 指紋と重さは、ここで1回だけ求めて本文と一緒に持つ。
+       同期や起動時の見回りは、これを使って全体を読み直さずに済ませる。 */
+    putStamp(payload);
+    var nowW = weightOfObjects(objects);
+    payload.wn = nowW.n; payload.wc = nowW.chars;
+    /* 写真を先に端末へしまう。しまえなかったら本文は書かない
+       (本文だけ書くと、名前はあるのに写真が無いノートになる)。 */
+    return persistImages(payloadImgs).then(function(imgOk){
+      return imgOk ? kvSet("page_" + pid, payload) : false;
+    }).then(function(ok){
+      if (!ok) {
+        /* ★保存できなかった。以前は「保存エラー」と一瞬出すだけで、
+           保存済みとして扱い(変更ありの印を消し、送信まで予約していた)、
+           そのまま再保存されなかった。
+           変更ありの印を戻し、減らしてよい許可も使わずに残して、間を置いて再試行する。 */
+        if (pid === currentId) { dirtySinceSave = true; unsyncedEdits = true; }
+        showStoreTrouble(lastStoreError === "QuotaExceededError"
+          ? "容量不足で保存できていません(押すと対処法)"
+          : "保存できていません。自動で再試行しています");
+        scheduleSaveRetry();
+        return false;
+      }
+      saveRetryStep = 0;
+      if (pid === currentId) savedWeight = { n: payload.wn, chars: payload.wc };
+      if (storeTroubleMsg) clearStoreTrouble();
+      statusEl.textContent = "保存済み ✓";
+      allowShrinkSave = false;               // 許可は1回の保存で使い切る
       scheduleCloudPush(pid);
-      return ok;
+      return true;
     });
   });
   var pg = findPage(currentId);
@@ -8187,6 +8428,9 @@ function thumbFromCanvas(pid, c) {
 function makeThumbFor(pid) {
   if (pid === currentId) { makeThumb(pid); return Promise.resolve(); }
   return kvGet("page_" + pid).then(function(rec){
+    if (!rec || !rec.json) return rec;
+    return resolveImageRefs(rec.json, null).then(function(r){ rec.json = r.json; return rec; });
+  }).then(function(rec){
     if (!rec || !rec.json) return;
     var arr;
     try { arr = JSON.parse(rec.json); } catch (e) { return; }
@@ -8253,9 +8497,15 @@ function refreshStaleThumbs() {
 }
 function saveDocNow() { clearTimeout(saveTimer); return saveDoc(); }
 function saveIndex() {
-  return kvSet("pages_index", { pages: pages, currentId: currentId,
-                                deleted: deletedIds, folders: folders,
-                                delFolders: delFolders });
+  var idx = { pages: pages, currentId: currentId,
+              deleted: deletedIds, folders: folders,
+              delFolders: delFolders };
+  /* ★一覧の控えを別の場所にも残す。
+     一覧は全ノートの名前とフォルダを持つ、いちばん失いたくない1件。
+     本体が読めなかった時に、ここから戻せるようにしておく。
+     ノートが1件も無い状態では控えを上書きしない(空で潰さない)。 */
+  if (pages.length) kvSet("pages_index_bak", idx);
+  return kvSet("pages_index", idx);
 }
 function ensureFolder(name) {
   name = (name || "").trim();
@@ -8306,19 +8556,66 @@ function findPage(id) {
 }
 
 /* ---------- ページの読込・追加・切替・改名・削除 ---------- */
+var loadSeq = 0;                          // 読み込みの番号札(遅れて届いた結果を捨てるため)
+/* 画面の写真のうち、仮の枠のままのものを、端末に届いた写真で差し替える。
+   戻り値は、まだ見つからない枚数。保存の中身は変わらない(名前は同じ)ので、
+   差し替えただけでは保存も送信も起きない。 */
+function patchMissingImages() {
+  var waiting = objects.filter(function(o){ return o.type === "image" && isImgRef(o.src); });
+  var left = 0, chain = Promise.resolve();
+  waiting.forEach(function(o){
+    chain = chain.then(function(){
+      return loadImageLocal(o.src.slice(4)).then(function(d){
+        if (!d) { left++; return; }
+        o.src = d;
+        if (o.el) {
+          o.el.style.background = ""; o.el.title = "";
+          var im = o.el.querySelector("img");
+          if (im) im.src = d;
+        }
+      });
+    });
+  });
+  return chain.then(function(){ inkDirty = true; return left; });
+}
 function loadPage(id, onReady) {
   currentId = id;
   isLoadingPage = true;                   // ★開いている間は自動保存を止める
   undoStack = []; redoStack = []; updateUndoUI();
   saveIndex();
-  kvGet("page_" + id).catch(function(){
+  var myLoad = ++loadSeq;
+  var needsMig = false;
+  readPageRec(id).catch(function(){
     /* ★読み込みに失敗した時、以前はここで何も起きず、
        前のページの中身が残ったまま/空のまま編集できてしまい、
        そこで何か触ると空が保存されてノートが消えていた。
        失敗が分かるよう目印を付けて渡す。 */
     return { __loadFailed: true };
   }).then(function(rec){
+    /* 写真の名前を中身に戻す(端末に無ければクラウドから取り寄せる)。
+       ★この版より新しい形式のノートは触らない(読み取り専用で開く)。 */
+    if (!rec || rec.__loadFailed || rec.json == null) return rec;
+    rec.__storedStamp = storedStamp(rec);
+    if (rec.fmt && rec.fmt > IMG_FMT) { rec.__tooNew = true; return rec; }
+    rec.__legacy = String(rec.json).indexOf('"src":"data:') !== -1;
+    rec.__refJson = rec.json;
+    /* 端末にある写真だけで先に開く(取り寄せを待つと、通信が遅い時に何秒も開かない)。
+       足りない写真は開いた後に取り寄せて差し替える。 */
+    return resolveImageRefs(rec.json, null).then(function(r){
+      rec.json = r.json; rec.__missing = r.missing;
+      return rec;
+    }, function(){
+      rec.__missing = imgRefsIn(rec.json);   // 戻せなくても開く(写真は仮の枠)
+      return rec;
+    });
+  }).then(function(rec){
+    if (myLoad !== loadSeq) return;       // その間に別のノートが開かれた
+    sceneTrusted = !(rec && (rec.__loadFailed || rec.__tooNew));
+    pageBase = (rec && rec.base != null) ? rec.base : null;
+    pageMBase = (rec && rec.mbase != null) ? rec.mbase : null;
+    pageMetaTs = (rec && rec.mts) || 0;
     if (rec && rec.__loadFailed) {
+      savedWeight = null;
       /* 読めなかったノートは、触らせない。
          保存も止める(isLoadingPageのまま)ので上書きされない。 */
       rebuildScene("[]");
@@ -8327,10 +8624,7 @@ function loadPage(id, onReady) {
       setTimeout(function(){
         showSheet("ノートを読み込めませんでした", [
           { label: "↻ もう一度開く", fn: function(){ loadPage(id, onReady); } },
-          { label: "🔍 消えたノートを探す", fn: function(){
-              var b = document.getElementById("findLost");
-              if (b) b.click();
-            } },
+          { label: "↻ アプリを読み込み直す", fn: function(){ location.reload(); } },
           { label: "閉じる", cancel: true }
         ]);
       }, 300);
@@ -8342,7 +8636,7 @@ function loadPage(id, onReady) {
     /* ★開いた時点の中身を指紋で覚え、編集回数を0に戻す。
        「手を入れていないのに中身が違う」を見抜くための基準。 */
     editsSinceLoad = 0;
-    loadedStamp = contentStamp((rec && rec.json) || "[]");
+    loadedStamp = (rec && rec.__storedStamp) ? rec.__storedStamp : contentStamp("[]");
     if (rec && rec.json) {
       rebuildScene(rec.json);
       if (rec.view) view = rec.view;
@@ -8366,12 +8660,48 @@ function loadPage(id, onReady) {
     var maxId = 0;
     for (var i = 0; i < objects.length; i++) maxId = Math.max(maxId, objects[i].id || 0);
     idSeq = Math.max(idSeq, maxId + 1);
+    /* 開いた時点の重さを覚える(保存前の安全確認で、前の本文を読み直さないため) */
+    savedWeight = (rec && rec.wn != null) ? { n: rec.wn, chars: rec.wc || 0 } : weightOfObjects(objects);
+    /* ★以前の形式(写真が本文に入っている)なら、新しい形式に移す。
+       移した後の本文を「開いた時点の中身」とみなす(そうしないと、
+       編集していないのに中身が変わったと判定されて保存が止まる)。 */
+    if (rec && rec.__legacy && sceneTrusted) {
+      var migJson = serializeForSave();
+      var migStamp = contentStamp(migJson);
+      if (migStamp !== loadedStamp) { needsMig = true; loadedStamp = migStamp; }
+    }
+    if (rec && rec.__tooNew) {
+      showStoreTrouble("このノートは新しい版のアプリで保存されています。アプリを更新してください(読み取り専用)", false);
+    }
+    if (rec && rec.__missing && rec.__missing.length) {
+      var miss = rec.__missing.length, refJson = rec.__refJson;
+      setTimeout(function(){
+        statusEl.textContent = "写真 " + miss + " 枚を取り寄せています…";
+        if (!cloudUser()) {
+          statusEl.textContent = "写真 " + miss + " 枚がこの端末にありません(同期がつながると表示されます)";
+          return;
+        }
+        fetchMissingImages(id, refJson).then(function(){
+          if (myLoad !== loadSeq) return;
+          return patchMissingImages().then(function(left){
+            statusEl.textContent = left ? ("写真 " + left + " 枚を取り寄せられませんでした")
+                                        : "写真を取り寄せました";
+          });
+        }).catch(function(){});
+      }, 600);
+    }
     setTimeout(measureAll, 60);   // 実寸をまとめて測ってキャッシュ
     // ★測定やマーカーの位置合わせが済んでから、自動保存を再開する
     setTimeout(function(){
+      if (myLoad !== loadSeq) return;
       dirtySinceSave = false;
       unsyncedEdits = false;
       isLoadingPage = false;
+      if (needsMig && sceneTrusted && currentId === id) {
+        /* 写真を本文から分けて保存し直す(この1回だけ。以後は軽くなる) */
+        saveDocNow();
+        setTimeout(function(){ statusEl.textContent = "写真を分けて保存し直しました(以後は軽くなります)"; }, 300);
+      }
       /* ★読み込みが本当に終わってから呼ぶ。
          ここより前に中身を足すと、rebuildSceneに消されたり、
          isLoadingPage中で自動保存が止まっているせいで保存されず、
@@ -8505,7 +8835,9 @@ function duplicatePage(id) {
   if (id === currentId) {
     // 開いているページは、いまの内容をそのまま写す
     // (serializeSceneは既にJSON文字列を返すので、二重にstringifyしない)
-    makeCopy({ json: serializeScene() });
+    /* 写真は名前で(しまい済みの写真を共有する)。念のため写真もしまってから複製する */
+    var dupJson = serializeForSave(), dupImgs = imgPending;
+    persistImages(dupImgs).then(function(){ makeCopy({ json: dupJson }); });
   } else {
     kvGet("page_" + id).then(function(doc){ return makeCopy(doc); })
       .catch(function(){ makeCopy(null); });
@@ -8533,7 +8865,7 @@ function renamePage(id) {
 function deletePage(id) {
   var pg = findPage(id);
   if (!pg) return;
-  showSheet("「" + pg.title + "」を削除しますか?(取り消せません)", [
+  showSheet("「" + pg.title + "」を削除しますか?(30日間はごみ箱から戻せます)", [
     { label: "🗑 削除する", danger: true, fn: function(){ deletePageNow(id); } },
     { label: "キャンセル", cancel: true }
   ]);
@@ -8541,8 +8873,9 @@ function deletePage(id) {
 function deletePageNow(id) {
   var pg = findPage(id);
   if (!pg) return;
-  kvDel("page_" + id);
-  kvDel("thumb_" + id);
+  /* ★開いているノートなら、いま書いた分まで確定させてから移す */
+  if (id === currentId && dirtySinceSave) { try { saveDocNow(); } catch (e) {} }
+  trashLocalPage(id, "この端末で削除");
   cloudDeletePage(id);
   deletedIds.push({ id: id, ts: Date.now() });   // 墓標: 他端末から復活しないように
   pages = pages.filter(function(p){ return p.id !== id; });
@@ -8889,7 +9222,7 @@ function restoreVersion(id, key) {
     // 戻す前に、今の中身も控えに残す(戻しすぎても元に戻せるように)
     return keepVersion(id, "版を戻す前").then(function(){
       // 今の設定を土台にして、控えにあるものだけ上書きする
-      return kvGet("page_" + id).then(function(cur){
+      return readPageRec(id).then(function(cur){
         cur = cur || {};
         /* ★版番号を引き継ぐ。入れないと0に戻り、
            「クラウドの方が新しい」と判定されてすぐ元に戻されてしまう。 */
@@ -8900,6 +9233,9 @@ function restoreVersion(id, key) {
           canvasMode: (v.canvasMode != null) ? v.canvasMode : cur.canvasMode,
           bg: (v.bg != null) ? v.bg : cur.bg,
           rev: cur.rev || 0,
+          base: cur.base,                     // 土台はそのまま(=手元だけ変わった扱いになる)
+          mbase: cur.mbase,
+          mts: Date.now(),                    // 台帳より新しい記録として書く
           ts: Date.now()
         });
       });
@@ -9940,7 +10276,7 @@ $("#wipePage").onclick = function(){
   var pgW = findPage(currentId);
   var nmW = (pgW && pgW.title) ? pgW.title : "このノート";
   if (!confirm("⚠「" + nmW + "」を白紙に戻します。\n" +
-               "・中身に加えて、単元の印・表示位置の記憶も消えます\n" +
+               "・中身に加えて、ブックマークの印・表示位置の記憶も消えます\n" +
                "・↩(取り消し)では戻せません\n" +
                "・他のノートには影響しません\n\n" +
                "中身だけ消して戻せるようにしたい場合は、一覧の\n" +
@@ -9962,14 +10298,16 @@ $("#wipePage").onclick = function(){
   statusEl.textContent = "白紙にしました";
 };
 $("#wipeAll").onclick = function(){
-  if (!confirm("⚠ すべてのノートとデータを削除し、初期状態に戻します。\nこの操作は元に戻せません。よろしいですか?")) return;
+  if (!confirm("⚠ すべてのノートを削除し、初期状態に戻します。\n(ノートは30日間、ごみ箱に残ります)\nよろしいですか?")) return;
   if (!confirm("⚠ 最終確認: 本当にすべて削除しますか?\n(クラウド同期中の場合、クラウド側のノートも削除されます)")) return;
   var ids = pages.map(function(p){ return p.id; });
   var chain = Promise.resolve();
   ids.forEach(function(id){
     chain = chain.then(function(){
       cloudDeletePage(id);
-      return kvDel("page_" + id);
+      /* ★初期化でも、いきなり中身は消さない。ごみ箱へ移す。
+         押し間違えた時に取り返しがつくようにするため。 */
+      return trashLocalPage(id, "全データ初期化");
     });
   });
   /* ★1ページ消せなかっただけで止まると、中途半端な状態のまま
@@ -10059,6 +10397,12 @@ $("#fitChip").onclick = function(){
      ページだけが片付いて、他のページの古い単元が残ってしまう。
      各ページを次に開いた時に、そのページの分が1回だけ片付く。 */
 function migrateUnitsV22() {
+  /* ★この片付けは止める。
+     「済み」の印を端末のブラウザ内にしか残していなかったため、
+     別の端末で初めて開いた時・ブラウザのデータを消した時・入れ直した時に
+     もう一度走り、そのノートのブックマークを全部消して保存していた
+     (同期で他の端末からも消える)。v22.00の移行はとうに済んでいるので不要。 */
+  return;
   var key = "inknote_unit_mig_v22_" + currentId;
   try { if (localStorage.getItem(key) === "1") return; } catch (e) {}
   var n = 0;
@@ -10080,6 +10424,7 @@ function unitEntries() {
   }
   for (var b = 0; b < bookmarks.length; b++) {
     var bm = bookmarks[b];
+    if (!bm || bm.head) continue;              // 見出しは別に扱う(bmHeads)
     out.push({ kind: "pos", bm: bm, name: String(bm.name || ""),
                theme: bm.theme || null, id: bm.id });
   }
@@ -10098,7 +10443,7 @@ function gotoUnit(e) {
   closePos();
 }
 function renameUnit(e) {
-  askText("単元の名前", e.name, function(t){
+  askText("ブックマークの名前", e.name, function(t){
     if (t == null) return;
     t = String(t).trim();
     if (!t) return;
@@ -10114,23 +10459,6 @@ function deleteUnit(e) {
   refreshMeasures(); inkDirty = true; scheduleSave(); renderPosList(); renderTocPanel(); updateColBar();
 }
 /* テーマ割り当てシート。「未分類に戻す」も必ず出す */
-function pickThemeFor(e) {
-  var themes = themeAnchors();
-  var opts = [];
-  for (var i = 0; i < themes.length; i++) {
-    (function(t){
-      opts.push({ label: (t.o.id === e.theme ? "✓ " : "📄 ") + t.name,
-                  fn: function(){ setUnitTheme(e, t.o.id); } });
-    })(themes[i]);
-  }
-  if (!themes.length) {
-    statusEl.textContent = "先にテーマを作ってください(文字を選んで🔖→新しいテーマ)";
-    return;
-  }
-  opts.push({ label: "— 未分類に戻す", fn: function(){ setUnitTheme(e, null); } });
-  opts.push({ label: "キャンセル", cancel: true });
-  showSheet("「" + e.name + "」をどのテーマに", opts);
-}
 /* 印を付ける相手を選び直す(自動判定が外した時の逃げ道) */
 /* 位置だけの記憶を「いま見えている表示」で覚え直す。
    細かく位置を詰めたい時のための更新。 */
@@ -10159,7 +10487,7 @@ function retargetUnit(e) {
   }
   var target = sel[0];
   if (target.anch && target.anchLv === 1) {
-    statusEl.textContent = "テーマには単元を重ねられません";
+    statusEl.textContent = "見出しにはブックマークを重ねられません";
     return;
   }
   var desc = (target.type === "text")
@@ -10179,84 +10507,6 @@ function retargetUnit(e) {
       } },
     { label: "キャンセル", cancel: true }
   ]);
-}
-function renderPosList() {
-  var list = $("#psList");
-  list.innerHTML = "";
-  function mkRow(e, indent) {
-    var row = document.createElement("div");
-    row.className = "pp-row";
-    if (indent) row.style.paddingLeft = "20px";
-    var title = document.createElement("span");
-    title.className = "pp-title";
-    // 位置だけの単元は🔖が出ないので、一覧では☆で見分けられるようにする
-    title.textContent = (e.kind === "obj" ? "🔖 " : "☆ ") + e.name;
-    title.addEventListener("click", function(){ gotoUnit(e); });
-    /* ★絵文字だけだと何のボタンか分からないという指摘を受け、
-       すべて「絵文字+短い言葉」にする。押す前に用途が読めるように。 */
-    function mkBtn(label, tip, fn) {
-      var b = document.createElement("button");
-      b.textContent = label; b.title = tip;
-      b.style.cssText = "font-size:11px;padding:5px 7px;white-space:nowrap";
-      b.addEventListener("click", function(ev){ ev.stopPropagation(); fn(); });
-      return b;
-    }
-    row.appendChild(title);
-    row.appendChild(mkBtn("📑テーマ", "この単元をどのテーマに入れるか決める",
-                          function(){ pickThemeFor(e); }));
-    /* 位置だけの記憶は「いまの表示位置で覚え直す」ができる。
-       物に付いた印は物と一緒に動くので、その必要がない。 */
-    if (e.kind === "pos")
-      row.appendChild(mkBtn("📍更新", "いま見えている位置で覚え直す",
-                            function(){ updateBookmarkView(e); }));
-    else
-      row.appendChild(mkBtn("🎯付替", "いま選んでいる物に印を移す(先に対象を1つ選ぶ)",
-                            function(){ retargetUnit(e); }));
-    row.appendChild(mkBtn("✎名前", "名前を変える", function(){ renameUnit(e); }));
-    row.appendChild(mkBtn("🗑削除", "この単元を消す(内容は消えません)",
-                          function(){ deleteUnit(e); }));
-    return row;
-  }
-  function mkHead(text) {
-    var h = document.createElement("div");
-    h.style.cssText = "color:var(--ui-dim);font-size:11px;padding:12px 8px 4px;font-weight:700";
-    h.textContent = text;
-    return h;
-  }
-  var entries = unitEntries();
-  if (!entries.length) {
-    var empty = document.createElement("div");
-    empty.className = "pp-row";
-    empty.style.color = "#9AA1AD";
-    empty.style.fontSize = "12.5px";
-    empty.textContent = "まだ単元がありません。「☆ ここを単元として記憶」で追加できます。";
-    list.appendChild(empty);
-    return;
-  }
-  // 記号の意味を最初に出しておく(押す前に分かるように)
-  var legend = document.createElement("div");
-  legend.style.cssText = "color:var(--ui-dim);font-size:10.5px;line-height:1.7;padding:2px 8px 8px";
-  legend.textContent = "🔖=内容に付いた印(動かすと付いてくる) / ☆=場所だけの記憶(白紙でも可)";
-  list.appendChild(legend);
-  // 未分類を先に出す(ここを片付けるのがこのパネルの仕事なので)
-  var un = entries.filter(function(e){ return !unitThemeOf(e); });
-  if (un.length) {
-    list.appendChild(mkHead("未分類 (" + un.length + ")"));
-    for (var u = 0; u < un.length; u++) list.appendChild(mkRow(un[u], false));
-  }
-  var themes = themeAnchors();
-  for (var t = 0; t < themes.length; t++) {
-    var tid = themes[t].o.id;
-    var kids = entries.filter(function(e){ return unitThemeOf(e) === tid; });
-    list.appendChild(mkHead("📄 " + (t + 1) + ". " + themes[t].name + " (" + kids.length + ")"));
-    if (!kids.length) {
-      var e2 = document.createElement("div");
-      e2.style.cssText = "color:var(--ui-dim);font-size:11px;padding:4px 8px 4px 20px";
-      e2.textContent = "(まだありません)";
-      list.appendChild(e2);
-    }
-    for (var k = 0; k < kids.length; k++) list.appendChild(mkRow(kids[k], true));
-  }
 }
 function openPos() {
   renderPosList();
@@ -10301,37 +10551,285 @@ function objNearCenter() {
   var limit = Math.max(innerWidth, innerHeight) / (3 * view.s);
   return (best && bestD <= limit) ? best : null;
 }
-function addUnitBookmark() {
-  var target = (sel.length === 1) ? sel[0] : objNearCenter();
-  var seed = unitNameSeed(target) || ("単元" + (bookmarks.length + anchorList().length + 1));
-  askText("単元の名前", seed, function(name){
+/* =========================================================
+   ブックマーク(v23.1)
+   ---------------------------------------------------------
+   ★考え方を2つだけにする。
+       ブックマーク = いまの「表示位置と拡大率」をそのまま覚えたもの。
+                      押すと、覚えた時と同じ見え方に戻る。
+       見出し       = ブックマークをまとめる名前(例: 月曜日やること)。
+                      名前だけで作れる。ノートの中身には何も付けない。
+   ★以前は「単元」を保存すると、画面中央に近い文字へ印を付ける方式が
+     既定で、どこに付くか読めなかった。見出し(テーマ)も、先に文字を
+     選んでから作る必要があり、思い立った時にすぐ作れなかった。
+   ★以前の「文字に付けた印」は消さずに一覧へ出す(📌で見分けられる)。
+========================================================= */
+var bmFlashId = null;            // いま保存した行を目立たせる
+
+/* 見出しの一覧。名前だけの見出しに、以前の「文字に付けた見出し」も並べる */
+function bmHeads() {
+  var out = [];
+  for (var i = 0; i < bookmarks.length; i++)
+    if (bookmarks[i] && bookmarks[i].head)
+      out.push({ id: bookmarks[i].id, name: String(bookmarks[i].name || ""), bm: bookmarks[i], pure: true });
+  var th = themeAnchors();
+  for (var j = 0; j < th.length; j++)
+    out.push({ id: th[j].o.id, name: th[j].name, o: th[j].o, pure: false });
+  return out;
+}
+function bmNewId() {
+  var id = Date.now();
+  var used = function(x){
+    for (var i = 0; i < bookmarks.length; i++) if (bookmarks[i].id === x) return true;
+    for (var j = 0; j < objects.length; j++) if (objects[j].id === x) return true;
+    return false;
+  };
+  while (used(id)) id++;
+  return id;
+}
+/* 名前の候補。いま画面のいちばん上に見えている文字の1行目を使う。
+   名前を打たなくても、後で見て分かる名前になる。 */
+function viewSeedName() {
+  var tl = toWorld(0, 70), br = toWorld(innerWidth, innerHeight);
+  var best = null, bestY = Infinity;
+  for (var i = 0; i < objects.length; i++) {
+    var o = objects[i];
+    if (o.type !== "text" || !o.text) continue;
+    var b = objBBox(o);
+    if (b.x > br.x || b.x + b.w < tl.x || b.y > br.y || b.y + b.h < tl.y) continue;
+    var y = Math.max(b.y, tl.y);
+    if (y < bestY) { bestY = y; best = o; }
+  }
+  if (best) {
+    var lines = String(best.text).split("\n");
+    for (var k = 0; k < lines.length; k++) {
+      var t = lines[k].replace(/^[\s・\-*#>]+/, "").replace(/\s+/g, " ").trim();
+      if (t) return t.slice(0, 22);
+    }
+  }
+  var n = 0;
+  for (var m = 0; m < bookmarks.length; m++) if (!bookmarks[m].head) n++;
+  return "ブックマーク " + (n + 1);
+}
+/* マップの印に振られる番号(一覧の並びと同じ順) */
+function bmNumberOf(e) {
+  var ents = unitEntries();
+  for (var i = 0; i < ents.length; i++) if (ents[i].id === e.id && ents[i].kind === e.kind) return i + 1;
+  return 0;
+}
+function bmAfterChange() {
+  scheduleSave();
+  renderPosList();
+  try { renderTocPanel(); } catch (e) {}
+}
+/* いまの表示を保存する。押した瞬間に保存し、名前は後から直せる。 */
+function saveViewBookmark(headId) {
+  pushUndo();
+  var id = bmNewId();
+  var name = viewSeedName();
+  var ent = { id: id, name: name, theme: headId || null,
+              view: { x: view.x, y: view.y, s: view.s } };
+  /* 入れる見出しの「最後の仲間」の直後に置く(見出しごとにまとまって並ぶ) */
+  var at = bookmarks.length;
+  if (headId != null) {
+    for (var i = bookmarks.length - 1; i >= 0; i--) {
+      if (bookmarks[i].id === headId || bookmarks[i].theme === headId) { at = i + 1; break; }
+    }
+  }
+  bookmarks.splice(at, 0, ent);
+  bmFlashId = id;
+  bmAfterChange();
+  statusEl.textContent = "「" + name + "」を保存しました(✎で名前を変えられます)";
+}
+function addUnitBookmark() { saveViewBookmark(null); }   // 以前の入口の名前を残す
+function newHeading(thenSave) {
+  askText("見出しの名前(例: 月曜日やること)", "", function(name){
     if (name == null) return;
     name = String(name).trim();
     if (!name) return;
     pushUndo();
-    if (target) {
-      // 物に紐づく単元。画面に🔖が出て、動かしても付いてくる
-      target.anch = name;
-      target.anchLv = 2;
-      if (target.anchTheme === undefined) target.anchTheme = null;
-      refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-      setTimeout(function(){
-        statusEl.textContent = "単元「" + name + "」を記憶しました(テーマは☆から割り当て)";
-      }, 40);
-    } else {
-      /* 近くに物が無い時は位置だけを覚える。
-         ★これが「白紙の場所も記憶したい」への答え。
-           🔖の印は出ないが、目次からは飛べる。 */
-      bookmarks.push({ id: Date.now(), name: name, theme: null,
-                       view: { x: view.x, y: view.y, s: view.s } });
-      scheduleSave(); renderTocPanel();
-      setTimeout(function(){
-        statusEl.textContent = "位置「" + name + "」を記憶しました(近くに内容が無いため位置のみ)";
-      }, 40);
-    }
+    var id = bmNewId();
+    bookmarks.push({ id: id, name: name, head: true });
+    bmFlashId = id;
+    bmAfterChange();
+    statusEl.textContent = "見出し「" + name + "」を作りました(右の＋で、いまの表示をここへ保存)";
   });
 }
+/* 同じ仲間(同じ見出しの中、または見出し同士)の中で順番を入れ替える */
+function bmSwap(ent, dir, same) {
+  var idx = bookmarks.indexOf(ent);
+  if (idx < 0) return;
+  var j = idx + dir;
+  while (j >= 0 && j < bookmarks.length && !same(bookmarks[j])) j += dir;
+  if (j < 0 || j >= bookmarks.length) { statusEl.textContent = "これ以上は動かせません"; return; }
+  pushUndo();
+  bookmarks[idx] = bookmarks[j]; bookmarks[j] = ent;
+  bmFlashId = ent.id;
+  bmAfterChange();
+}
+function pickThemeFor(e) {
+  var heads = bmHeads(), opts = [];
+  heads.forEach(function(h){
+    opts.push({ label: (h.id === e.theme ? "✓ " : "📂 ") + h.name,
+                fn: function(){ setUnitTheme(e, h.id); } });
+  });
+  opts.push({ label: "＋ 新しい見出しを作って入れる", fn: function(){
+    setTimeout(function(){
+      askText("見出しの名前(例: 月曜日やること)", "", function(name){
+        if (name == null) return;
+        name = String(name).trim();
+        if (!name) return;
+        var id = bmNewId();
+        bookmarks.push({ id: id, name: name, head: true });
+        setUnitTheme(e, id);
+      });
+    }, 240);
+  } });
+  if (e.theme) opts.push({ label: "— 見出しから外す(未分類へ)", fn: function(){ setUnitTheme(e, null); } });
+  opts.push({ label: "キャンセル", cancel: true });
+  showSheet("「" + e.name + "」をどの見出しに入れますか", opts);
+}
+function bmMenu(e) {
+  var items = [];
+  items.push({ label: "✎ 名前を変える", fn: function(){ setTimeout(function(){ renameUnit(e); }, 240); } });
+  if (e.kind === "pos") {
+    items.push({ label: "📍 いまの表示で上書きする(位置と拡大率)", fn: function(){
+      pushUndo();
+      e.bm.view = { x: view.x, y: view.y, s: view.s };
+      bmFlashId = e.id; bmAfterChange();
+      statusEl.textContent = "「" + e.name + "」をいまの表示で上書きしました";
+    } });
+  }
+  items.push({ label: "📂 見出しを変える", fn: function(){ setTimeout(function(){ pickThemeFor(e); }, 240); } });
+  if (e.kind === "pos") {
+    var same = function(x){ return !x.head && (x.theme || null) === (e.bm.theme || null); };
+    items.push({ label: "↑ 上へ", fn: function(){ bmSwap(e.bm, -1, same); } });
+    items.push({ label: "↓ 下へ", fn: function(){ bmSwap(e.bm, 1, same); } });
+  } else {
+    items.push({ label: "🎯 いま選んでいる物へ印を移す", fn: function(){ setTimeout(function(){ retargetUnit(e); }, 240); } });
+  }
+  items.push({ label: "🗑 このブックマークを消す(ノートの中身は消えません)", danger: true,
+               fn: function(){ deleteUnit(e); } });
+  items.push({ label: "キャンセル", cancel: true });
+  showSheet("ブックマーク「" + e.name + "」", items);
+}
+function headMenu(h) {
+  var items = [];
+  if (h.pure) {
+    items.push({ label: "✎ 名前を変える", fn: function(){
+      setTimeout(function(){
+        askText("見出しの名前", h.name, function(t){
+          if (t == null || !String(t).trim()) return;
+          pushUndo(); h.bm.name = String(t).trim(); bmAfterChange();
+        });
+      }, 240);
+    } });
+    var same = function(x){ return !!x.head; };
+    items.push({ label: "↑ 上へ", fn: function(){ bmSwap(h.bm, -1, same); } });
+    items.push({ label: "↓ 下へ", fn: function(){ bmSwap(h.bm, 1, same); } });
+    items.push({ label: "🗑 見出しを消す(中のブックマークは未分類へ)", danger: true, fn: function(){
+      pushUndo();
+      for (var i = 0; i < bookmarks.length; i++) if (bookmarks[i].theme === h.id) bookmarks[i].theme = null;
+      for (var j = 0; j < objects.length; j++) if (objects[j].anchTheme === h.id) objects[j].anchTheme = null;
+      bookmarks = bookmarks.filter(function(x){ return x !== h.bm; });
+      bmAfterChange();
+      statusEl.textContent = "見出し「" + h.name + "」を消しました";
+    } });
+  } else {
+    items.push({ label: "📌 文字に付けた見出しです。その場所へ移動する", fn: function(){
+      closePos(); jumpToAnchor(h.o);
+    } });
+  }
+  items.push({ label: "キャンセル", cancel: true });
+  showSheet("見出し「" + h.name + "」", items);
+}
+function renderPosList() {
+  var list = $("#psList");
+  if (!list) return;
+  list.innerHTML = "";
+  function btn(label, tip, fn) {
+    var b = document.createElement("button");
+    b.textContent = label; b.title = tip;
+    b.style.cssText = "flex:0 0 auto;min-width:38px;height:36px;font-size:15px;padding:0 8px";
+    b.addEventListener("click", function(ev){ ev.stopPropagation(); fn(); });
+    return b;
+  }
+  function flash(row, id) {
+    if (bmFlashId !== id) return;
+    row.style.boxShadow = "inset 0 0 0 2px var(--accent)";
+    setTimeout(function(){ row.style.boxShadow = ""; }, 1600);
+    setTimeout(function(){ try { row.scrollIntoView({ block: "nearest" }); } catch (e) {} }, 30);
+  }
+  function mkRow(e, indent) {
+    var row = document.createElement("div");
+    row.className = "pp-row";
+    /* 行の上下は詰める(中のボタンが36pxあるので、押しやすさは保たれる) */
+    row.style.cssText = "display:flex;align-items:center;gap:6px;padding-top:3px;padding-bottom:3px;" +
+                        (indent ? "padding-left:22px;" : "");
+    var title = document.createElement("span");
+    title.className = "pp-title";
+    title.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:8px 0";
+    var z = (e.kind === "pos" && e.bm.view) ? "  " + Math.round(e.bm.view.s / zoomBaseScale() * 100) + "%" : "";
+    title.textContent = (e.kind === "obj" ? "📌 " : "☆ ") + e.name;
+    /* マップの印と同じ番号を出す(マップで見た番号から、ここで名前を引ける) */
+    var no = bmNumberOf(e);
+    if (no) title.textContent = no + ". " + title.textContent;
+    var zs = document.createElement("span");
+    zs.style.cssText = "flex:0 0 auto;color:var(--ui-dim);font-size:10.5px";
+    zs.textContent = z;
+    row.addEventListener("click", function(){ gotoUnit(e); });
+    row.appendChild(title); row.appendChild(zs);
+    row.appendChild(btn("✎", "名前を変える", function(){ renameUnit(e); }));
+    row.appendChild(btn("⋯", "上書き・見出し・並べ替え・削除", function(){ bmMenu(e); }));
+    flash(row, e.id);
+    return row;
+  }
+  function mkHeadRow(h, count) {
+    var row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:6px;padding:10px 8px 4px;" +
+                        "border-top:1px solid var(--ui-line);margin-top:6px";
+    var t = document.createElement("span");
+    t.style.cssText = "flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" +
+                      "color:#ffd98a;font-size:13px;font-weight:800";
+    t.textContent = (h.pure ? "📂 " : "📌 ") + h.name + "  (" + count + ")";
+    row.appendChild(t);
+    row.appendChild(btn("＋", "いまの表示を、この見出しに保存", function(){ saveViewBookmark(h.id); }));
+    row.appendChild(btn("⋯", "名前・並べ替え・削除", function(){ headMenu(h); }));
+    flash(row, h.id);
+    return row;
+  }
+  var entries = unitEntries(), heads = bmHeads();
+  if (!entries.length && !heads.length) {
+    var empty = document.createElement("div");
+    empty.style.cssText = "color:#9AA1AD;font-size:12.5px;line-height:1.9;padding:14px 10px";
+    empty.innerHTML = "まだありません。<br>" +
+      "<b>＋ いまの表示を保存</b> … 見えている位置と拡大率を覚えます。押すだけで保存され、名前は後から変えられます。<br>" +
+      "<b>＋ 見出し</b> … 「月曜日やること」のような、まとめるための名前を作ります。";
+    list.appendChild(empty);
+    bmFlashId = null;
+    return;
+  }
+  var known = {};
+  heads.forEach(function(h){ known[String(h.id)] = 1; });
+  // 見出しに入っていないもの(消えた見出しを指しているものも、ここに出して迷子にしない)
+  var un = entries.filter(function(e){ return !e.theme || !known[String(e.theme)]; });
+  if (un.length) {
+    var uh = document.createElement("div");
+    uh.style.cssText = "color:var(--ui-dim);font-size:11px;padding:8px 8px 2px;font-weight:700";
+    uh.textContent = "未分類 (" + un.length + ")";
+    list.appendChild(uh);
+    un.forEach(function(e){ list.appendChild(mkRow(e, false)); });
+  }
+  heads.forEach(function(h){
+    var kids = entries.filter(function(e){ return e.theme === h.id; });
+    list.appendChild(mkHeadRow(h, kids.length));
+    kids.forEach(function(e){ list.appendChild(mkRow(e, true)); });
+  });
+  bmFlashId = null;
+}
+
 $("#posChip").onclick = openPos;
+$("#psHead").onclick = function(){ newHeading(); };
 $("#psClose").onclick = closePos;
 $("#psAdd").onclick = addUnitBookmark;
 
@@ -10511,7 +11009,54 @@ function roundRectPath(g, x, y, w, h, r) {
    drawTextToCanvas は o.text しか見ないため、表は丸ごと空白、
    組版した数式も消えていた(書き出しの不自然な空白の正体)。
    そうしたBOXは、画面に出ている実物をそのまま絵にして描く。 */
+/* =========================================================
+   表・数式の画像化の安全装置(B4)
+   ---------------------------------------------------------
+   ★作った絵をずっと持ち続け、書き出しでは全部を一度に作っていたため、
+     表の多いノートでメモリを使い切ることがあった。
+     合計の大きさに上限を設け、古いものから手放す(書き出し中は手放さない)。
+   ★Safari では、この方法で作った絵を描いた canvas が書き出せなくなることがある。
+     起動時に小さく試し、駄目な端末では使わずに文字の描画で代用する。
+========================================================= */
+var richSnapOK = true;
+var richSnapList = [];                 // 作った順(古い順)
+var richSnapBytes = 0;
+var RICH_SNAP_LIMIT = 64 * 1024 * 1024;
+var richExportUntil = 0;               // この時刻までは手放さない(書き出し中)
+function noteRichSnap(o, w, h) {
+  var bytes = Math.max(1, w) * Math.max(1, h) * 4;
+  richSnapList.push({ o: o, bytes: bytes });
+  richSnapBytes += bytes;
+  if (Date.now() < richExportUntil) return;
+  while (richSnapBytes > RICH_SNAP_LIMIT && richSnapList.length > 1) {
+    var old = richSnapList.shift();
+    richSnapBytes -= old.bytes;
+    if (old.o && old.o.__richSnap) old.o.__richSnap = null;
+  }
+}
+function freeRichSnapshots() {
+  for (var i = 0; i < richSnapList.length; i++) if (richSnapList[i].o) richSnapList[i].o.__richSnap = null;
+  richSnapList = []; richSnapBytes = 0; richExportUntil = 0;
+}
+(function probeRichSnap(){
+  try {
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><foreignObject width="100%" height="100%">' +
+              '<div xmlns="http://www.w3.org/1999/xhtml" style="width:8px;height:8px;background:#000"></div>' +
+              '</foreignObject></svg>';
+    var img = new Image();
+    img.onload = function(){
+      try {
+        var c = document.createElement("canvas"); c.width = 8; c.height = 8;
+        c.getContext("2d").drawImage(img, 0, 0);
+        c.toDataURL("image/png");                    // 汚染扱いならここで例外
+      } catch (e) { richSnapOK = false; }
+    };
+    img.onerror = function(){ richSnapOK = false; };
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  } catch (e) { richSnapOK = false; }
+})();
 function richSnapshotFor(o) {
+  if (!richSnapOK) return null;          // この端末では使えない → 文字の描画で代用
   if (!hasRich(o) || !o.el) return null;
   var cached = o.__richSnap;
   if (cached && cached.html === o.rich && cached.w === o.w) return cached.cv;
@@ -10553,6 +11098,7 @@ function richSnapshotFor(o) {
     var img = new Image();
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
     o.__richSnap = { html: o.rich, w: o.w, cv: img, h: H };
+    noteRichSnap(o, W, H);
     return img;
   } catch (e) { return null; }
 }
@@ -10656,9 +11202,9 @@ function renderPageToCanvas(bbox, marginOpt, list) {
   // DOM系(画像→テキスト)を先に、インク(線・図形)を上に描く=画面と同じ重なり
   for (var i = 0; i < arr.length; i++) {
     var o = arr[i];
-    if (o.type === "image" && o.el) {
-      var im = o.el.querySelector("img");
-      if (im) {
+    if (o.type === "image" && (o.el || o._im)) {
+      var im = o.el ? o.el.querySelector("img") : o._im;
+      if (im && im.naturalWidth !== 0) {
         var sa3 = g.globalAlpha;
         if (o.opacity != null && o.opacity < 1) g.globalAlpha = sa3 * o.opacity;
         g.drawImage(im, o.x, o.y, o.w, o.h);
@@ -10948,12 +11494,12 @@ function toggleAnchor() {
      単元は ☆(位置の記憶) で名前だけ付けて貯めておき、
      テーマへの割り当ては後から「単元の整理」でまとめて行う。 */
   if (o.anch && o.anchLv === 1) {
-    showSheet("テーマ: " + o.anch, [
+    showSheet("見出し: " + o.anch, [
       { label: "✎ 名前を変える", fn: function(){ askAnchorName(o, 1); } },
-      { label: "📑 テーマをやめる(中身は残ります)", danger: true, fn: function(){
+      { label: "📑 見出しをやめる(中身は残ります)", danger: true, fn: function(){
           pushUndo(); o.anch = null; o.anchLv = null; o.anchTheme = null;
           refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-          setTimeout(function(){ statusEl.textContent = "テーマをやめました"; }, 40);
+          setTimeout(function(){ statusEl.textContent = "見出しをやめました"; }, 40);
         } },
       { label: "キャンセル", cancel: true }
     ]);
@@ -10961,18 +11507,18 @@ function toggleAnchor() {
   }
   if (o.anch && o.anchLv === 2) {
     // 単元が付いている物を🔖で触った時は、整理パネルへ案内する
-    showSheet("単元: " + o.anch, [
+    showSheet("ブックマーク: " + o.anch, [
       { label: "✎ 名前を変える", fn: function(){ askAnchorName(o, 2); } },
-      { label: "🗂 単元の整理をひらく(テーマの割り当て)", fn: function(){ openPos(); } },
-      { label: "📑 これをテーマにする", fn: function(){
+      { label: "🗂 ブックマークをひらく(見出しの割り当て)", fn: function(){ openPos(); } },
+      { label: "📑 これを見出しにする", fn: function(){
           pushUndo(); o.anchLv = 1; o.anchTheme = null; ensureThemeSeq(o);
           refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-          setTimeout(function(){ statusEl.textContent = "テーマにしました"; }, 40);
+          setTimeout(function(){ statusEl.textContent = "見出しにしました"; }, 40);
         } },
-      { label: "🔖 単元をやめる", danger: true, fn: function(){
+      { label: "🔖 ブックマークをやめる", danger: true, fn: function(){
           pushUndo(); o.anch = null; o.anchLv = null; o.anchTheme = null;
           refreshMeasures(); inkDirty = true; scheduleSave(); renderTocPanel(); updateColBar();
-          setTimeout(function(){ statusEl.textContent = "単元をやめました"; }, 40);
+          setTimeout(function(){ statusEl.textContent = "ブックマークをやめました"; }, 40);
         } },
       { label: "キャンセル", cancel: true }
     ]);
@@ -10980,8 +11526,8 @@ function toggleAnchor() {
   }
   // まだ印が無い物: 🔖はテーマを作る道具に絞る
   showSheet("この場所を", [
-    { label: "📑 新しいテーマにする", fn: function(){ askAnchorName(o, 1); } },
-    { label: "☆ 単元として記憶する(テーマは後で)", fn: function(){ addUnitBookmark(); } },
+    { label: "📑 新しい見出しにする", fn: function(){ askAnchorName(o, 1); } },
+    { label: "☆ ブックマークとして記憶する(見出しは後で)", fn: function(){ addUnitBookmark(); } },
     { label: "キャンセル", cancel: true }
   ]);
 }
@@ -10989,7 +11535,7 @@ function askAnchorName(o, lv) {
   var def = o.anch || "";
   if (!def && o.type === "text") def = String(o.text || "").split("\n")[0].slice(0, 40);
   if (!def) def = "見出し" + (anchorList().length + 1);
-  askText(lv === 1 ? "テーマ(列)の名前" : "目次に出す名前", def, function(name){
+  askText(lv === 1 ? "見出し(列)の名前" : "目次に出す名前", def, function(name){
     if (name == null) return;
     name = String(name).trim();
     if (!name) return;
@@ -11002,7 +11548,7 @@ function askAnchorName(o, lv) {
     renderTocPanel();
     updateColBar();
     setTimeout(function(){
-      statusEl.textContent = (o.anchLv === 1 ? "テーマに追加しました: " : "目次に追加しました: ") + name;
+      statusEl.textContent = (o.anchLv === 1 ? "見出しに追加しました: " : "目次に追加しました: ") + name;
     }, 40);
   });
 }
@@ -11334,24 +11880,24 @@ function unitsOfTheme(themeId) {
 /* 隣のテーマへ飛ぶ */
 function jumpTheme(dir) {
   var l = themeAnchors();
-  if (!l.length) { statusEl.textContent = "テーマがまだありません"; return; }
+  if (!l.length) { statusEl.textContent = "見出しがまだありません"; return; }
   var cur = currentTheme();
   var i = 0;
   for (var k = 0; k < l.length; k++) if (l[k].o === cur) { i = k; break; }
   var n = Math.max(0, Math.min(l.length - 1, i + dir));
   if (n === i) {
-    statusEl.textContent = (dir < 0 ? "最初" : "最後") + "のテーマです";
+    statusEl.textContent = (dir < 0 ? "最初" : "最後") + "の見出しです";
     return;
   }
   lastThemeId = l[n].o.id;
   bringIntoView(l[n].b, true);
-  statusEl.textContent = "テーマ「" + l[n].name + "」へ移動しました";
+  statusEl.textContent = "見出し「" + l[n].name + "」へ移動しました";
 }
 /* 今のテーマの中だけで、次/前の単元へ飛ぶ */
 function jumpUnit(dir) {
   var cur = currentTheme();
   var units = unitsOfTheme(cur ? cur.id : null);
-  if (!units.length) { statusEl.textContent = "このテーマに単元がありません"; return; }
+  if (!units.length) { statusEl.textContent = "この見出しにブックマークがありません"; return; }
   var cy = (innerHeight / 2 - view.y) / view.s;
   var target = null;
   if (dir > 0) {
@@ -11359,7 +11905,7 @@ function jumpUnit(dir) {
   } else {
     for (var n2 = units.length - 1; n2 >= 0; n2--) if (units[n2].y < cy - 8) { target = units[n2]; break; }
   }
-  if (!target) { statusEl.textContent = (dir > 0 ? "最後" : "最初") + "の単元です"; return; }
+  if (!target) { statusEl.textContent = (dir > 0 ? "最後" : "最初") + "のブックマークです"; return; }
   bringIntoView(target.b, true);
   statusEl.textContent = "「" + target.name + "」へ移動しました";
 }
@@ -12104,6 +12650,60 @@ try {
 function promptDefault(kind) {
   return (kind === "study") ? STUDY_PROMPT : AI_PROMPT_HEAD;
 }
+/* ★冒頭の指示文は「なし / 学習用 / AI整理用」の3択を1か所で決める。
+   以前は「学習用コピー」「AIへ書き出す」それぞれにON/OFFがあり、
+   同じ中身を出すのにボタンが分かれていた。 */
+var promptMode = "ai";
+try {
+  var _pm = localStorage.getItem("inknote_prompt_mode");
+  if (_pm === "none" || _pm === "study" || _pm === "ai") promptMode = _pm;
+  else if (promptUse && promptUse.ai === false) promptMode = "none";
+} catch (e) {}
+function setPromptMode(m) {
+  promptMode = m;
+  try { localStorage.setItem("inknote_prompt_mode", m); } catch (e) {}
+}
+function promptModeLabel() {
+  return promptMode === "none" ? "なし(中身だけ)"
+       : promptMode === "study" ? "学習用(問題を作らせる)" : "AI整理用";
+}
+function currentPromptPrefix() {
+  if (promptMode === "none") return "";
+  try {
+    var v = localStorage.getItem(PROMPT_KEYS[promptMode]);
+    if (v != null && v !== "") return v;
+  } catch (e) {}
+  return promptDefault(promptMode);
+}
+function openPromptModeSheet(after) {
+  var back = function(){ if (after) setTimeout(after, 260); };
+  var mk = function(m, text){
+    return { label: (promptMode === m ? "✅ " : "⬜ ") + text,
+             fn: function(){ setPromptMode(m); statusEl.textContent = "冒頭の指示文: " + promptModeLabel(); back(); } };
+  };
+  var items = [
+    mk("none", "なし(中身だけ)"),
+    mk("study", "学習用(問題を作らせる指示)"),
+    mk("ai", "AI整理用(まとめ直させる指示)")
+  ];
+  if (promptMode !== "none") {
+    items.push({ label: "✎ いまの指示文を書き換える", fn: function(){
+      askText("冒頭の指示文(" + promptModeLabel() + ")", currentPromptPrefix(), function(v){
+        if (v == null) return;
+        try { localStorage.setItem(PROMPT_KEYS[promptMode], v); } catch (e) {}
+        statusEl.textContent = "指示文を変えました";
+        back();
+      });
+    } });
+    items.push({ label: "↺ 指示文を元に戻す", fn: function(){
+      try { localStorage.removeItem(PROMPT_KEYS[promptMode]); } catch (e) {}
+      statusEl.textContent = "指示文を元に戻しました";
+      back();
+    } });
+  }
+  items.push({ label: "戻る", cancel: true, fn: back });
+  showSheet("冒頭に付ける指示文", items);
+}
 function promptPrefix(kind) {
   if (!promptUse[kind]) return "";                  // 中身だけ欲しい時
   try {
@@ -12767,9 +13367,16 @@ function exportAllAsZip(ids) {
 }
 function pageObjectsFor(id) {
   if (id === currentId) return Promise.resolve(objects.slice());
+  /* ★写真の名前を中身に戻し、描くための画像も用意する。
+     以前は開いていないノートの写真が「画面上の要素」を持たないため、
+     全ノートPDF・ZIPの見た目・読める形の保存で写真が描かれていなかった。 */
   return kvGet("page_" + id).then(function(rec){
     if (!rec || !rec.json) return [];
-    try { return JSON.parse(rec.json) || []; } catch (e) { return []; }
+    return resolveImageRefs(rec.json, null).then(function(r){
+      var arr = [];
+      try { arr = JSON.parse(r.json) || []; } catch (e) { arr = []; }
+      return decodeListImages(arr);
+    });
   }).catch(function(){ return []; });
 }
 /* 指定したページ群をまとめて1つのMarkdownにする */
@@ -12838,7 +13445,7 @@ function runAiExport(ids, label, asFile) {
       statusEl.textContent = "書き出せる文字がありませんでした(手書きだけのノートはPDF書出を使ってください)";
       return;
     }
-    var payload = promptPrefix("ai") + md;
+    var payload = currentPromptPrefix() + md;
     if (!asFile) {
       copyTextToClipboard(payload,
         "AI用にコピーしました(" + label + " / " + ids.length + "ページ) → AIに貼り付け、返ってきた内容を「ファイル/AIから取り込む」へ");
@@ -12881,50 +13488,39 @@ function openScopeSheet(title, run) {
   showSheet(title, items);
 }
 function openAiExportSheet() {
-  openScopeSheet("AIへ書き出す範囲", function(ids, label){
-    /* ページ数が多い時はコピーだと詰まるので、既定をファイルにする */
+  /* ★範囲 → 渡し方 の2段だけにする。
+     「文字だけ出す」機能が4つのボタンに分かれていたのを1本にまとめた。
+     冒頭の指示文(なし/学習用/AI整理用)はここで切り替える。 */
+  openScopeSheet("どのノートを使いますか", function(ids, label){
     var many = ids.length > 1;
-    var items = [
-      /* ★文字だけの書き出しは手書き・画像が丸ごと落ちる。
-         ZIPなら「文字は文字のまま、絵は絵のまま」まとめて渡せるので、
-         取りこぼしなく抜き出したい時はこれを使う。 */
-      /* ★全ノートを一度にZIPにすると、全部の画像をメモリに溜めてから
-         まとめる作りなので、件数が多いと端末が落ちる。
-         1件ずつ出す道を先に出しておく。 */
-      { label: "🗜 ZIPでまるごと(" + ids.length + "件まとめて)",
-        fn: function(){ exportAllAsZip(ids); } },
-      /* ★.mdで文章は足りるが、手書きと貼った画像だけは文字にならない。
-         そこだけを全ノートから集められるようにする。 */
-      { label: "✎ 冒頭の指示文を編集/ON・OFF" +
-               (promptUse.ai ? "" : "(いまOFF)"),
-        fn: function(){ editPromptSheet("ai", function(){ openAiExportSheet(); }); } },
-      { label: "🖼 画像だけ全部まとめる(" + ids.length + "件ぶん)", fn: function(){
-          showSheet("画像だけ取り出す", [
-            { label: "🖼 貼った画像のみ(軽い)",
-              fn: function(){ exportImagesOnlyZip(ids, false); } },
-            { label: "✏ 手書きを含む全体像も付ける",
-              fn: function(){ exportImagesOnlyZip(ids, true); } },
-            { label: "キャンセル", cancel: true }
-          ]);
-        } },
-      { label: "🗜 ZIPを1ノートずつ出す(確実)", fn: function(){
-          var sub = ids.slice(0, 40).map(function(id){
-            var pg2 = findPage(id);
-            return { label: "📄 " + ((pg2 && pg2.title) || "ノート"),
-                     fn: function(){ exportAllAsZip([id]); } };
-          });
-          sub.push({ label: "キャンセル", cancel: true });
-          showSheet("どのノートを出しますか", sub);
-        } },
-      { label: (many ? "📄 文字だけファイルに保存" : "📄 文字だけファイルに保存"),
-        fn: function(){ runAiExport(ids, label, true); } },
-      { label: (many ? "📋 文字だけコピー(長いと途中で切れることがあります)" : "📋 文字だけコピー"),
-        fn: function(){ runAiExport(ids, label, false); } },
-      { label: "キャンセル", cancel: true }
-    ];
-    setTimeout(function(){
-      showSheet(label + "(" + ids.length + "件)をどう渡しますか", items);
-    }, 180);
+    var reopen = function(){ showStep2(); };
+    var showStep2 = function(){
+      showSheet(label + "(" + ids.length + "件)をどう渡しますか", [
+        { label: "📋 文字をコピー" + (many ? "(多いと途中で切れることがあります)" : ""),
+          fn: function(){ runAiExport(ids, label, false); } },
+        { label: "📄 文字をファイルで保存(.md)",
+          fn: function(){ runAiExport(ids, label, true); } },
+        { label: "🗜 文字+画像をまとめて保存(ZIP)",
+          fn: function(){ exportAllAsZip(ids); } },
+        { label: "🖼 画像だけ取り出す…", fn: function(){
+            setTimeout(function(){
+              showSheet("画像だけ取り出す", [
+                { label: "🖼 貼った画像をまとめて(ZIP)",
+                  fn: function(){ exportImagesOnlyZip(ids, false); } },
+                { label: "✏ 手書きを含む全体像も付ける(ZIP)",
+                  fn: function(){ exportImagesOnlyZip(ids, true); } },
+                { label: "🔢 番号つきの1枚にまとめる(開いているノート)",
+                  fn: function(){ setTimeout(function(){ $("#expImgSheet").click(); }, 240); } },
+                { label: "戻る", cancel: true, fn: function(){ setTimeout(reopen, 240); } }
+              ]);
+            }, 240);
+          } },
+        { label: "✎ 冒頭の指示文: " + promptModeLabel(),
+          fn: function(){ setTimeout(function(){ openPromptModeSheet(reopen); }, 240); } },
+        { label: "キャンセル", cancel: true }
+      ]);
+    };
+    setTimeout(showStep2, 240);
   });
 }
 /* =========================================================
@@ -13475,45 +14071,131 @@ function exportReadableHtml() {
 }
 
 function exportBackup() {
-  saveDocNow();
-  var out = { format: "inknote-backup", version: 1,
-              index: { pages: pages, currentId: currentId }, docs: {} };
-  var chain = Promise.resolve();
+  var pre = Promise.resolve(saveDocNow()).catch(function(){});
+  var out = { format: "inknote-backup", version: 2, savedAt: Date.now(),
+              index: { pages: pages, currentId: currentId, folders: folders }, docs: {} };
+  var failed = 0;
+  var chain = pre;
   pages.forEach(function(p){
     var k = "page_" + p.id;
-    chain = chain.then(function(){ return kvGet(k); }).then(function(v){ out.docs[k] = v; });
+    /* ★1件読めなかっただけで全部を諦めない。
+       途中で止まるとファイルが作られないのに何も表示されず、
+       「保存できた」と思い込んだままバックアップが存在しない、
+       という一番まずい失敗になる。読めた分は出し、読めなかった数を伝える。 */
+    chain = chain.then(function(){ return kvGetStrict(k); })
+                 .then(function(v){ if (v) out.docs[k] = v; else failed++; })
+                 .catch(function(){ failed++; });
   });
-  chain.then(function(){
-    var blob = new Blob([JSON.stringify(out)], { type: "application/json" });
-    var url = URL.createObjectURL(blob);
-    downloadURL(url, "inknote_backup_" + new Date().toISOString().slice(0, 10) + ".json");
-    setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
-    statusEl.textContent = "バックアップ書き出し完了";
+  /* ★本文が使う写真を全部同梱する。
+     本文には写真の名前しか書いていないので、写真を入れ忘れると
+     バックアップから戻した時に写真が無くなる。1枚でも欠けたら知らせる。 */
+  var imgMissing = 0;
+  chain = chain.catch(function(){}).then(function(){
+    out.images = {};
+    var names = Object.create(null);
+    Object.keys(out.docs).forEach(function(k){ imgRefsIn(out.docs[k].json).forEach(function(nm){ names[nm] = 1; }); });
+    var c2 = Promise.resolve();
+    Object.keys(names).forEach(function(nm){
+      c2 = c2.then(function(){
+        return kvGetStrict("img_" + nm).then(function(r){
+          if (r && r.d) out.images[nm] = r.d; else imgMissing++;
+        }, function(){ imgMissing++; });
+      });
+    });
+    return c2;
+  });
+  chain.catch(function(){}).then(function(){
+    try {
+      var blob = new Blob([JSON.stringify(out)], { type: "application/json" });
+      var url = URL.createObjectURL(blob);
+      downloadURL(url, "inknote_backup_" + new Date().toISOString().slice(0, 10) + ".json");
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+      var n = Object.keys(out.docs).length;
+      statusEl.textContent = "バックアップを保存しました(" + n + "件・写真" +
+        Object.keys(out.images || {}).length + "枚)" +
+        (failed ? " ※" + failed + "件は読めず含まれていません" : "") +
+        (imgMissing ? " ※写真" + imgMissing + "枚はこの端末に無く含まれていません" : "");
+    } catch (e) {
+      statusEl.textContent = "バックアップの保存に失敗しました";
+    }
   });
 }
+/* バックアップから戻す。
+   ★以前は「今あるノートを全部置き換える」作りで、復元そのものが
+     上書き事故の入口だった(古いバックアップを戻すと新しい内容が消える)。
+     今あるノートには一切触らず、足りないものを足す。
+       ・同じノートで中身も同じ → 何もしない
+       ・今は無いノート          → 戻す
+       ・同じノートで中身が違う  → 別のノートとして並べる(どちらも残す) */
 function importBackup(file) {
   var r = new FileReader();
   r.onload = function(){
-    try {
-      var data = JSON.parse(r.result);
-      if (!data || data.format !== "inknote-backup") throw new Error("bad format");
-      if (!confirm("バックアップを復元しますか?\n現在の全ノートは置き換えられます。")) return;
-      var chain = Promise.resolve();
-      Object.keys(data.docs || {}).forEach(function(k){
-        chain = chain.then(function(){ return kvSet(k, data.docs[k]); });
+    var data = null;
+    try { data = JSON.parse(r.result); } catch (e) { data = null; }
+    if (!data || data.format !== "inknote-backup" || !data.docs) {
+      alert("バックアップファイルを読み込めませんでした"); return;
+    }
+    var bPages = (data.index && data.index.pages) || [];
+    var titleOf = {}, folderOf = {};
+    bPages.forEach(function(bp){ titleOf[String(bp.id)] = bp.title; folderOf[String(bp.id)] = bp.folder || ""; });
+    var keys = Object.keys(data.docs).filter(function(k){ return k.indexOf("page_") === 0; });
+    if (!confirm("バックアップから " + keys.length + " 件を取り込みます。\n" +
+                 "・今あるノートは消えません\n" +
+                 "・中身が違うノートは、別のノートとして追加されます\n\nよろしいですか?")) return;
+    var d = new Date(data.savedAt || Date.now());
+    var tag = "(バックアップ " + (d.getMonth() + 1) + "/" + d.getDate() + ")";
+    var added = 0, same = 0, copied = 0, failedIn = 0, seq = 0;
+    (data.index && data.index.folders || []).forEach(function(f){ try { ensureFolder(f); } catch (e) {} });
+    /* 写真を先に戻す(本文より後だと、開いた時に写真が見つからない) */
+    var chain = persistImages(data.images || {}).then(function(ok){
+      if (!ok) throw new Error("images");
+    });
+    keys.forEach(function(k){
+      chain = chain.then(function(){
+        var doc = data.docs[k];
+        if (!doc || doc.json == null) return;
+        if (!contentWeight(doc.json).n) return;              // 空のノートは戻さない
+        var rawId = k.slice(5), id = normPid(rawId);
+        var title = titleOf[String(rawId)] || "ノート";
+        var folder = folderOf[String(rawId)] || "";
+        return kvGetStrict("page_" + id).then(function(cur){
+          var hasCur = !!(cur && cur.json != null && findPage(id));
+          if (hasCur && contentStamp(cur.json) === contentStamp(doc.json)) { same++; return; }
+          var body = {};
+          for (var q in doc) if (doc.hasOwnProperty(q)) body[q] = doc[q];
+          body.rev = 0; delete body.base; delete body.mbase; body.ts = Date.now();
+          /* 今も同じ番号のノートがある/削除済みの番号 → 新しい番号で足す */
+          var useNew = hasCur || isDeleted(id) || !!findPage(id);
+          var nid = id;
+          if (useNew) { nid = Date.now() + (++seq); while (findPage(nid)) nid++; }
+          else body.base = "restored";   // クラウドに同じ番号があっても上書きし合わない
+          return kvSet("page_" + nid, body).then(function(){
+            var ent = { id: nid, title: hasCur ? (title + tag) : title, ts: Date.now(), rev: 1 };
+            if (folder && folders.indexOf(folder) !== -1) ent.folder = folder;
+            pages.push(ent);
+            if (hasCur) copied++; else added++;
+          });
+        }).catch(function(){ failedIn++; });
       });
-      chain.then(function(){
-        pages = (data.index && data.index.pages) || [];
-        return saveIndex();
-      }).then(function(){
-        if (pages.length) {
-          var cur = data.index.currentId;
-          loadPage(findPage(cur) ? cur : pages[0].id);
-        } else addPage();
-        closePages();
-        statusEl.textContent = "復元完了";
-      });
-    } catch (e) { alert("バックアップファイルを読み込めませんでした"); }
+    });
+    var broke = false;
+    chain.catch(function(e){
+      if (e && e.message === "images") { failedIn = keys.length; throw e; }
+      /* ★想定外の失敗。以前は黙って「0件取り込みました」と出していた */
+      broke = true;
+    }).then(function(){
+      return saveIndex();
+    }).catch(function(e){
+      if (e && e.message === "images") {
+        showStoreTrouble("写真を戻せなかったため、取り込みを中止しました(何も変えていません)");
+      }
+    }).then(function(){
+      if (broke) showStoreTrouble("取り込みの途中で問題が起きました。戻せたのは一部だけです");
+      try { renderPageList(); updatePageBtn(); } catch (e) {}
+      if (cloudUser()) { try { syncAll(); } catch (e2) {} }
+      statusEl.textContent = "取り込みました(戻した " + added + "件 / 別ノートで追加 " + copied +
+        "件 / 同じ内容 " + same + "件)" + (failedIn ? " ※" + failedIn + "件は失敗" : "");
+    });
   };
   r.readAsText(file);
 }
@@ -13545,9 +14227,9 @@ function renderSheetPage(i) {
   g.setTransform(SCALE, 0, 0, SCALE, -ox * SCALE, -oy * SCALE);
   for (var k = 0; k < objects.length; k++) {
     var o = objects[k];
-    if (o.type === "image" && o.el) {
-      var im = o.el.querySelector("img");
-      if (im) { try { g.drawImage(im, o.x, o.y, o.w, o.h); } catch (e) {} }
+    if (o.type === "image" && (o.el || o._im)) {
+      var im = o.el ? o.el.querySelector("img") : o._im;
+      if (im && im.naturalWidth !== 0) { try { g.drawImage(im, o.x, o.y, o.w, o.h); } catch (e) {} }
     } else if (o.type === "text") {
       drawTextToCanvas(g, o);
     }
@@ -14027,7 +14709,7 @@ var HIRES_TILE = 2048;          // 1タイルの一辺(px)
    消えていた(14列のうち3列が出ない原因)。
    長辺8192・面積48メガピクセルまでに抑え、
    入らない分はページを増やす。 */
-var HIRES_MAXSIDE = 8192;       // 出来上がりの長辺の上限
+var HIRES_MAXSIDE = 8192;       // 出来上がりの長辺の上限(端末で確かめて下げることがある)
 var HIRES_MAXAREA = 48e6;       // 出来上がりの面積の上限(px)
 
 /* 1枚に入りきらない時は、内容を切らない位置で区切って複数ページにする。
@@ -14182,7 +14864,34 @@ function buildHiResCanvas(b, m, scale, done) {
   };
   step();
 }
+/* ★iPhone/iPad の canvas は面積 4096×4096 までで、超えると例外も出さずに
+   真っ白な絵になる(B5)。目的の大きさを実際に作って1点描き、読み戻せるか確かめる。
+   結果は覚えて使い回す。 */
+var canvasLimitChecked = false;
+function canvasFits(w, h) {
+  try {
+    var c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    var g = c.getContext("2d");
+    if (!g) return false;
+    g.fillStyle = "#ff0000";
+    g.fillRect(w - 1, h - 1, 1, 1);
+    var px = g.getImageData(w - 1, h - 1, 1, 1).data;
+    c.width = 1; c.height = 1; c.width = 0; c.height = 0;
+    return px[0] > 200 && px[3] > 200;
+  } catch (e) { return false; }
+}
+function checkCanvasLimit() {
+  if (canvasLimitChecked) return;
+  canvasLimitChecked = true;
+  var side = Math.floor(Math.sqrt(HIRES_MAXAREA));
+  if (canvasFits(Math.min(HIRES_MAXSIDE, side * 2), Math.floor(HIRES_MAXAREA / Math.min(HIRES_MAXSIDE, side * 2))) &&
+      canvasFits(HIRES_MAXSIDE, 16)) return;
+  HIRES_MAXSIDE = 4096; HIRES_MAXAREA = 16e6;          // iPhone/iPad など
+  if (!canvasFits(4096, 3900)) { HIRES_MAXSIDE = 2048; HIRES_MAXAREA = 4e6; }
+}
 function exportHiResSingle(b, margin) {
+  checkCanvasLimit();
   if (!b) { alert("書き出す内容がありません"); return; }
   var m = (margin == null) ? 40 : margin;
   var wW = b.w + m * 2, wH = b.h + m * 2;          // ノート座標での大きさ
@@ -14542,6 +15251,13 @@ function inkFreeRowNear(cv, fromBottomPx) {
    画像の読み込みは非同期なので、描く前に待たないと
    表や数式が間に合わず空白のまま出てしまう。 */
 function prepareRichSnapshots() {
+  /* 書き出しの間は手放さない(作った端から捨てると、表が文字に戻ってしまう)。
+     終わったら手放す(2分で自動的に戻る)。 */
+  richExportUntil = Date.now() + 120000;
+  setTimeout(function(){ if (Date.now() >= richExportUntil) freeRichSnapshots(); }, 121000);
+  if (!richSnapOK) {
+    setTimeout(function(){ statusEl.textContent = "この端末では表を画像として出せないため、文字で出します"; }, 50);
+  }
   var jobs = [];
   for (var i = 0; i < objects.length; i++) {
     var o = objects[i];
@@ -14698,6 +15414,46 @@ $("#exClose").onclick = closeExp;
     });
   }
 })();
+/* =========================================================
+   書き出し・バックアップの入口(用途別の4つ)
+   ---------------------------------------------------------
+   古いボタンは画面から外したが、処理はそのまま使う。
+   ★別のシートを続けて開く時は、前のシートが閉じ切るのを待つ
+     (重なると後の方が打ち消されて、何も起きないように見える)。
+========================================================= */
+function tapOld(id) { setTimeout(function(){ var b = document.getElementById(id); if (b) b.click(); }, 260); }
+$("#useOut").onclick = function(){
+  showSheet("紙・PDFにする(開いているノート)", [
+    { label: "📄 PDFにする", fn: function(){
+        setTimeout(function(){ closePages(); exportFmt = "pdf"; openExp(); }, 240);
+      } },
+    { label: "🖼 画像(PNG)にする", fn: function(){ tapOld("expPng"); } },
+    { label: "🖨 印刷する", fn: function(){
+        setTimeout(function(){ try { closePages(); } catch (e) {} setTimeout(printNow, 150); }, 240);
+      } },
+    { label: "📚 全ノートを1つのPDFに(重い・端末によっては失敗)", fn: function(){
+        setTimeout(function(){ closePages(); exportAllAsPdf(pages.map(function(p){ return p.id; })); }, 240);
+      } },
+    { label: "キャンセル", cancel: true }
+  ]);
+};
+$("#useAi").onclick = function(){
+  try { closePages(); } catch (e) {}
+  setTimeout(openAiExportSheet, 200);
+};
+$("#useIn").onclick = function(){ $("#expAiIn").click(); };
+$("#useBak").onclick = function(){
+  showSheet("バックアップ・ごみ箱", [
+    { label: "💾 バックアップを保存(全ノート・復元用)", fn: function(){ exportBackup(); } },
+    { label: "📖 読める形で保存(ブラウザで開ける .html)", fn: function(){ exportReadableHtml(); } },
+    /* ファイル選択は「指で押した流れ」の中で開く必要があるので、待たずに呼ぶ */
+    { label: "📥 バックアップから取り込む(今あるノートは消えません)",
+      fn: function(){ $("#backupInput").click(); } },
+    { label: "🗑 ごみ箱(削除したノートを戻す)",
+      fn: function(){ setTimeout(openTrashSheet, 240); } },
+    { label: "キャンセル", cancel: true }
+  ]);
+};
 $("#expPng").onclick = function(){ closePages(); exportFmt = "png"; openExp(); };
 $("#expMd").onclick = function(){
   closeExp();
@@ -15297,20 +16053,20 @@ function bindRichBar() {
     var cur = currentTheme();
     var items = [];
     if (cur) {
-      items.push({ label: "🔖 単元にする(テーマ: " + cur.anch + ")",
+      items.push({ label: "🔖 ブックマークにする(見出し: " + cur.anch + ")",
                    fn: function(){ setAnchorFromText(o, name, 2, cur.id); } });
     }
-    items.push({ label: "📑 新しいテーマにする",
+    items.push({ label: "📑 新しい見出しにする",
                  fn: function(){ setAnchorFromText(o, name, 1, null); } });
     var others = themeAnchors();
     if (others.length > (cur ? 1 : 0)) {
-      items.push({ label: "🔖 別のテーマの単元にする…", fn: function(){
+      items.push({ label: "🔖 別の見出しのブックマークにする…", fn: function(){
           var sub = others.map(function(t){
             return { label: "📑 " + t.name,
                      fn: function(){ setAnchorFromText(o, name, 2, t.o.id); } };
           });
           sub.push({ label: "キャンセル", cancel: true });
-          showSheet("どのテーマに入れますか", sub);
+          showSheet("どの見出しに入れますか", sub);
         } });
     }
     items.push({ label: "キャンセル", cancel: true });
@@ -15326,7 +16082,7 @@ function bindRichBar() {
     inkDirty = true;
     scheduleSave();
     renderTocPanel();
-    statusEl.textContent = (lv === 1 ? "テーマにしました: " : "単元にしました: ") + name;
+    statusEl.textContent = (lv === 1 ? "見出しにしました: " : "ブックマークにしました: ") + name;
   }
 
   /* ★リッチバーの上で指を下ろした時点で、OS標準メニューや
@@ -17123,7 +17879,7 @@ function tocReorderTheme(fromId, toId) {
   order.splice(ti, 0, moved);
   for (var k = 0; k < order.length; k++) order[k].themeSeq = k;
   scheduleSave(); renderTocPanel(); renderPosList(); updateColBar();
-  statusEl.textContent = "テーマの順番を変えました";
+  statusEl.textContent = "見出しの順番を変えました";
 }
 
 function renderTocPanel() {
@@ -17135,7 +17891,7 @@ function renderTocPanel() {
   if (!themes.length && !entries.length) {
     var empty = document.createElement("div");
     empty.style.cssText = "color:var(--ui-dim);font-size:12px;text-align:center;padding:22px 8px;line-height:1.8";
-    empty.innerHTML = "🔖 まだ見出しがありません<br><span style='font-size:11px'>テーマを作る: 文字を選んで 🔖 →「新しいテーマ」<br>単元を足す: ☆ で名前を付けて記憶</span>";
+    empty.innerHTML = "🔖 まだ見出しがありません<br><span style='font-size:11px'>見出しを作る: 文字を選んで 🔖 →「新しい見出し」<br>ブックマークを足す: ☆ で名前を付けて記憶</span>";
     host.appendChild(empty);
     return;
   }
@@ -17184,11 +17940,11 @@ function renderTocPanel() {
     ed.addEventListener("click", function(ev){ ev.stopPropagation(); askAnchorName(t.o, 1); });
     var rm = document.createElement("button");
     rm.className = "toc-btn del"; rm.textContent = "🗑";
-    rm.title = "テーマをやめる(中身は消えません)";
+    rm.title = "見出しをやめる(中身は消えません)";
     rm.addEventListener("click", function(ev){
       ev.stopPropagation();
-      showSheet("テーマ「" + t.name + "」をやめますか", [
-        { label: "📄 テーマ指定だけ外す(文字はそのまま残る)", fn: function(){
+      showSheet("見出し「" + t.name + "」をやめますか", [
+        { label: "📄 見出し指定だけ外す(文字はそのまま残る)", fn: function(){
             pushUndo();
             /* このテーマに属していた単元は未分類へ戻す
                (親が消えたのに所属だけ残ると、目次から辿れなくなるため) */
@@ -17199,7 +17955,7 @@ function renderTocPanel() {
             }
             t.o.anch = null; t.o.anchLv = null; t.o.anchTheme = null;
             inkDirty = true; scheduleSave(); renderTocPanel(); renderPosList(); updateColBar();
-            setTimeout(function(){ statusEl.textContent = "テーマをやめました(単元は未分類へ)"; }, 40);
+            setTimeout(function(){ statusEl.textContent = "見出しをやめました(ブックマークは未分類へ)"; }, 40);
           } },
         { label: "キャンセル", cancel: true }
       ]);
@@ -17240,7 +17996,7 @@ function renderTocPanel() {
     if (!kids.length) {
       var e2 = document.createElement("div");
       e2.className = "toc-empty";
-      e2.textContent = "(単元はまだありません)";
+      e2.textContent = "(ブックマークはまだありません)";
       host.appendChild(e2);
     }
     for (var m = 0; m < kids.length; m++) host.appendChild(unitRow(kids[m]));
@@ -17272,7 +18028,9 @@ function renderTocPanel() {
   for (var s2 = 0; s2 < rest.length; s2++) host.appendChild(unitRow(rest[s2]));
 }
 
-function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
+/* ★「目次」と「ブックマーク」で画面が2つに分かれていたのを1つにする。
+   どちらから開いても同じ一覧(見出し → ブックマーク)が出る。 */
+function openToc() { openPos(); }
 /* =========================================================
    目次のドラッグ移動(指での操作)
    ---------------------------------------------------------
@@ -17324,8 +18082,8 @@ function openToc() { renderTocPanel(); $("#tocPanel").classList.add("show"); }
       host.classList.add("dragging");
       if (navigator.vibrate) { try { navigator.vibrate(12); } catch (x) {} }
       statusEl.textContent = (d.type === "theme")
-        ? "テーマを動かしています(離した所へ入ります)"
-        : "単元を動かしています(テーマの行へ落とすと移ります)";
+        ? "見出しを動かしています(離した所へ入ります)"
+        : "ブックマークを動かしています(見出しの行へ落とすと移ります)";
     }, 420);
   }, true);
   document.addEventListener("pointermove", function(e){
@@ -17501,13 +18259,13 @@ $("#miniTocBtn").onclick = function(){
      テーマを場所で決める設計をやめたので、対象は選択したもの。 */
 function makeSelectedTheme() {
   if (sel.length !== 1) {
-    statusEl.textContent = "テーマにしたいものを1つ選んでから実行してください";
+    statusEl.textContent = "見出しにしたいものを1つ選んでから実行してください";
     return;
   }
   var o = sel[0];
   var def = o.anch || (o.type === "text"
-    ? String(o.text || "").split("\n")[0].slice(0, 40) : "テーマ");
-  askText("テーマの名前", def || "テーマ", function(name){
+    ? String(o.text || "").split("\n")[0].slice(0, 40) : "見出し");
+  askText("見出しの名前", def || "見出し", function(name){
     if (name == null) return;
     name = String(name).trim();
     if (!name) return;
@@ -17516,7 +18274,7 @@ function makeSelectedTheme() {
     ensureThemeSeq(o);
     lastThemeId = o.id;
     inkDirty = true; scheduleSave(); renderTocPanel();
-    statusEl.textContent = "テーマにしました: " + name;
+    statusEl.textContent = "見出しにしました: " + name;
   });
 }
 $("#tidyWidthAllBtn").onclick = function(){ closeMenu(); setTimeout(tidyWidthsAll, 120); };
@@ -17828,7 +18586,7 @@ function openMoreSheet() {
        でき、⋯の項目が増えて画面からはみ出す原因になっていた。
        まだテーマでない物を「テーマにする」入口だけ残す。 */
   if (sel.length === 1 && sel[0].type === "text" && sel[0].anchLv !== 1) {
-    items.push({ label: "📑 これをテーマにする", fn: makeSelectedTheme });
+    items.push({ label: "📑 これを見出しにする", fn: makeSelectedTheme });
   }
   if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
   if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
@@ -18041,7 +18799,7 @@ function nameGroupAsUnit(g) {
     renderGroupPanel(); renderTocPanel();
     if (window.renderPosList) renderPosList();
     setTimeout(function(){
-      statusEl.textContent = "位置「" + name + "」を登録しました(☆単元の整理でテーマへ割り当て)";
+      statusEl.textContent = "位置「" + name + "」を登録しました(☆ブックマークで見出しへ割り当て)";
     }, 40);
   });
 }
@@ -18504,7 +19262,18 @@ function loadFirebase() {
   fbReady = loadScriptUrl("https://www.gstatic.com/firebasejs/" + v + "/firebase-app-compat.js")
     .then(function(){ return loadScriptUrl("https://www.gstatic.com/firebasejs/" + v + "/firebase-auth-compat.js"); })
     .then(function(){ return loadScriptUrl("https://www.gstatic.com/firebasejs/" + v + "/firebase-firestore-compat.js"); })
-    .then(function(){ window.firebase.initializeApp(FIREBASE_CONFIG); });
+    .then(function(){
+      window.firebase.initializeApp(FIREBASE_CONFIG);
+      /* ★以前の版が有効にしていた Firestore 側の保存領域を、一度だけ片付ける(C2)。
+         ほかの操作より前でないと呼べないので、ここで行う。失敗しても続ける。 */
+      var flag = "inknote_fs_cache_cleared";
+      var done = false;
+      try { done = (localStorage.getItem(flag) === "1"); } catch (e) {}
+      if (done) return;
+      return window.firebase.firestore().clearPersistence().then(function(){
+        try { localStorage.setItem(flag, "1"); } catch (e) {}
+      }).catch(function(){});
+    });
   return fbReady;
 }
 function cloudUser() {
@@ -18512,16 +19281,13 @@ function cloudUser() {
 }
 var persistenceTried = false;
 function fdb() {
-  var db = window.firebase.firestore();
-  /* オフライン対応を有効にする。圏外で書いた分は通信が戻ると
-     Firestoreが自動で送ってくれる(自前の再送処理が要らなくなる)。 */
-  if (!persistenceTried) {
-    persistenceTried = true;
-    try {
-      db.enablePersistence({ synchronizeTabs: true }).catch(function(){});
-    } catch (e) {}
-  }
-  return db;
+  /* ★Firestore 側の保存領域(enablePersistence)は使わない(C2)。
+     ・手元の正は端末の保存領域(IndexedDB)で、そこに全ノートがある。
+       Firestore 側にも全文書の写しを持つと、260MB規模で容量とCPUを倍使う。
+     ・送信は条件つきの取引で行い、取引はもともと通信中にしか成立しない。
+       圏外の間は送らずに待ち、つながったら送る作りなので、写しは要らない。
+     ・圏外で古い写しを読んで判定すると、判断を誤る元にもなる。 */
+  return window.firebase.firestore();
 }
 
 function attachAuth() {
@@ -18792,132 +19558,1089 @@ function contentStamp(json) {
 /* ★端末の時計に頼らない「版番号」で新旧を決める。
    時計は端末ごとにずれるため、時刻で比べると「時計が進んでいる端末の
    古い内容」が勝ってしまい、他の端末の新しい編集を消してしまう。 */
-function cloudPushPage(id, force) {
-  var u = cloudUser();
-  if (!u) return Promise.resolve();
-  /* ★最終防衛線: syncAll()がクラウドの最新を取り込んでいる最中は、
-     どの経路から呼ばれても「ただの送信」は行わない。
-     呼び出し元それぞれにガードを置いても、経路が増えるたびに
-     入れ忘れが起きるので、ここで一律に止める。
-     force付き(=この端末の未送信の編集を守るための意図的な送信)は、
-     取り込みで消されないために必要なので通す。 */
-  if (syncing && !force) return Promise.resolve();
-  var base = pageDocRef(id);
-  return kvGet("page_" + id).then(function(payload){
-    if (!payload) return;
-    return base.get().then(function(snap){
-      var rd = (snap && snap.exists) ? (snap.data() || {}) : {};
-      var remoteRev = rd.rev || 0;
-      var localRev = payload.rev || 0;
-      var stamp = contentStamp(payload.json);
-
-      // 中身が同じなら送らない(開いただけで上書きするのを防ぐ)
-      if (!force && rd.stamp && rd.stamp === stamp) return;
-
-      /* ★空(またはほぼ空)で、中身のあるクラウド版を塗り潰さない。
-         別の端末でまだ同期していない空のノートが、
-         書き込み済みのノートを消してしまう事故をここで止める。
-         版番号は進んでいても、中身が消えるなら送らない。 */
-      if (!force && rd.json) {
-        var rw = contentWeight(rd.json), lw = contentWeight(payload.json);
-        var wipes = (lw.n === 0 && rw.n > 0) ||
-                    (rw.n >= 3 && lw.n <= rw.n * 0.2) ||
-                    (rw.chars >= 200 && lw.chars <= rw.chars * 0.2);
-        if (wipes) {
-          setTimeout(function(){
-            statusEl.textContent =
-              "⚠ クラウドの中身を消す送信を止めました(" + rw.n + "個 → " + lw.n + "個)";
-          }, 50);
-          return;
-        }
-      }
-
-      /* ★相手の方が進んでいる版なら、こちらの古い内容で塗り潰さない。
-         先に取り込んでもらう(この端末に未保存の編集がある時だけ上書きする)。 */
-      /* ★この端末がまだ見ていない新しい版がクラウドにある場合は、
-         たとえこの端末で何か編集していても、黙って上書きしない。
-         ここを通していたため「iPadで何か操作しただけで、スマホの
-         新しい内容がiPadの古い内容に置き換わる」ことが起きていた。
-         この端末の内容は控えに残してから、新しい方を取り込む。 */
-      /* ★今この端末で書いている最中(未保存の変更がある)なら、
-         取り込みで消さずに、まず書いた分を確定させてから送る。
-         これをしないと、貼り付けた直後に古い版へ戻されてしまう。 */
-      if (!force && remoteRev > localRev && id === currentId &&
-          (dirtySinceSave || unsyncedEdits)) {
-        /* ★ここは「クラウドに新しい版があるのに、この端末の編集を優先して
-           上書きする」経路。以前は相手の新しい内容を控えも取らずに
-           消していたため、片方の端末の作業が黙って失われ、しかも
-           どちらの端末からも復元できなかった。
-           上書きする前に、相手の版を必ず控えに残す。 */
-        return keepRemoteVersion(id, "他の端末の版(この端末の編集で置き換え)")
-          .then(function(){ return Promise.resolve(saveDocNow()); })
-          .then(function(){
-            setTimeout(function(){
-              statusEl.textContent =
-                "他の端末にも新しい版がありました(⋮→「以前の版に戻す」から取り出せます)";
-            }, 60);
-            return cloudPushPage(id, true);        // 書いた内容を優先して送る
-          });
-      }
-      if (!force && remoteRev > localRev) {
-        var wasDirty = (id === currentId && dirtySinceSave);
-        return keepVersion(id, "他の端末の新しい版を取り込む前").then(function(){
-          return onRemotePageChanged(id, rd.ts || 0, remoteRev, rd.stamp || "", true);
-        }).then(function(){
-          dirtySinceSave = false;      // 控えに残したので、この端末の未保存分は畳む
-          setSyncStatus("他の端末の新しい内容を取り込みました");
-          if (wasDirty) {
-            setTimeout(function(){
-              statusEl.textContent =
-                "この端末の編集は ⋮→「以前の版に戻す」から取り出せます";
-            }, 60);
-          }
-        });
-      }
-
-      var newRev = Math.max(remoteRev, localRev) + 1;
-      payload.rev = newRev;
-      var str = JSON.stringify(payload);
-      var n = Math.max(1, Math.ceil(str.length / CLOUD_CHUNK));
-      var batch = fdb().batch();
-      batch.set(base, { ts: payload.ts || Date.now(), rev: newRev, stamp: stamp, chunks: n });
-      for (var i = 0; i < n; i++)
-        batch.set(base.collection("data").doc(String(i)), { s: str.substr(i * CLOUD_CHUNK, CLOUD_CHUNK) });
-      return batch.commit().then(function(){
-        if (id === currentId) pageRev = newRev;   // 開いているページなら覚え直す
-        return kvSet("page_" + id, payload);      // 版番号を手元にも残す
-      }).then(function(r){
-        // ★ここまで来て初めて「送り終わった」。以後は取り込んでよい
-        if (id === currentId) unsyncedEdits = false;
-        return r;
+/* =========================================================
+   同期の中核(v23) — どちらの編集も消さない
+   ---------------------------------------------------------
+   ★これまでは「版番号が大きい方が勝つ」だけで決めていた。
+     番号1つでは「両方の端末が別々に編集した」ことを見分けられず、
+     必ずどちらかが負けて消えていた。控えに残す工夫を重ねても、
+     結局は「以前の版に戻す」「消えたノートを探す」で掘り出す必要があった。
+   ★考え方を変える。各ノートについて3つを比べる。
+       土台  = この端末が最後にクラウドと一致した時の中身(指紋で覚える)
+       手元  = いまこの端末にある中身
+       相手  = いまクラウドにある中身
+     手元だけ変わった → 送る
+     相手だけ変わった → 受け取る
+     両方変わった     → どちらも消さない。相手の版を本体として受け取り、
+                         この端末の版は「別のノート」として一覧に残す。
+   ★送る・受け取る・削除の入口はすべてここを通す。
+     以前は入口ごとに判定が少しずつ違い、「優先して送る(force)」が
+     8か所もあって、そこが判定を素通りしていた。
+========================================================= */
+/* =========================================================
+   写真を本文から分けて持つ(v24)
+   ---------------------------------------------------------
+   ★これまでは貼った写真を文字に変換して本文の中に直接書き込んでいた。
+     写真15枚のノートは約20MBになり、1文字直すたびに20MBを保存し、
+     20MBを送っていた(最初からの作り)。
+   ★写真は中身から決まる名前(指紋)を付けて別にしまい、
+     本文には "img:<名前>" とだけ書く。
+       端末  : img_<名前> = { d: 写真の中身, at: しまった時刻 }
+       クラウド: 各ノートの data の中に img_<名前>(見出し)と img_<名前>_<番号>(中身)
+                 (新しい置き場を作らないので、Firestore のルールの変更は不要)
+     写真は貼った時に1回だけ保存・送信され、本文は数十KBになる。
+   ★画面の上(objects)では、これまでどおり写真の中身をそのまま持つ。
+     変換するのは「保存・送信する時」と「読み込む時」だけ。
+     取り消し用の控え(serializeScene)は今までどおりで、触らない。
+   ★名前が付いているのに写真が見つからない時は、名前をそのまま残す
+     (保存しても名前は消えない。後で写真が届けば表示される)。
+========================================================= */
+var IMG_FMT = 2;                        // この版が読める本文の形式
+var IMG_INLINE_MAX = 2048;              // これより小さい写真は本文に入れたまま
+var imgHashCache = (typeof Map !== "undefined") ? new Map() : null;   // 写真の中身 → 名前
+var imgSavedLocal = Object.create(null);    // この起動中に端末へしまい済みの名前
+var imgPending = Object.create(null);       // 直近の serializeForSave で見つけた 名前 → 中身
+function isImgRef(s) { return typeof s === "string" && s.indexOf("img:") === 0; }
+function imgNameOf(src) {
+  if (imgHashCache) { var c = imgHashCache.get(src); if (c) return c; }
+  var h1 = 0, h2 = 2166136261;
+  for (var i = 0; i < src.length; i++) {
+    var ch = src.charCodeAt(i);
+    h1 = (h1 * 31 + ch) | 0;
+    h2 = Math.imul(h2 ^ ch, 16777619);
+  }
+  var name = src.length.toString(36) + "-" + (h1 >>> 0).toString(36) + "-" + (h2 >>> 0).toString(36);
+  if (imgHashCache) imgHashCache.set(src, name);
+  return name;
+}
+function bigDataUrl(v) {
+  return typeof v === "string" && v.length > IMG_INLINE_MAX && v.charCodeAt(0) === 100 /* d */ &&
+         v.slice(0, 5) === "data:";
+}
+/* 保存・送信用の本文。写真は名前に置き換える(見つけた写真は imgPending に控える) */
+function serializeForSave(list) {
+  imgPending = Object.create(null);
+  return JSON.stringify(list || objects, function(k, v){
+    if (k === "el" || k === "img" || k.charAt(0) === "_") return undefined;
+    if (k === "src" && bigDataUrl(v)) {
+      var name = imgNameOf(v);
+      imgPending[name] = v;
+      return "img:" + name;
+    }
+    return v;
+  });
+}
+/* 本文に出てくる写真の名前を全部拾う */
+var IMG_REF_RE = /"img:([0-9a-z]+-[0-9a-z]+-[0-9a-z]+)"/g;
+function imgRefsIn(json) {
+  var out = [], seen = Object.create(null), m;
+  var s = String(json || "");
+  IMG_REF_RE.lastIndex = 0;
+  while ((m = IMG_REF_RE.exec(s))) { if (!seen[m[1]]) { seen[m[1]] = 1; out.push(m[1]); } }
+  return out;
+}
+/* 写真を端末にしまう。全部しまえた時だけ true */
+function persistImages(map) {
+  var names = Object.keys(map || {}), chain = Promise.resolve(true);
+  names.forEach(function(nm){
+    if (imgSavedLocal[nm]) return;
+    chain = chain.then(function(ok){
+      if (!ok) return false;
+      return kvSet("img_" + nm, { d: map[nm], at: Date.now() }).then(function(w){
+        if (w) imgSavedLocal[nm] = true;
+        return w;
       });
     });
   });
+  return chain;
+}
+/* 端末から写真を出す(無ければ null。読めない時も null) */
+function loadImageLocal(nm) {
+  return kvGet("img_" + nm).then(function(r){ return (r && r.d) ? r.d : null; });
+}
+/* 名前を写真の中身に戻した本文を作る。見つからない名前はそのまま残す。
+   pid を渡すと、端末に無い写真をクラウドから取り寄せる。 */
+function resolveImageRefs(json, pid) {
+  var names = imgRefsIn(json);
+  if (!names.length) return Promise.resolve({ json: json, missing: [] });
+  var found = Object.create(null), missing = [];
+  var chain = Promise.resolve();
+  names.forEach(function(nm){
+    chain = chain.then(function(){
+      return loadImageLocal(nm).then(function(d){
+        if (d) { found[nm] = d; imgSavedLocal[nm] = true; return; }
+        if (pid == null || !cloudUser()) { missing.push(nm); return; }
+        return fetchCloudImage(pid, nm).then(function(d2){
+          if (d2) { found[nm] = d2; return persistImages((function(){ var m = {}; m[nm] = d2; return m; })()); }
+          missing.push(nm);
+        }, function(){ missing.push(nm); });
+      });
+    });
+  });
+  return chain.then(function(){
+    var out = String(json).replace(IMG_REF_RE, function(all, nm){
+      return found[nm] ? JSON.stringify(found[nm]) : all;
+    });
+    return { json: out, missing: missing };
+  });
+}
+
+/* ---------- クラウドの写真 ---------- */
+/* "ノート:名前" → クラウドにあると確かめた時刻。
+   ★10分で忘れる。他の端末が使わなくなった写真を片付けた後に、
+     「あるはず」と思い込んで置かずに本文だけ送ることを防ぐ(片付けは30分以上たったものだけ)。 */
+var cloudImgKnown = Object.create(null);
+var CLOUD_IMG_TTL = 10 * 60000;
+function cloudImgFresh(key) { return cloudImgKnown[key] && Date.now() - cloudImgKnown[key] < CLOUD_IMG_TTL; }
+function cloudImgHeadRef(pid, nm) { return pageDocRef(pid).collection("data").doc("img_" + nm); }
+function fetchCloudImage(pid, nm) {
+  var col = pageDocRef(pid).collection("data");
+  return col.doc("img_" + nm).get().then(function(snap){
+    if (!snap.exists) return null;
+    var head = snap.data() || {};
+    var gets = [];
+    for (var i = 0; i < (head.chunks || 0); i++) gets.push(col.doc("img_" + nm + "_" + i).get());
+    return Promise.all(gets).then(function(ss){
+      var s = "";
+      for (var j = 0; j < ss.length; j++) { if (!ss[j].exists) return null; s += ss[j].data().s; }
+      /* 名前は中身から決まるので、取り寄せた中身が正しいかを名前で確かめられる */
+      if (imgNameOf(s) !== nm) return null;
+      cloudImgKnown[pid + ":" + nm] = Date.now();
+      return s;
+    });
+  });
+}
+/* 本文が使う写真を、クラウドのそのノートに置く(無いものだけ)。
+   ★本文の見出しを差し替える前に置く。受け取った端末が、
+     本文に書かれた名前の写真を必ず取り寄せられるようにするため。 */
+function uploadImagesFor(pid, json) {
+  var names = imgRefsIn(json), chain = Promise.resolve();
+  names.forEach(function(nm){
+    var key = pid + ":" + nm;
+    if (cloudImgFresh(key)) return;
+    chain = chain.then(function(){
+      return cloudImgHeadRef(pid, nm).get().then(function(snap){
+        if (snap.exists) { cloudImgKnown[key] = Date.now(); return; }
+        return loadImageLocal(nm).then(function(d){
+          if (!d) return;                            // 手元にも無い → 置けない(名前は残る)
+          var parts = splitByBytes(d, CHUNK_BYTES);
+          var col = pageDocRef(pid).collection("data");
+          var c2 = Promise.resolve(), i = 0;
+          while (i < parts.length) {
+            var st = i, bytes = 0;
+            while (i < parts.length && i - st < BATCH_OPS &&
+                   (i === st || bytes + utf8Len(parts[i]) <= BATCH_BYTES)) { bytes += utf8Len(parts[i]); i++; }
+            (function(from, to){
+              c2 = c2.then(function(){
+                var bt = fdb().batch();
+                for (var k = from; k < to; k++) bt.set(col.doc("img_" + nm + "_" + k), { s: parts[k] });
+                return bt.commit();
+              });
+            })(st, i);
+          }
+          /* 中身を全部置いてから見出しを置く(見出しがあれば中身は揃っている) */
+          return c2.then(function(){
+            return col.doc("img_" + nm).set({ chunks: parts.length, bytes: utf8Len(d), at: Date.now() });
+          }).then(function(){ cloudImgKnown[key] = Date.now(); });
+        });
+      });
+    });
+  });
+  return chain;
+}
+/* 受け取った本文が使う写真のうち、端末に無いものを取り寄せる(取れなくても先へ進む) */
+function fetchMissingImages(pid, json) {
+  var names = imgRefsIn(json), chain = Promise.resolve();
+  names.forEach(function(nm){
+    chain = chain.then(function(){
+      return loadImageLocal(nm).then(function(d){
+        if (d) return;
+        return fetchCloudImage(pid, nm).then(function(d2){
+          if (!d2) return;
+          var m = {}; m[nm] = d2;
+          return persistImages(m);
+        }, function(){});
+      });
+    });
+  });
+  return chain;
+}
+
+/* ---------- 端末の写真の片付け ---------- */
+/* どのノート・以前の版・ごみ箱からも使われていない写真を消す。
+   ★1件でも読めなかったら何も消さない(使っているのに消す、が一番まずい)。
+   ★しまってから1日たっていない写真は消さない(保存の途中のものを消さないため)。 */
+function gcLocalImages() {
+  return kvKeys().then(function(keys){
+    var imgs = [], holders = [];
+    keys.forEach(function(k){
+      k = String(k);
+      if (k.indexOf("img_") === 0) imgs.push(k);
+      else if (k.indexOf("page_") === 0 || k.indexOf("ver_") === 0 || k.indexOf("trash_") === 0) holders.push(k);
+    });
+    if (!imgs.length) return 0;
+    var used = Object.create(null), chain = Promise.resolve();
+    holders.forEach(function(k){
+      chain = chain.then(function(){
+        return kvGetStrict(k).then(function(v){
+          if (!v) return;
+          var j = (k.indexOf("trash_") === 0) ? (v.payload && v.payload.json) : v.json;
+          imgRefsIn(j).forEach(function(nm){ used[nm] = 1; });
+        });
+      });
+    });
+    return chain.then(function(){
+      var limit = Date.now() - 86400000, n = 0, c2 = Promise.resolve();
+      imgs.forEach(function(k){
+        var nm = k.slice(4);
+        if (used[nm]) return;
+        c2 = c2.then(function(){
+          return kvGetStrict(k).then(function(r){
+            if (r && (r.at || 0) < limit) { n++; delete imgSavedLocal[nm]; return kvDel(k); }
+          });
+        });
+      });
+      return c2.then(function(){ return n; });
+    });
+  }).catch(function(){ return 0; });       // 途中で読めなければ、何も消さずに終える
+}
+
+/* ---------- 開いていないノートの書き出し用 ---------- */
+/* 写真の名前を中身に戻し、描くための画像も用意したオブジェクトの一覧を返す */
+function decodeListImages(list) {
+  var waits = [];
+  list.forEach(function(o){
+    if (o.type !== "image" || !o.src || isImgRef(o.src) || o.el) return;
+    waits.push(new Promise(function(res){
+      var im = new Image(), done = false;
+      var fin = function(){ if (!done) { done = true; res(); } };
+      im.onload = function(){ o._im = im; fin(); };
+      im.onerror = fin;
+      setTimeout(fin, 4000);
+      im.src = o.src;
+      if (im.complete && im.naturalWidth) { o._im = im; fin(); }
+    }));
+  });
+  return Promise.all(waits).then(function(){ return list; });
+}
+
+var pageBase = null;            // 開いているノートの「土台」の指紋
+var pageMBase = null;           // 同じく、ブックマーク側の土台
+var pageMetaTs = 0;             // 上の3つ(rev/base/mbase)を最後に変えた時刻
+/* =========================================================
+   同期の記録と指紋を、本文から切り離す(A5)
+   ---------------------------------------------------------
+   ★1ノートが20MB近くあり、以前は保存1回ごとに
+     「全体の文字列化・解析・指紋」を合計9回ほど行い、
+     送信の後には記録(rev/base)を書き換えるためだけに本文20MBを書き直していた。
+     スマホでは数秒固まり、メモリ不足で落ちる原因にもなっていた。
+   ★同期の記録は小さな別キー meta_<id> = {rev, base, mbase, mts} に書く。
+     本文側にも同じ記録はあり、mts(書いた時刻)が新しい方を使う。
+   ★指紋は保存の時に1回だけ取り、本文と一緒に持つ(stamp)。
+     本文が書き換わっていないことを「長さ」と「数か所の抜き取り」で確かめてから使い、
+     合わなければ取り直す(取り違えて古い指紋を使うことが無いように)。
+========================================================= */
+function sampleOf(str) {
+  var n = str.length, m = n >> 1;
+  return str.slice(0, 48) + "|" + str.slice(Math.max(0, m - 24), m + 24) + "|" + str.slice(Math.max(0, n - 48));
+}
+function storedStamp(rec) {
+  if (!rec || rec.json == null) return null;
+  var j = String(rec.json);
+  if (rec.stamp && rec.slen === j.length && rec.ssamp === sampleOf(j)) return rec.stamp;
+  return contentStamp(j);
+}
+function putStamp(rec, stamp) {
+  var j = String(rec.json);
+  rec.stamp = (stamp != null) ? stamp : contentStamp(j);
+  rec.slen = j.length;
+  rec.ssamp = sampleOf(j);
+  return rec.stamp;
+}
+/* 本文を読み、台帳の方が新しければ同期の記録を差し替えて返す。
+   本文が読めない時は失敗を返す(「無い」と区別するため)。 */
+function readPageRec(nid) {
+  return kvGetStrict("page_" + nid).then(function(rec){
+    return kvGet("meta_" + nid).then(function(m){
+      if (rec && m && (m.mts || 0) > (rec.mts || 0)) {
+        rec.rev = m.rev; rec.mts = m.mts;
+        if (m.base != null) rec.base = m.base; else delete rec.base;
+        if (m.mbase != null) rec.mbase = m.mbase; else delete rec.mbase;
+      }
+      return rec;
+    });
+  });
+}
+var myPushes = {};              // この端末が最後に送った版(ノートごと)
+/* =========================================================
+   送信の大きさと失敗の記録
+   ---------------------------------------------------------
+   ★Firestore には、1文書 1MiB・1回の書き込み 約10MiB の上限がある。
+     以前はチャンクを「文字数」で切っていたため、日本語(1文字3バイト)が
+     多いと1文書の上限を超え、10MBを超えるノートは1回の書き込みに
+     収まらず、どちらも永久に失敗していた。
+     しかも失敗は見えず、保存のたびに同じ大きな送信を繰り返していた。
+   ★チャンクはバイト数で切る。上限を超えるノートは送る前に止め、
+     「大きすぎて同期できない」と記録して見せる。
+     失敗したら間隔を倍々に空ける(同じ中身なら送り直さない)。
+========================================================= */
+/* 本文は小分けにして送るので、1回の書き込みの上限(約10MiB)には縛られない。
+   ここはクラウドに置く大きさの目安(これを超えるノートは送らずに知らせる)。 */
+var PUSH_LIMIT_BYTES = (typeof window !== "undefined" && window.__pushLimitBytes) || 150 * 1024 * 1024;
+var BATCH_BYTES = 4 * 1024 * 1024;        // 小分けの書き込み1回あたり
+var BATCH_OPS = 400;
+var STALE_SET_MS = 30 * 60000;            // これより古い残骸だけを片付ける
+var CHUNK_BYTES = 900 * 1024;             // 1文書の安全な上限
+var pushFail = {};                        // ノートごと: { stamp, n, next, why }
+function utf8Len(str) {
+  /* Blob が使えればそれで、無ければ数えて求める */
+  try { if (typeof Blob !== "undefined") return new Blob([str]).size; } catch (e) {}
+  var n = 0;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    if (c < 0x80) n += 1; else if (c < 0x800) n += 2;
+    else if (c >= 0xD800 && c <= 0xDBFF) { n += 4; i++; } else n += 3;
+  }
+  return n;
+}
+/* 文字列をバイト数の上限で切る(文字の途中では切らない) */
+function splitByBytes(str, maxBytes) {
+  var out = [], start = 0, bytes = 0;
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i), w;
+    if (c < 0x80) w = 1; else if (c < 0x800) w = 2;
+    else if (c >= 0xD800 && c <= 0xDBFF) w = 4; else if (c >= 0xDC00 && c <= 0xDFFF) w = 0; else w = 3;
+    if (bytes + w > maxBytes && i > start && !(c >= 0xDC00 && c <= 0xDFFF)) {
+      out.push(str.slice(start, i)); start = i; bytes = 0;
+    }
+    bytes += w;
+  }
+  out.push(str.slice(start));
+  return out;
+}
+/* このノートは今送ってよいか(失敗が続いている時は間を空ける) */
+function pushAllowed(nid, stamp) {
+  var f = pushFail[String(nid)];
+  if (!f) return true;
+  /* 大きすぎた時は「同じ中身なら送らない」だけ。中身が変われば(減らしたなど)すぐ送る。
+     時間で待たせると、減らしたのに送られないままになる。 */
+  if (f.why === "too-large") return f.stamp !== stamp;
+  return Date.now() >= (f.next || 0);
+}
+function notePushFail(nid, stamp, why) {
+  var k = String(nid), f = pushFail[k] || { n: 0 };
+  f.n = (f.stamp === stamp) ? f.n + 1 : 1;
+  f.stamp = stamp; f.why = why;
+  f.next = Date.now() + Math.min(10 * 60000, 5000 * Math.pow(2, f.n - 1));   // 5秒→10秒→…最長10分
+  pushFail[k] = f;
+  try { onPushFailChanged(nid, f); } catch (e) {}
+}
+function clearPushFail(nid) {
+  if (pushFail[String(nid)]) {
+    delete pushFail[String(nid)];
+    try { onPushFailChanged(nid, null); } catch (e) {}
+  }
+}
+var recQueues = {};             // ノートごとに順番待ち(同じノートを同時に処理しない)
+function recEnqueue(id, fn) {
+  var k = String(id);
+  /* ★1件が返ってこなくても、そのノートの同期が永久に止まらないようにする。
+     60秒で見切りをつけて列を進める(処理そのものは裏で続いてよい)。 */
+  var p = (recQueues[k] || Promise.resolve()).catch(function(){}).then(function(){
+    /* 時間切れは「その処理が始まってから60秒」で判定する。
+       待ちの間ずっと時計を見張るのではなく、処理が終わるか時間が来るかの早い方。 */
+    var dl = recDeadline(Date.now() + RECONCILE_TIMEOUT);
+    var work = Promise.resolve().then(fn);
+    work.then(dl.stop, dl.stop);                 // 終わったら時計を止める
+    return Promise.race([work, dl.p]);
+  });
+  recQueues[k] = p.catch(function(){});
+  return p;
+}
+function recWait(ms) { return new Promise(function(r){ setTimeout(r, ms); }); }
+var RECONCILE_TIMEOUT = 60000;
+/* 指定の時刻を過ぎたら失敗にする。短い間隔で時刻を確かめるので、
+   タイマーの扱いが端末やテスト環境で違っても、実際の経過時間で判定できる。 */
+function recDeadline(at) {
+  var stopped = false, t = null;
+  var p = new Promise(function(res, rej){
+    (function tick(){
+      if (stopped) return;
+      if (Date.now() >= at) { rej(new Error("reconcile-timeout")); return; }
+      t = setTimeout(tick, Math.min(1000, Math.max(1, at - Date.now())));
+    })();
+  });
+  p.catch(function(){});                         // 止めた後の失敗は誰も待っていない
+  return { p: p, stop: function(){ stopped = true; if (t) clearTimeout(t); } };
+}
+/* ブックマークと用紙設定の指紋。
+   ★本文の指紋だけで「同じ」と決めると、ブックマークだけ変えた時に
+     変更なしと判断され、他の端末へ届かない。本文とは別に持つ。
+   ★表示位置(view)と列幅は入れない。端末ごと・スクロールごとに変わるので、
+     入れると見ているだけで「変更あり」になり、端末同士で送り合いが止まらなくなる。 */
+function metaStampOf(p) {
+  var bm = [], arr = (p && p.bookmarks) || [];
+  for (var i = 0; i < arr.length; i++) {
+    var b = arr[i];
+    if (!b) continue;
+    bm.push([b.id, String(b.name || ""), b.theme || 0, b.head ? 1 : 0,
+             b.view ? [Math.round(b.view.x), Math.round(b.view.y),
+                       Math.round((b.view.s || 1) * 1000)] : 0]);
+  }
+  return contentStamp(JSON.stringify([bm, (p && p.canvasMode) || ""]));
+}
+/* ブックマークの合流。両方の端末で別々に足した時に、片方を捨てない。 */
+function unionBookmarks(mine, theirs) {
+  var out = (mine || []).slice(), have = {};
+  out.forEach(function(b){ if (b) have[String(b.id)] = 1; });
+  (theirs || []).forEach(function(b){ if (b && !have[String(b.id)]) out.push(b); });
+  return out;
+}
+function normPid(id) { return isNaN(+id) ? id : +id; }
+
+/* クラウドの中身を、壊れていないことを確かめながら受け取る。
+   ★見出しと本文は別々に読むので、その間に他の端末が送ると
+     新旧の断片が混ざる。本文の指紋が見出しと合わなければ読み直す。 */
+function cloudPullChecked(id) {
+  var ref = pageDocRef(id);
+  var attempt = function(left){
+    return ref.get().then(function(snap){
+      if (!snap.exists) return null;
+      var head = snap.data() || {};
+      var n = head.chunks || 1, gets = [];
+      for (var i = 0; i < n; i++) gets.push(ref.collection("data").doc(chunkDocId(head.set, i)).get());
+      return Promise.all(gets).then(function(snaps){
+        var str = "";
+        for (var j = 0; j < snaps.length; j++) str += (snaps[j].exists ? snaps[j].data().s : "");
+        var payload = null;
+        try { payload = JSON.parse(str); } catch (e) { payload = null; }
+        var ok = payload && payload.json != null &&
+                 (!head.stamp || contentStamp(payload.json) === head.stamp);
+        if (ok) return { head: head, payload: payload };
+        if (left > 0) return recWait(500).then(function(){ return attempt(left - 1); });
+        throw new Error("torn-read");
+      });
+    });
+  };
+  return attempt(2);
+}
+
+/* クラウドへ送る。「相手がこの版のままなら」という条件つきで、
+   確認と書き込みを一体で行う(途中に他の端末が割り込めない)。
+   ★以前は読む→書くの2段階で、2台が同時に送ると後の方が黙って勝った。
+     オフライン中の書き込みも復帰時に無条件で適用されていた。
+     条件が崩れていたら何も書かずに失敗するので、上書きが起きない。 */
+/* 本文の置き場の名前。
+   ★新しいサブコレクションは作らず、これまでと同じ data の中に置く
+     (Firestore のルールで別の置き場が拒否されることが無いように)。
+     旧形式は data/0, data/1 …、新形式は data/<版の名前>_0 … */
+function chunkDocId(set, i) { return set ? (set + "_" + i) : String(i); }
+function setTimeOf(docId) {
+  var m = /^(\d{10,})x[0-9a-z]+_\d+$/.exec(docId);
+  return m ? +m[1] : 0;
+}
+/* 本文を小分けにして書く(取引の外。1回 4MB・400件まで) */
+function writeChunks(ref, setId, parts) {
+  var col = ref.collection("data"), chain = Promise.resolve();
+  var i = 0;
+  while (i < parts.length) {
+    var start = i, bytes = 0;
+    while (i < parts.length && i - start < BATCH_OPS &&
+           (i === start || bytes + utf8Len(parts[i]) <= BATCH_BYTES)) {
+      bytes += utf8Len(parts[i]); i++;
+    }
+    (function(from, to){
+      chain = chain.then(function(){
+        var bt = fdb().batch();
+        for (var k = from; k < to; k++) bt.set(col.doc(chunkDocId(setId, k)), { s: parts[k] });
+        return bt.commit();
+      });
+    })(start, i);
+  }
+  return chain;
+}
+/* 使われなくなった本文を片付ける。失敗しても害は無いので、結果は待たない。
+   消すのは次の3種類だけ。
+     ・旧形式の本文(data/0, data/1 …) … 見出しはもう新形式を指している
+     ・差し替えで外れた直前の版        … もう誰も指さない
+     ・30分以上前に置かれた残骸        … 他の端末がいま書いている最中のものは消さない
+   ★消す直前に見出しを読み直し、自分の版を指していなければ何もしない
+     (その間に別の端末が差し替えていたら、そちらの本文を消してしまうため)。 */
+function cleanupChunks(ref, prev, curSet, usedImgs) {
+  var col = ref.collection("data");
+  var prevSet = prev && prev.set ? prev.set : null;
+  return Promise.all([ref.get(), col.get()]).then(function(rs){
+    var head = rs[0].exists ? (rs[0].data() || {}) : {};
+    if (head.set !== curSet) return;
+    var now = Date.now(), dels = [];
+    /* 写真: いまの本文が使っていない、置いてから30分以上たったものだけ消す */
+    var used = Object.create(null), imgHeads = Object.create(null);
+    (usedImgs || []).forEach(function(nm){ used[nm] = 1; });
+    rs[1].docs.forEach(function(d){
+      var m = /^img_([0-9a-z]+-[0-9a-z]+-[0-9a-z]+)$/.exec(d.id);
+      if (m) imgHeads[m[1]] = (d.data && d.data()) ? (d.data().at || 0) : 0;
+    });
+    var dropImg = Object.create(null);
+    Object.keys(imgHeads).forEach(function(nm){
+      if (!used[nm] && imgHeads[nm] && now - imgHeads[nm] > STALE_SET_MS) dropImg[nm] = 1;
+    });
+    rs[1].docs.forEach(function(d){
+      var id = d.id;
+      var im = /^img_([0-9a-z]+-[0-9a-z]+-[0-9a-z]+)(_\d+)?$/.exec(id);
+      if (im) { if (dropImg[im[1]]) dels.push(d.ref); return; }       // 写真は上の条件だけで判断
+      if (id.indexOf(curSet + "_") === 0) return;                     // いまの版
+      if (/^\d+$/.test(id)) { dels.push(d.ref); return; }             // 旧形式
+      if (prevSet && id.indexOf(prevSet + "_") === 0) { dels.push(d.ref); return; }
+      var t = setTimeOf(id);
+      if (t && now - t > STALE_SET_MS) dels.push(d.ref);              // 古い残骸
+    });
+    var chain = Promise.resolve();
+    for (var i = 0; i < dels.length; i += BATCH_OPS) {
+      (function(list){
+        chain = chain.then(function(){
+          var bt = fdb().batch();
+          list.forEach(function(r){ bt["delete"](r); });
+          return bt.commit();
+        });
+      })(dels.slice(i, i + BATCH_OPS));
+    }
+    return chain;
+  }).catch(function(){});
+}
+
+/* クラウドへ送る。
+   ★1回の書き込みには約10MiBの上限があり、以前は本文ごと1回で書いていたため
+     10MBを超えるノートは永久に送れなかった。
+     いまは「本文を小分けで先に置く → 見出しだけを条件つきの取引で差し替える」。
+       ・見出しが新しい本文を指すまでは、誰からも見えない(途中で失敗しても壊れない)
+       ・差し替えは「相手がこの版のままなら」の条件つき(2台同時でも後勝ちにならない)
+       ・読む側は見出しの指す本文を読むので、新旧が混ざらない */
+function cloudPushTx(id, payload, seenRemoteRev, remoteExisted) {
+  var ref = pageDocRef(id);
+  var stamp = storedStamp(payload);
+  var newRev = Math.max(seenRemoteRev || 0, payload.rev || 0) + 1;
+  var mstamp = metaStampOf(payload);
+  var send = {};
+  for (var k in payload)
+    if (payload.hasOwnProperty(k) && k !== "base" && k !== "mbase" && k !== "mts") send[k] = payload[k];
+  send.rev = newRev;
+  send.fmt = IMG_FMT;
+  var str = JSON.stringify(send);
+  /* 送る前に大きさを確かめる。上限を超えるなら、送らずに失敗として返す */
+  if (utf8Len(str) > PUSH_LIMIT_BYTES) {
+    var big = new Error("too-large"); big.tooLarge = true;
+    return Promise.reject(big);
+  }
+  var parts = splitByBytes(str, CHUNK_BYTES);
+  var n = parts.length;
+  var w = (payload.wn != null) ? { n: payload.wn, chars: payload.wc || 0 } : contentWeight(payload.json);
+  var setId = String(Date.now()) + "x" + Math.random().toString(36).slice(2, 8);
+  var moved = function(){ var e = new Error("rev-moved"); e.revMoved = true; return e; };
+  var checkHead = function(s){
+    var cur = s.exists ? ((s.data() || {}).rev || 0) : 0;
+    if (s.exists !== !!remoteExisted || cur !== (seenRemoteRev || 0)) throw moved();
+  };
+  var prev = null;
+  /* 本文を置く前に、相手が動いていないか確かめる(動いていたら置くだけ無駄なので)。
+     写真は本文より先に置く(受け取った端末が、書かれた名前の写真を必ず取り寄せられるように)。 */
+  return ref.get().then(function(s0){
+    checkHead(s0);
+    return uploadImagesFor(id, payload.json);
+  }).then(function(){
+    return writeChunks(ref, setId, parts);
+  }).then(function(){
+    return fdb().runTransaction(function(tx){
+      return tx.get(ref).then(function(s){
+        checkHead(s);
+        prev = s.exists ? (s.data() || {}) : null;
+        tx.set(ref, { ts: send.ts || Date.now(), rev: newRev, stamp: stamp, mstamp: mstamp,
+                      set: setId, chunks: n, n: w.n, chars: w.chars });
+      });
+    });
+  }).then(function(){
+    myPushes[String(id)] = stamp;          // 自分が送った版だと分かるように覚える
+    cleanupChunks(ref, prev, setId, imgRefsIn(payload.json));   // 待たない
+    return { rev: newRev, stamp: stamp, mstamp: mstamp };
+  });
+}
+
+/* 端末側の「どの版を土台にしているか」を書き直す。
+   ★開いているノートは、画面の中身を保存する処理と同じ材料から作る。
+     ここで古い中身を書き戻すと、送信中に打った文字が消える。 */
+function setLocalSyncMeta(nid, rev, baseStamp, mbase, editsAtStart) {
+  var now = Date.now();
+  if (nid === currentId) {
+    pageRev = rev; pageBase = baseStamp;
+    if (mbase != null) pageMBase = mbase;
+    pageMetaTs = now;
+    if (isLoadingPage) return Promise.resolve();
+    /* 送信を始めてから手が入っていれば、まだ送れていない分がある。
+       以前はここで全体を文字列化して指紋を取って確かめていた。 */
+    unsyncedEdits = dirtySinceSave || !!editingObj ||
+                    (editsAtStart != null && editsSinceLoad !== editsAtStart);
+    return kvSet("meta_" + nid, { rev: rev, base: baseStamp, mbase: pageMBase, mts: now });
+  }
+  /* 開いていないノートも、本文は書き直さず台帳だけを書く。
+     mbase を渡されなかった時は、今の記録を引き継ぐ。 */
+  var keepMb = (mbase != null) ? Promise.resolve(mbase)
+    : readPageRec(nid).then(function(cur){ return cur ? cur.mbase : undefined; }, function(){ return undefined; });
+  return keepMb.then(function(mb){
+    return kvSet("meta_" + nid, { rev: rev, base: baseStamp, mbase: mb, mts: now });
+  });
+}
+
+/* 相手の版を端末に入れる */
+function applyRemoteToLocal(nid, got) {
+  var payload = got.payload;
+  payload.rev = got.head.rev || payload.rev || 0;
+  payload.base = putStamp(payload, got.head.stamp || null);
+  payload.mbase = metaStampOf(payload);
+  payload.mts = Date.now();                // 台帳より新しい記録として書く
+  /* 開いているノートで、判定の後に手が入っていたら入れない。
+     入れると画面が作り直され、いま書いた分が消える。
+     次の機会に「両方変わった」として扱われ、どちらも残る。 */
+  if (nid === currentId && (dirtySinceSave || editingObj)) return Promise.resolve("busy");
+  /* 本文が使う写真のうち、端末に無いものを先に取り寄せる(取れなくても本文は入れる。
+     名前は残るので、後で開いた時にもう一度取り寄せる) */
+  return fetchMissingImages(nid, payload.json).then(function(){
+    return kvSet("page_" + nid, payload);
+  }).then(function(){
+    var pg = findPage(nid);
+    if (pg) { pg.ts = got.head.ts || pg.ts; saveIndex(); }
+    if (nid === currentId) {
+      loadPage(nid);
+      setTimeout(function(){ statusEl.textContent = "他の端末の変更を反映しました"; }, 150);
+    } else {
+      try { updateCardThumb(nid); } catch (e) {}
+    }
+    return "pulled";
+  });
+}
+
+/* 相手のブックマークだけを受け取る。本文も、いま見ている位置も動かさない。
+   ★ノートごと読み直すと表示位置まで相手のものに変わり、
+     見ていた場所から急に飛ばされてしまうため。 */
+function applyRemoteMeta(nid, local, remote, head) {
+  local.bookmarks = remote.bookmarks || [];
+  if (remote.canvasMode) local.canvasMode = remote.canvasMode;
+  local.rev = (head && head.rev) || local.rev || 0;
+  local.base = storedStamp(local);
+  local.mbase = metaStampOf(local);
+  local.mts = Date.now();
+  if (nid === currentId) {
+    pageRev = local.rev; pageBase = local.base; pageMBase = local.mbase; pageMetaTs = local.mts;
+    onRemoteMetaForCurrent(local);            // 画面側のブックマークを差し替える
+    if (isLoadingPage) return Promise.resolve();
+    return writeCurrentPage(nid);
+  }
+  return kvSet("page_" + nid, local);
+}
+/* 開いているノートを、画面の中身から端末に書く。
+   ★写真を先にしまう。本文には写真の名前しか書かないので、
+     貼ったばかりでまだしまっていない写真があると、名前だけが残って写真が失われる。
+   戻り値は書いた本文(書けなかった時は失敗にする)。 */
+function writeCurrentPage(nid) {
+  var pl = buildPagePayload(), imgs = imgPending;
+  return persistImages(imgs).then(function(ok){
+    if (!ok) throw new Error("image-save-failed");
+    return kvSet("page_" + nid, pl);
+  }).then(function(ok){
+    if (!ok) throw new Error("page-save-failed");
+    return pl;
+  });
+}
+/* 合流したブックマークを端末に入れ、送る中身を返す */
+function applyLocalBookmarks(nid, local, list) {
+  local.bookmarks = list;
+  if (nid === currentId) {
+    onRemoteMetaForCurrent(local);
+    return writeCurrentPage(nid);
+  }
+  return kvSet("page_" + nid, local).then(function(){ return local; });
+}
+/* 両方の端末で別々に編集されていた時。
+   ★どちらも消さない。相手の版を元のノートに入れ、
+     この端末の版は別のノートとして一覧に並べる。
+     掘り出す操作が要らず、目の前に両方ある。 */
+function forkLocalAsCopy(nid, local, got) {
+  var pg = findPage(nid);
+  var d = new Date(), p2 = function(x){ return (x < 10 ? "0" : "") + x; };
+  var newId = Date.now();
+  while (findPage(newId)) newId++;
+  var title = ((pg && pg.title) || "ノート") + "(この端末の版 " +
+              (d.getMonth() + 1) + "/" + d.getDate() + " " +
+              p2(d.getHours()) + ":" + p2(d.getMinutes()) + ")";
+  var copy = {};
+  for (var k in local) if (local.hasOwnProperty(k)) copy[k] = local[k];
+  copy.rev = 0; delete copy.base; delete copy.mbase; delete copy.mts; copy.ts = Date.now();
+  var wasCurrent = (nid === currentId);
+  return kvSet("page_" + newId, copy).then(function(){
+    var idx = pages.map(function(x){ return x.id; }).indexOf(nid);
+    var ent = { id: newId, title: title, ts: Date.now(), rev: 1 };
+    if (pg && pg.folder) ent.folder = pg.folder;
+    pages.splice(idx < 0 ? pages.length : idx + 1, 0, ent);
+    var remote = got.payload;
+    remote.rev = got.head.rev || remote.rev || 0;
+    remote.base = putStamp(remote, got.head.stamp || null);
+    remote.mts = Date.now();
+    return fetchMissingImages(nid, remote.json).then(function(){ return kvSet("page_" + nid, remote); });
+  }).then(function(){
+    return saveIndex();
+  }).then(function(){
+    /* 開いていたノートなら、書いていた方(この端末の版)を開いたままにする。
+       手元の画面が急に相手の内容に変わると、消えたように見えるため。 */
+    if (wasCurrent) { dirtySinceSave = false; loadPage(newId); }
+    else { try { renderPageList(); } catch (e) {} }
+    try { updatePageBtn(); } catch (e2) {}
+    if (cloudUser()) cloudPushIndex().catch(function(){});
+    setTimeout(function(){
+      showSheet("同じノートが別の端末でも編集されていました", [
+        { label: "どちらも残してあります。この端末の内容は「" + title + "」です", cancel: true },
+        { label: "📂 一覧で確認する", fn: function(){ try { openPages(); } catch (e) {} } }
+      ]);
+    }, 400);
+    // 新しくできた方も送っておく
+    setTimeout(function(){ reconcilePage(newId).catch(function(){}); }, 800);
+    return "forked";
+  });
+}
+
+/* ノート1件について、端末とクラウドを突き合わせる(唯一の入口) */
+function reconcilePage(id) {
+  if (!cloudUser()) return Promise.resolve("offline");
+  var nid = normPid(id);
+  if (isDeleted(nid)) return Promise.resolve("deleted");
+  return recEnqueue(nid, function(){ return reconcileOnce(nid, 3); });
+}
+function reconcileOnce(nid, triesLeft) {
+  /* 開いているノートに未保存の変更があれば、先に端末へ確定させる */
+  var pre = (nid === currentId && dirtySinceSave && !isLoadingPage)
+          ? Promise.resolve(saveDocNow()).catch(function(){}) : Promise.resolve();
+  var ref = pageDocRef(nid);
+  return pre.then(function(){
+    /* ★本文を読めない時は「端末に無い」とみなさず、この回の同期をやめる。
+       無いとみなすと、相手の版で上書きして未送信の編集を失う。 */
+    return Promise.all([readPageRec(nid), ref.get()]);
+  }).then(function(rs){
+    var local = rs[0], snap = rs[1];
+    var hasL = !!(local && local.json != null);
+    var R = snap.exists ? (snap.data() || {}) : null;
+    if (!R && !hasL) return "none";
+
+    // ① クラウドに無い → 新しく置く
+    if (!R) {
+      var ls0 = storedStamp(local);
+      if (!pushAllowed(nid, ls0)) return "held";
+      return cloudPushTx(nid, local, 0, false).then(function(r){
+        clearPushFail(nid);
+        return setLocalSyncMeta(nid, r.rev, r.stamp, r.mstamp, editsAtStart).then(function(){ return "pushed"; });
+      }, function(e){
+        if (e && e.revMoved) throw e;
+        notePushFail(nid, ls0, (e && e.tooLarge) ? "too-large" : ((e && (e.code || e.message)) || "error"));
+        return "held";
+      });
+    }
+    // ② 端末に無い → 受け取る
+    if (!hasL) {
+      return cloudPullChecked(nid).then(function(got){
+        return got ? applyRemoteToLocal(nid, got) : "none";
+      });
+    }
+    var lrev = local.rev || 0, rrev = R.rev || 0;
+    var lstamp = storedStamp(local);
+    var editsAtStart = (nid === currentId) ? editsSinceLoad : null;
+
+    // ③ 本文が同じ → 本文は送らない。ブックマークだけ突き合わせる
+    if (R.stamp && R.stamp === lstamp) {
+      var lm = metaStampOf(local), rm = (R.mstamp != null) ? R.mstamp : null;
+      var mb = (local.mbase != null) ? local.mbase : null;
+      var metaDirty = (mb != null) && (lm !== mb);
+      var settle = function(){
+        if (lrev !== rrev || local.base !== lstamp || local.mbase !== lm)
+          return setLocalSyncMeta(nid, rrev, lstamp, lm).then(function(){ return "same"; });
+        if (nid === currentId) unsyncedEdits = false;
+        return "same";
+      };
+      var pushMeta = function(pl){
+        return cloudPushTx(nid, pl, rrev, true).then(function(r){
+          return setLocalSyncMeta(nid, r.rev, r.stamp, r.mstamp, editsAtStart).then(function(){ return "pushed-meta"; });
+        });
+      };
+      /* クラウドがまだ指紋を持っていない(以前の版で送られたノート)。
+         この端末で変えた覚えがあれば送る。無ければ同じとみなして記録する。 */
+      if (rm == null) return metaDirty ? pushMeta(local) : settle();
+      if (rm === lm) return settle();
+      var metaRemoteChanged = (mb != null) ? (rm !== mb) : true;
+      if (metaDirty && !metaRemoteChanged) return pushMeta(local);
+      return cloudPullChecked(nid).then(function(got){
+        if (!got) return "none";
+        if (!metaDirty) {
+          // 相手だけがブックマークを変えた → 受け取る(本文と表示位置は触らない)
+          return applyRemoteMeta(nid, local, got.payload, got.head).then(function(){ return "pulled-meta"; });
+        }
+        // 両方が変えた → 合流させて送る(どちらのブックマークも残す)
+        var merged = unionBookmarks(local.bookmarks, got.payload.bookmarks);
+        return applyLocalBookmarks(nid, local, merged).then(function(pl){ return pushMeta(pl); });
+      });
+    }
+
+    // ④ どちらが変わったか
+    var dirty, remoteChanged, legacy = (local.base == null);
+    if (!legacy) {
+      dirty = (lstamp !== local.base);
+      remoteChanged = R.stamp ? (R.stamp !== local.base) : (rrev !== lrev);
+    } else {
+      /* 土台の記録を持たない、以前の版で保存されたノート。
+         版番号で推し量る(この1回だけ。以後は土台を記録する)。 */
+      remoteChanged = (rrev > lrev);
+      dirty = (nid === currentId && (unsyncedEdits || dirtySinceSave)) || (lrev >= rrev);
+    }
+
+    /* ★クラウドにあるのが「この端末が自分で送った版」なら、相手は変わっていない。
+       入力しながら同期していると、保存と送信完了の行き違いで
+       土台の記録が一歩古くなることがある。そのまま判定すると
+       自分の送信を相手の変更と見誤り、不要な「この端末の版」ができてしまう。 */
+    if (remoteChanged && R.stamp && myPushes[String(nid)] === R.stamp) remoteChanged = false;
+
+    if (dirty && !remoteChanged) {
+      if (!pushAllowed(nid, lstamp)) return "held";
+      return cloudPushTx(nid, local, rrev, true).then(function(r){
+        clearPushFail(nid);
+        return setLocalSyncMeta(nid, r.rev, r.stamp, r.mstamp, editsAtStart).then(function(){ return "pushed"; });
+      }, function(e){
+        if (e && e.revMoved) throw e;               // 割り込まれた → 見直しへ
+        notePushFail(nid, lstamp, (e && e.tooLarge) ? "too-large" : ((e && (e.code || e.message)) || "error"));
+        return "held";
+      });
+    }
+    if (!dirty && remoteChanged) {
+      var keep = legacy ? keepVersion(nid, "同期で取り込む前").catch(function(){}) : Promise.resolve();
+      return keep.then(function(){ return cloudPullChecked(nid); }).then(function(got){
+        return got ? applyRemoteToLocal(nid, got) : "none";
+      });
+    }
+    if (dirty && remoteChanged) {
+      return cloudPullChecked(nid).then(function(got){
+        if (!got) return "none";
+        // 読んでいる間に同じ中身になっていたら、分ける必要はない
+        if (contentStamp(got.payload.json) === lstamp)
+          return setLocalSyncMeta(nid, got.head.rev || 0, lstamp).then(function(){ return "same"; });
+        return forkLocalAsCopy(nid, local, got);
+      });
+    }
+    // 土台と同じはずなのに指紋が合わない(古い形式の見出しなど) → 記録を揃えるだけ
+    return setLocalSyncMeta(nid, rrev, local.base || lstamp).then(function(){ return "same"; });
+  }).catch(function(e){
+    /* 送ろうとした瞬間に相手が変わっていた → 最初から見直す。
+       見直した結果は「両方変わった」になるので、どちらも残る。 */
+    if (e && e.revMoved && triesLeft > 0)
+      return recWait(300).then(function(){ return reconcileOnce(nid, triesLeft - 1); });
+    throw e;
+  });
+}
+
+/* =========================================================
+   ごみ箱
+   ---------------------------------------------------------
+   ★削除は、いきなり中身を消さない。ごみ箱に移して30日置く。
+     他の端末から届いた削除の記録でも同じ扱いにするので、
+     誤った削除が1つ紛れても、中身は端末に残っている。
+========================================================= */
+var TRASH_DAYS = 30;
+function trashLocalPage(id, why) {
+  var nid = normPid(id);
+  var pg = findPage(nid);
+  /* ★ごみ箱へ移せた時だけ本体を消す。
+     以前は読み取りやごみ箱への書き込みが失敗しても本体を消していたため、
+     保存領域が不調な時の削除で、中身がどこにも残らなかった。 */
+  return kvGetStrict("page_" + nid).then(function(rec){
+    if (!rec || rec.json == null) return true;
+    var w = contentWeight(rec.json);
+    if (!w.n) return true;                              // 空のノートは残さない
+    return kvSet("trash_" + nid + "_" + Date.now(), {
+      id: nid, title: (pg && pg.title) || "ノート", folder: (pg && pg.folder) || "",
+      payload: rec, at: Date.now(), why: why || "", n: w.n
+    });
+  }).then(function(moved){
+    if (!moved) throw new Error("trash-failed");
+    kvDel("page_" + nid);
+    kvDel("meta_" + nid);
+    kvDel("thumb_" + nid);
+  }).catch(function(){
+    showStoreTrouble("ごみ箱へ移せなかったため、ノート本体は残してあります");
+  });
+}
+function listTrash() {
+  return kvKeys().then(function(keys){
+    var mine = [];
+    for (var i = 0; i < keys.length; i++)
+      if (String(keys[i]).indexOf("trash_") === 0) mine.push(String(keys[i]));
+    var out = [], chain = Promise.resolve();
+    mine.forEach(function(k){
+      chain = chain.then(function(){
+        return kvGet(k).then(function(v){ if (v && v.payload) out.push({ key: k, v: v }); });
+      });
+    });
+    return chain.then(function(){
+      out.sort(function(a, b){ return (b.v.at || 0) - (a.v.at || 0); });
+      return out;
+    });
+  }).catch(function(){ return []; });
+}
+function purgeOldTrash() {
+  var limit = Date.now() - TRASH_DAYS * 86400000;
+  return listTrash().then(function(list){
+    list.forEach(function(it){ if ((it.v.at || 0) < limit) kvDel(it.key); });
+  }).catch(function(){});
+}
+/* ごみ箱から戻す。
+   ★元の番号では戻さない。削除の記録は全端末に残り続けるので、
+     同じ番号で戻すと次の同期でまた消される。新しいノートとして戻す。 */
+function restoreFromTrash(key) {
+  return kvGet(key).then(function(v){
+    if (!v || !v.payload) { statusEl.textContent = "戻せませんでした"; return; }
+    var newId = Date.now();
+    while (findPage(newId)) newId++;
+    var body = {};
+    for (var k in v.payload) if (v.payload.hasOwnProperty(k)) body[k] = v.payload[k];
+    body.rev = 0; delete body.base; delete body.mbase; delete body.mts; body.ts = Date.now();
+    return kvSet("page_" + newId, body).then(function(){
+      var ent = { id: newId, title: v.title || "ノート", ts: Date.now(), rev: 1 };
+      if (v.folder && folders.indexOf(v.folder) !== -1) ent.folder = v.folder;
+      pages.unshift(ent);
+      return saveIndex();
+    }).then(function(){
+      kvDel(key);
+      try { renderPageList(); updatePageBtn(); } catch (e) {}
+      if (cloudUser()) {
+        reconcilePage(newId).catch(function(){});
+        cloudPushIndex().catch(function(){});
+      }
+      statusEl.textContent = "「" + (v.title || "ノート") + "」をごみ箱から戻しました";
+    });
+  }).catch(function(){ statusEl.textContent = "戻せませんでした"; });
+}
+function openTrashSheet() {
+  listTrash().then(function(list){
+    if (!list.length) {
+      showSheet("🗑 ごみ箱", [
+        { label: "空です(削除したノートは" + TRASH_DAYS + "日間ここに残ります)", cancel: true }
+      ]);
+      return;
+    }
+    var items = list.slice(0, 30).map(function(it){
+      var d = new Date(it.v.at || 0);
+      var left = Math.max(0, TRASH_DAYS - Math.floor((Date.now() - (it.v.at || 0)) / 86400000));
+      return {
+        label: "↩ " + (it.v.title || "ノート") + "(" + (it.v.n || 0) + "個・" +
+               (d.getMonth() + 1) + "/" + d.getDate() + "削除・あと" + left + "日)",
+        fn: function(){ restoreFromTrash(it.key); }
+      };
+    });
+    items.push({ label: "🧹 ごみ箱を空にする", danger: true, fn: function(){
+      showSheet("ごみ箱の" + list.length + "件を完全に消しますか?(戻せません)", [
+        { label: "完全に消す", danger: true, fn: function(){
+            list.forEach(function(it){ kvDel(it.key); });
+            statusEl.textContent = "ごみ箱を空にしました";
+          } },
+        { label: "キャンセル", cancel: true }
+      ]);
+    } });
+    items.push({ label: "閉じる", cancel: true });
+    showSheet("🗑 ごみ箱(押すと戻します)", items);
+  });
+}
+
+/* =========================================================
+   一覧から漏れたノートを、起動時に自動で戻す
+   ---------------------------------------------------------
+   ★「消えたノートを探す」を手で押す必要をなくす。
+     端末に中身があるのに一覧に載っていないノートは、
+     見つけ次第そのまま一覧へ戻す(削除済みのものは除く)。
+========================================================= */
+function autoHealOrphans() {
+  /* ★同期の最中は動かさない(C4)。
+     初回の同期では本文が一覧より先に届くことがあり、その時に動くと
+     本当の題名が届く前に、自動の題名で一覧へ入れてしまう。 */
+  if (typeof syncing !== "undefined" && syncing) return Promise.resolve(0);
+  return findOrphanPages().then(function(ids){
+    if (!ids.length) return 0;
+    var n = 0, chain = Promise.resolve();
+    ids.forEach(function(id){
+      chain = chain.then(function(){
+        return kvGetStrict("page_" + id).then(function(rec){
+          if (!rec || rec.json == null) return;
+          if (!contentWeight(rec.json).n) { kvDel("page_" + id); return; }   // 空の残骸は片付ける
+          if (findPage(id)) return;
+          var first = "";
+          try {
+            var arr = JSON.parse(rec.json) || [];
+            for (var i = 0; i < arr.length; i++)
+              if (arr[i] && arr[i].type === "text" && arr[i].text) {
+                first = String(arr[i].text).split("\n")[0].trim().slice(0, 24); break;
+              }
+          } catch (e) {}
+          pages.push({ id: id, title: first || ("戻したノート " + (n + 1)),
+                       ts: rec.ts || Date.now(), rev: 1 });
+          n++;
+        }).catch(function(){});
+      });
+    });
+    return chain.then(function(){
+      if (!n) return 0;
+      return Promise.resolve(saveIndex()).then(function(){
+        try { renderPageList(); } catch (e) {}
+        /* クラウドの一覧へはここで送らない。次の通常の同期に任せる
+           (同期と重なって、仮の題名で他の端末の一覧を書き換えないため) */
+        setTimeout(function(){
+          statusEl.textContent = "一覧から漏れていたノート " + n + "件を自動で戻しました";
+        }, 1500);
+        return n;
+      });
+    });
+  }).catch(function(){ return 0; });
+}
+
+
+
+
+
+/* 送信の入口。★判定はすべて reconcilePage に任せる。
+   以前の「force(優先して送る)」は、相手の新しい版を確かめずに
+   上書きできる抜け道になっていたので、意味を持たせない。 */
+function cloudPushPage(id, force) {
+  return reconcilePage(id);
 }
 function cloudPullPage(id) {
-  var base = pageDocRef(id);
-  return base.get().then(function(snap){
-    if (!snap.exists) throw new Error("no remote");
-    var n = snap.data().chunks || 1;
-    var gets = [];
-    for (var i = 0; i < n; i++) gets.push(base.collection("data").doc(String(i)).get());
-    return Promise.all(gets);
-  }).then(function(snaps){
-    var str = "";
-    for (var i = 0; i < snaps.length; i++) str += (snaps[i].exists ? snaps[i].data().s : "");
-    return JSON.parse(str);
+  /* ★新旧どちらの形式の本文も読める読み取り(cloudPullChecked)に任せる。
+     以前は旧形式(data/0, data/1 …)しか読めなかった。 */
+  return cloudPullChecked(id).then(function(got){
+    if (!got) throw new Error("no remote");
+    return got.payload;
   });
 }
 function cloudDeletePage(id) {
   var u = cloudUser();
   if (!u || !window.firebase) return;
   var base = pageDocRef(id);
-  base.get().then(function(snap){
-    var n = (snap.exists && snap.data().chunks) || 0;
-    var batch = fdb().batch();
-    for (var i = 0; i < n; i++) batch.delete(base.collection("data").doc(String(i)));
-    batch.delete(base);
-    return batch.commit();
+  /* ★本文は新旧どちらの形式でも data の中にあるので、一覧を取って全部消す。
+     以前は見出しの件数ぶん data/0, data/1 … を消すだけだったため、
+     新形式の本文が残ってしまう。1回の書き込みの件数上限にも合わせて分ける。 */
+  base.collection("data").get().then(function(qs){
+    var refs = qs.docs.map(function(d){ return d.ref; });
+    var chain = Promise.resolve();
+    for (var i = 0; i < refs.length; i += 400) {
+      (function(list){
+        chain = chain.then(function(){
+          var bt = fdb().batch();
+          list.forEach(function(r){ bt["delete"](r); });
+          return bt.commit();
+        });
+      })(refs.slice(i, i + 400));
+    }
+    return chain;
+  }).then(function(){
+    return base["delete"]();
   }).catch(function(){});
 }
 /* ★クラウドの一覧を「上書き」ではなく「統合」して書き戻す。
@@ -18992,7 +20715,9 @@ function scheduleCloudPush(id) {
   if (!cloudUser()) return;
   pendingPushId = id;
   clearTimeout(cloudTimer);
-  cloudTimer = setTimeout(function(){ flushCloudPush(); }, 3000);
+  /* ★入力のたびに送らない。手が止まってから送る(画面を隠した時はすぐ送る)。
+     大きいノートで、1文字ごとに全体を送り直していた。 */
+  cloudTimer = setTimeout(function(){ flushCloudPush(); }, 15000);
 }
 /* たまっている分をすぐ送る(画面を離れる時など) */
 function flushCloudPush() {
@@ -19101,6 +20826,7 @@ function pullIfStale(minMs) {
         syncEditingObjFromDom();
         dirtySinceSave = true;
         unsyncedEdits = true;
+        editsSinceLoad++;               // 入力中のまま隠れた = 編集あり
       }
       // 編集がある時だけ保存する。無条件だと更新時刻だけが新しくなり、
       // 実際には何も変わっていないのに他端末へ送り続けることになる
@@ -19140,7 +20866,7 @@ function pullIfStale(minMs) {
     }
   });
   window.addEventListener("pagehide", function(){
-    if (editingObj) { syncEditingObjFromDom(); dirtySinceSave = true; unsyncedEdits = true; }
+    if (editingObj) { syncEditingObjFromDom(); dirtySinceSave = true; unsyncedEdits = true; editsSinceLoad++; }
     if (dirtySinceSave) saveDocNow();
     flushCloudPush(); setTimeout(flushCloudPush, 120);
   });
@@ -19257,24 +20983,9 @@ function listVersions(id) {
    ★古い版で上書きしないよう、手元の方が新しければ取り込まない。
      取り込む時も、直前の中身を控えに残す。 */
 function pullAndStore(id, force) {
-  return cloudPullPage(id).then(function(payload){
-    if (!payload || !payload.json) return;
-    return kvGet("page_" + id).then(function(cur){
-      if (!force && cur && cur.json) {
-        var curRev = cur.rev || 0, newRev = payload.rev || 0;
-        if (curRev || newRev) {
-          if (newRev <= curRev) return;               // 版番号で判定(時計に頼らない)
-        } else {
-          var curTs = cur.ts || 0, newTs = payload.ts || 0;
-          if (curTs > newTs) return;                  // 版番号が無い古いデータ用
-        }
-      }
-      return keepVersion(id, "同期で取り込む前").then(function(){
-        if (id === currentId) pageRev = payload.rev || 0;
-        return kvSet("page_" + id, payload);
-      });
-    });
-  }).catch(function(){});
+  /* 受け取りも同じ入口を通す。端末側に未送信の編集があれば
+     上書きせず、どちらも残す側に倒れる。 */
+  return reconcilePage(id).catch(function(){});
 }
 /* この端末が最後に同期したアカウント。
    別のアカウントでログインした時に、端末のノートを勝手に
@@ -19291,7 +21002,7 @@ function askAccountChange(newUid) {
         setLastUid(newUid);
         pages = [];                       // 相手のアカウントへ混ぜない
         saveIndex().then(function(){ syncing = false; flushPendingSave(); syncAll(); });
-        statusEl.textContent = "元のノートは「🔍消えたノートを探す」で戻せます";
+        statusEl.textContent = "元のノートは 💾バックアップ・ごみ箱 →「ごみ箱」から戻せます";
       } },
     { label: "➕ 端末のノートもこのアカウントに追加する", fn: function(){
         uidAskOpen = false;
@@ -19359,8 +21070,10 @@ function syncAll() {
     var pulledCurrent = false;   // (互換のため残置。中身の同期はcloudPushPage(currentId)に一本化した)
     var merged = [];
     // 他端末で削除されたページを、この端末からも消す
+    /* ★届いた削除の記録で、いきなり中身を消さない。ごみ箱へ移す。
+       誤った記録が1つ紛れても、中身は30日間この端末に残る。 */
     deletedIds.forEach(function(d){
-      kvDel("page_" + d.id);
+      trashLocalPage(d.id, "他の端末で削除");
       cloudDeletePage(d.id);
     });
     /* ★一覧(タイトル・フォルダ)の新旧と、ページの中身(本文)の新旧は
@@ -19424,6 +21137,15 @@ function syncAll() {
         }).catch(function(){});
     });
     return jobs.then(function(){
+      /* ★同期している間に増えたノートを落とさない。
+         merged は同期の最初に組んだ一覧なので、そのまま置き換えると、
+         同期中に作った新しいノートや「この端末の版」が一覧から消え、
+         中身だけが端末に取り残されていた。今の一覧にしか無いものを足す。 */
+      var have = {};
+      merged.forEach(function(p){ have[String(p.id)] = 1; });
+      pages.forEach(function(p){
+        if (!have[String(p.id)] && !isDeleted(p.id)) merged.push(p);
+      });
       pages = merged;
       return saveIndex();
     }).then(function(){
@@ -19580,52 +21302,46 @@ function applyRemoteIndex(d) {
 /* 1ページの中身が他の端末で更新された */
 var pullQueue = Promise.resolve();
 function onRemotePageChanged(id, remoteTs, remoteRev, remoteStamp, forcePull) {
-  var nid = isNaN(+id) ? id : +id;
-  if (isDeleted(nid)) return;
+  var nid = normPid(id);
+  if (isDeleted(nid)) return Promise.resolve();
+  /* 見出しの指紋が、端末の土台・中身とすべて一致していれば何もしない
+     (全ノートを見回る時に、変わっていないノートで通信しないため) */
   pullQueue = pullQueue.then(function(){
-    return kvGet("page_" + nid).then(function(cur){
-      var localTs = (cur && cur.ts) || 0;
-      var localRev = (cur && cur.rev) || 0;
-      /* ★新旧は版番号で決める(時計のずれに影響されないため)。
-         版番号が分かる時は時刻を見ない。 */
-      if (remoteRev != null && remoteRev > 0) {
-        if (remoteStamp && cur && contentStamp(cur.json) === remoteStamp) return;  // 同じ中身
-        if (remoteRev <= localRev) return;                // 手元が同じか新しい
-      } else if (remoteTs <= localTs) return;             // 版番号が無い古いデータ用
-      /* ★まだクラウドへ送れていない編集があるうちは、絶対に上書きしない。
-         代わりに、その編集を送り直す。 */
-      if (!forcePull && nid === currentId && unsyncedEdits) {
-        statusEl.textContent = "この端末の編集を優先して送ります";
-        setTimeout(function(){ cloudPushPage(nid, true).catch(function(){}); }, 50);
-        return;
-      }
-      // 開いているページを編集中なら、上書きしない(あとで送り直す)
-      // ただし控えを取った後(forcePull)は、取り込みを優先する
-      if (!forcePull && nid === currentId && dirtySinceSave) {
-        statusEl.textContent = "編集中のため、この端末の内容を優先しました";
-        return;
-      }
-      isLoadingPage = true;                    // 受け取り中も自動保存を止める
-      return pullAndStore(nid, forcePull).then(function(){
-        var pg = findPage(nid);
-        if (pg) { pg.ts = remoteTs; saveIndex(); }
-        if (nid === currentId) {
-          loadPage(nid);
-          // loadPageが状態表示を書き換えるので、少し遅らせて知らせる
-          setTimeout(function(){
-            statusEl.textContent = "他の端末の変更を反映しました";
-          }, 120);
-        } else {
-          isLoadingPage = false;
-          updateCardThumb(nid);
-        }
-      });
-    });
+    /* ★起動・復帰のたびに全ノートの指紋を取り直していた(260MB規模で数秒〜十数秒)。
+       保存時に取った指紋を使う。本文が書き換わっていれば storedStamp が取り直す。 */
+    return readPageRec(nid).then(function(cur){
+      if (cur && cur.json != null && remoteStamp && cur.base === remoteStamp &&
+          (cur.rev || 0) === (remoteRev || 0) &&
+          storedStamp(cur) === remoteStamp) return;
+      return reconcilePage(nid);
+    }, function(){ /* 読めない時は今回は見送る */ });
   }).catch(function(){});
   return pullQueue;
 }
 
 /* ---------- 同期パネルUI ---------- */
+/* ★送れていないノートがあることを見えるようにする(C3)。
+   以前は送信の失敗が握りつぶされ、同期できていないことに気づけなかった。 */
+function onPushFailChanged(nid, f) {
+  var keys = Object.keys(pushFail);
+  var btn = document.getElementById("ppSync") || document.getElementById("syncBtn");
+  if (btn) btn.classList.toggle("push-warn", keys.length > 0);
+  if (f && f.why === "too-large" && f.n === 1) {
+    var pg = findPage(normPid(nid));
+    setTimeout(function(){
+      statusEl.textContent = "⚠ 「" + ((pg && pg.title) || "ノート") +
+        "」は大きすぎてクラウドへ送れません(端末には保存されています)";
+    }, 60);
+  }
+}
+function pushFailSummary() {
+  var keys = Object.keys(pushFail);
+  if (!keys.length) return "なし";
+  return keys.map(function(k){
+    var pg = findPage(normPid(k)), f = pushFail[k];
+    return "「" + ((pg && pg.title) || k) + "」" + (f.why === "too-large" ? "大きすぎる" : ("失敗" + f.n + "回"));
+  }).join(" / ");
+}
 function setSyncStatus(t) {
   lastSyncText = t;
   var el = document.getElementById("syncState");
@@ -19777,6 +21493,8 @@ function runSyncDiagnostics(outEl, btn) {
   add("この端末の版", "v" + APP_VERSION);
   add("端末", (navigator.userAgent || "").slice(0, 90));
   add("オンライン", navigator.onLine ? "はい" : "いいえ(オフライン)");
+    add("送れていないノート", pushFailSummary());
+    add("保存領域の永続化", (window.__persisted === true) ? "はい" : (window.__persisted === false ? "いいえ(空きが減ると消される恐れ)" : "不明"));
   add("Firebase設定", FIREBASE_CONFIG.apiKey ? "あり" : "★なし(同期は動きません)");
   var u = cloudUser();
   add("ログイン", u ? ("はい / " + (u.email || "") ) : "★いいえ");
@@ -20174,8 +21892,87 @@ function createFirstPage() {
     else loadPage(id);
   });
 }
+/* 一覧を読む。本体が空なら控え、それも無ければ端末にある中身から組み直す。
+   ★以前は一覧が読めないと即「初回起動」と判断し、「ページ1」だけの
+     一覧を作って保存していた。それが既存の一覧を上書きし、
+     中身は残っているのに全ノートが一覧から消えていた。 */
+/* =========================================================
+   保存領域の不調を知らせる帯
+   ---------------------------------------------------------
+   ★以前は「保存エラー」と下の小さな表示に一瞬出るだけで、
+     保存できていないことに気づけなかった。
+     直るまで消えない帯を上に出す。押すと詳しい案内が出る。
+========================================================= */
+var storeTroubleMsg = "";
+function showStoreTrouble(msg, fatal) {
+  storeTroubleMsg = msg;
+  var el = document.getElementById("storeTrouble");
+  if (!el) {
+    el = document.createElement("button");
+    el.id = "storeTrouble";
+    el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);" +
+      "top:calc(env(safe-area-inset-top) + 64px);z-index:70;max-width:92vw;" +
+      "border:none;border-radius:999px;padding:9px 16px;background:#B3261E;color:#fff;" +
+      "font-size:12.5px;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.35);" +
+      "white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer";
+    el.onclick = function(){ openStoreTroubleSheet(); };
+    document.body.appendChild(el);
+  }
+  el.textContent = "⚠ " + msg;
+  el.style.display = "";
+  if (fatal) setTimeout(openStoreTroubleSheet, 300);
+}
+function clearStoreTrouble() {
+  storeTroubleMsg = "";
+  var el = document.getElementById("storeTrouble");
+  if (el) el.style.display = "none";
+}
+function openStoreTroubleSheet() {
+  var quota = (lastStoreError === "QuotaExceededError");
+  var items = [];
+  if (quota) {
+    items.push({ label: "端末の保存容量が足りません。次のどれかで空きを作ってください", cancel: true });
+    items.push({ label: "🗑 ごみ箱を空にする", fn: function(){ setTimeout(openTrashSheet, 240); } });
+    items.push({ label: "💾 バックアップを保存しておく", fn: function(){ exportBackup(); } });
+  }
+  items.push({ label: "↻ 保存をもう一度試す", fn: function(){ retrySaveNow(); } });
+  items.push({ label: "↻ アプリを読み込み直す", fn: function(){ location.reload(); } });
+  items.push({ label: "閉じる", cancel: true });
+  showSheet(storeTroubleMsg || "保存領域の状態", items);
+}
+/* 保存に失敗した時の再試行(2秒→5秒→15秒→以後15秒ごと) */
+var saveRetryStep = 0, saveRetryTimer = null;
+function scheduleSaveRetry() {
+  clearTimeout(saveRetryTimer);
+  var waits = [2000, 5000, 15000];
+  var ms = waits[Math.min(saveRetryStep, waits.length - 1)];
+  saveRetryStep++;
+  saveRetryTimer = setTimeout(function(){ if (dirtySinceSave) saveDocNow(); }, ms);
+}
+function retrySaveNow() { saveRetryStep = 0; dirtySinceSave = true; saveDocNow(); }
+function loadIndexSafely() {
+  var has = function(x){ return !!(x && x.pages && x.pages.length); };
+  /* ★「読めない」は「無い」ではない。読めない時は初回起動に進まず、
+     失敗として返して、開き直しと案内に回す。 */
+  return kvGetStrict("pages_index").then(function(idx){
+    if (has(idx)) return idx;
+    return kvGetStrict("pages_index_bak").then(function(bak){
+      if (has(bak)) {
+        setTimeout(function(){ statusEl.textContent = "ノート一覧を控えから戻しました"; }, 1200);
+        return bak;
+      }
+      /* 控えも無い。端末に中身だけ残っていないか調べて、あれば一覧を組み直す */
+      pages = []; deletedIds = (idx && idx.deleted) || [];
+      return autoHealOrphans().then(function(n){
+        if (n > 0) return { pages: pages, currentId: pages[0].id,
+                            deleted: deletedIds, folders: folders, delFolders: delFolders };
+        return idx;                       // 本当に何も無い = 初回起動
+      });
+    });
+  });
+}
 function initAfterStore() {
-  kvGet("pages_index").then(function(idx){
+  loadIndexSafely().then(function(idx){
     if (idx && idx.pages && idx.pages.length) {
       pages = idx.pages;
       deletedIds = idx.deleted || [];
@@ -20184,6 +21981,18 @@ function initAfterStore() {
       booting = false;
       var cur = findPage(idx.currentId) ? idx.currentId : pages[0].id;
       loadPage(cur);
+      /* ★一覧から漏れたノートは起動のたびに自動で戻す(手で探さなくてよい)。
+         ごみ箱は30日を過ぎたものだけ片付ける。 */
+      setTimeout(function(){ autoHealOrphans(); purgeOldTrash(); }, 600);
+      /* 使われなくなった写真の片付けは1日1回、起動して少したってから */
+      setTimeout(function(){
+        var last = 0;
+        try { last = +(localStorage.getItem("inknote_img_gc") || 0); } catch (e) {}
+        if (Date.now() - last < 86400000) return;
+        gcLocalImages().then(function(){
+          try { localStorage.setItem("inknote_img_gc", String(Date.now())); } catch (e) {}
+        });
+      }, 30000);
       // 起動画面としてノート一覧を出す(前回の続きはカードから1タップで開ける)
       if (openListOnStart) setTimeout(function(){ openPages(); }, 350);
 
@@ -20219,12 +22028,73 @@ function initAfterStore() {
     } else {
       createFirstPage();
     }
+  }, function(){
+    /* ★一覧を読めなかった。ここで「初回起動」に進むと、
+       「ページ1」だけの一覧を作って既存の一覧を上書きしてしまう。
+       何も作らず、何も保存させずに、読み込み直しを案内する。 */
+    sceneTrusted = false;
+    booting = false;
+    showStoreTrouble("ノート一覧を読めませんでした。ノートは消えていません", true);
   });
 }
-openDB().then(function(d){ db = d; initAfterStore(); }).catch(function(){
-  useLocalStorage = true;
-  initAfterStore();
-});
+/* ★保存領域(IndexedDB)が開けなかった時の扱い。
+   以前は1回失敗しただけで別の保存先へ黙って切り替え、空の状態で起動していた。
+   ノートが消えたように見えるうえ、そのまま書き始めると「ページ1」が増える。
+   この端末で一度でも開けたことがあるなら、切り替えずに開き直しを試み、
+   それでも駄目なら何も作らずに知らせる。 */
+function startStore(triesLeft) {
+  openDB().then(function(d){
+    db = d;
+    try { localStorage.setItem("inknote_idb_ok", "1"); } catch (e) {}
+    initAfterStore();
+  }).catch(function(){
+    var usedBefore = false;
+    try { usedBefore = (localStorage.getItem("inknote_idb_ok") === "1"); } catch (e) {}
+    if (!usedBefore) { useLocalStorage = true; initAfterStore(); return; }
+    if (triesLeft > 0) { setTimeout(function(){ startStore(triesLeft - 1); }, 700); return; }
+    sceneTrusted = false;                         // 何も保存させない
+    statusEl.textContent = "⚠ 保存領域を開けませんでした。ノートは消えていません";
+    showSheet("保存領域を開けませんでした(ノートは端末に残っています)", [
+      { label: "↻ 読み込み直す", fn: function(){ location.reload(); } },
+      { label: "閉じる", cancel: true }
+    ]);
+  });
+}
+startStore(3);
+/* =========================================================
+   保存領域の永続化(B1)
+   ---------------------------------------------------------
+   ★永続化されていない保存領域は、端末の空きが減ると
+     サイトごと丸ごと消される対象になる(iPhoneのSafariは、
+     ホーム画面に追加していないと7日使わないだけで消す)。
+     ここにあるのが手元で唯一の写しなので、最初の操作の後に要求する。
+     (許可の確認が出る端末では、操作の直後でないと求められないため)
+========================================================= */
+window.__persisted = null;
+function askPersist() {
+  try {
+    if (!navigator.storage || !navigator.storage.persisted) return;
+    navigator.storage.persisted().then(function(already){
+      if (already) { window.__persisted = true; return; }
+      if (!navigator.storage.persist) { window.__persisted = false; return; }
+      return navigator.storage.persist().then(function(ok){ window.__persisted = !!ok; });
+    }).catch(function(){});
+  } catch (e) {}
+}
+document.addEventListener("pointerdown", function once(){
+  document.removeEventListener("pointerdown", once, true);
+  setTimeout(askPersist, 500);
+}, true);
+/* ★以前の版が localStorage に残した本文の控えを片付ける(C1)。
+   元の中身は保存領域にあるので、消しても失うものは無い。 */
+try {
+  var _rk = [];
+  for (var _i = 0; _i < localStorage.length; _i++) {
+    var _k = localStorage.key(_i);
+    if (_k && _k.indexOf("inknote_rescue_") === 0) _rk.push(_k);
+  }
+  _rk.forEach(function(k){ localStorage.removeItem(k); });
+} catch (e) {}
 setTimeout(function(){
   if (statusEl.textContent === "準備中…") statusEl.textContent = "新規ノート(保存未確認)";
 }, 3000);
@@ -20379,8 +22249,38 @@ if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) {
   navigator.serviceWorker.addEventListener("controllerchange", function(){
     if (swReloaded) return;
     swReloaded = true;
-    location.reload();
+    reloadWhenSafe();
   });
+}
+
+/* =========================================================
+   新しい版への切り替え(再読み込み)を、安全な時まで待つ(B2)
+   ---------------------------------------------------------
+   ★以前は新しい版が届いた瞬間に再読み込みしていた。
+     起動のたびに新版へ即交代させるようにしたので、開いて数秒で
+     再読み込みが走ることがあり、入力中だと確定前の文字が消えた。
+   ★入力中・描画中は、手が止まる(2秒)か画面が隠れるまで待つ。
+     再読み込みの前に必ず保存し、その完了を待つ(最大3秒)。
+========================================================= */
+var lastUserInput = Date.now();
+["pointerdown", "keydown", "input"].forEach(function(t){
+  document.addEventListener(t, function(){ lastUserInput = Date.now(); }, true);
+});
+function reloadWhenSafe() {
+  var busy = function(){
+    return !!editingObj || (Date.now() - lastUserInput < 2000);
+  };
+  var go = function(){
+    if (editingObj) { try { syncEditingObjFromDom(); dirtySinceSave = true; } catch (e) {} }
+    var p = dirtySinceSave ? Promise.resolve(saveDocNow()).catch(function(){}) : Promise.resolve();
+    Promise.race([p, new Promise(function(r){ setTimeout(r, 3000); })])
+      .then(function(){ location.reload(); });
+  };
+  if (document.visibilityState === "hidden" || !busy()) { go(); return; }
+  statusEl.textContent = "新しい版があります。手を止めると切り替わります";
+  var iv = setInterval(function(){
+    if (document.visibilityState === "hidden" || !busy()) { clearInterval(iv); go(); }
+  }, 1000);
 }
 
 /* ---------- 同期: 前回ログイン済みなら起動時に自動接続 ---------- */
