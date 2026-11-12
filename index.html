@@ -46,7 +46,10 @@
   .obj{position:absolute;touch-action:none}
   /* テキストは長押しでの文字選択を許可する(画面スクロールはJSで処理) */
   .obj-text{touch-action:auto;-webkit-touch-callout:default}
-  .obj.selected{outline:1.5px dashed var(--accent);outline-offset:3px}
+  .obj.selected{outline:1px solid rgba(76,111,255,.55);outline-offset:2px}
+  /* ★1つだけ選んでいる時は、外側の選択枠(#selBox)だけにする。
+     各BOXの枠と外側の枠が二重に出て、ロック中は青と橙の破線が入れ子になっていた(v24.03)。 */
+  body.sel-one .obj.selected{outline:none}
   /* 検索で飛んだ先を一瞬だけ光らせる(どれが該当か分かるように) */
   .obj.found-flash{
     outline:3px solid #ffb020;outline-offset:2px;
@@ -620,7 +623,12 @@
     box-shadow:0 6px 20px rgba(0,0,0,.45);
     pointer-events:none;text-align:center;
   }
-  #toast.show{display:block}
+  /* 2行まで折り返し、それ以上は省く(長文が画面を覆わないように) */
+  #toast{max-width:min(92vw,560px);overflow:hidden;
+    -webkit-line-clamp:2;-webkit-box-orient:vertical}
+  #toast.show{display:-webkit-box;pointer-events:auto;cursor:pointer}
+  #toast.warn{background:rgba(120,30,26,.96)}
+  #toast.below-trouble{top:calc(env(safe-area-inset-top) + 108px)}
   #editSplit, #editCopy{
     position:fixed;z-index:41;display:none;
     top:calc(env(safe-area-inset-top) + 10px);
@@ -856,7 +864,22 @@
     50%{box-shadow:0 0 0 6px rgba(90,150,255,.45)}
   }
   #fingerToggle.attention{animation:ftPulse 1.2s ease-in-out 2}
-  #selBox.locked{border-style:dashed;border-color:#e0a83a}
+  #selBox.locked{border-style:solid;border-color:#e0a83a}
+  #asTitle{white-space:pre-line}
+  /* ⚙メニューの区分(v24.04) */
+  .mn-sec{border-bottom:1px solid var(--ui-line)}
+  .mn-sec-h{display:flex;align-items:center;justify-content:space-between;width:100%;
+    border:none;background:transparent;color:var(--ui-text);font-size:13.5px;font-weight:800;
+    padding:12px 6px;cursor:pointer;text-align:left}
+  .mn-sec-h::after{content:"▾";color:var(--ui-dim);font-size:12px;transition:transform .15s}
+  .mn-sec.closed .mn-sec-h::after{transform:rotate(-90deg)}
+  .mn-sec.closed .mn-sec-b{display:none}
+  .mn-sec-b{padding-bottom:6px}
+  .mn-sec-b .st-label{color:var(--ui-dim)}
+  .mn-danger{margin-top:18px;padding-top:6px;border-top:2px solid rgba(255,120,110,.35)}
+  /* ロック中の印。拡大縮小しても同じ大きさに見えるよう、表示倍率で割り戻す */
+  #selBox.locked::after{content:"🔒";position:absolute;top:-14px;right:-14px;font-size:14px;
+    transform:scale(calc(1 / var(--ws, 1)));transform-origin:top right;pointer-events:none}
   #ctxbar button{
     border:none;background:transparent;color:var(--ui-text);
     font-size:14px;font-weight:600;padding:8px 10px;border-radius:9px;cursor:pointer;
@@ -1385,7 +1408,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v24.00">InkNote <small>v24.00</small></div>
+  <div class="brand" title="InkNote v24.04">InkNote <small>v24.04</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1569,7 +1592,7 @@ window.onerror = function(msg, src, line){
 <canvas id="minimap"></canvas>
 <div id="miniZoom">
   <button id="miniFindBtn" title="ノートの中の文字を探す">🔍 探す</button>
-  <button id="miniTocBtn" title="目次を開く">📑 目次</button>
+  <button id="miniTocBtn" title="ブックマークを開く">🔖 ブックマーク</button>
   <input type="range" id="mzSlider" min="0" max="1000" value="500">
   <span id="mzLabel">100%</span>
 </div>
@@ -1602,7 +1625,7 @@ window.onerror = function(msg, src, line){
   <span class="rb-sep"></span>
   <button id="rbMath" title="選んだ部分を数式に組版">∑</button>
   <span class="rb-sep"></span>
-  <button id="rbHead" title="選んだ文字を見出しにして目次へ">🔖</button>
+  <button id="rbHead" title="選んだ文字を見出しにする">🔖</button>
   <span class="rb-sep"></span>
   <button id="rbSplitCol" title="ここでテキストBOXを2つに分ける">⇥</button>
   <span class="rb-sep"></span>
@@ -1613,6 +1636,11 @@ window.onerror = function(msg, src, line){
   <button id="ctxStyle" title="見た目"><span class="ci">Aa</span><span class="cl">見た目</span></button>
   <button id="ctxLock" title="ロック"><span class="ci">🔓</span><span class="cl">ロック</span></button>
   <button id="ctxMath" title="数式にする/編集する"><span class="ci">∑</span><span class="cl">数式</span></button>
+  <!-- ★選んだ物の種類で出し分ける(v24.03)。中身は既存の処理を呼ぶだけ -->
+  <button id="ctxCopyText" title="文字としてコピー(他のアプリへ貼れる)"><span class="ci">📄</span><span class="cl">コピー</span></button>
+  <button id="ctxCropMain" title="画像を切り抜く"><span class="ci">✂</span><span class="cl">切り抜き</span></button>
+  <button id="ctxDupMain" title="その場に複製"><span class="ci">⧉</span><span class="cl">複製</span></button>
+  <button id="ctxWidthMain" title="見やすい幅にそろえる"><span class="ci">⇔</span><span class="cl">そろえる</span></button>
   <button id="ctxDel" class="del" title="削除"><span class="ci">🗑</span><span class="cl">削除</span></button>
   <button id="ctxMore" title="その他"><span class="ci">⋯</span><span class="cl">その他</span></button>
   <span id="ctxExtra">
@@ -1620,7 +1648,7 @@ window.onerror = function(msg, src, line){
     <button id="ctxSave" title="画像として保存">💾</button>
     <button id="ctxOpa" title="透明度">🌓</button>
     <button id="ctxGroup" title="まとまりの整理">🗂</button>
-    <button id="ctxAnchor" title="目次に追加/外す">🔖</button>
+    <button id="ctxAnchor" title="ブックマークの印を付ける/外す">🔖</button>
     <button id="ctxStraighten" title="手書き線を直線化">📏</button>
     <button id="ctxShapify" title="手書きを図形に補正(丸・四角・直線)">🔷</button>
     <button id="ctxTidy" title="位置をそろえる">📐</button>
@@ -1719,7 +1747,7 @@ window.onerror = function(msg, src, line){
 </div>
 
 <div id="tocPanel">
-  <div class="pp-head"><span>目次</span><button id="tocClose">✕</button></div>
+  <div class="pp-head"><span>ブックマーク</span><button id="tocClose">✕</button></div>
   <div class="st-row" style="gap:8px">
     <button class="toggle" id="tocShowToggle"></button>
     <span style="color:var(--ui-dim);font-size:11px">画面に🔖の印を表示</span>
@@ -1820,122 +1848,162 @@ window.onerror = function(msg, src, line){
 <div id="menuPanel">
   <div class="pp-head"><span>⚙ メニュー</span><button id="mnClose">✕</button></div>
   <div class="scrollable" style="overflow-y:auto;touch-action:pan-y;-webkit-overflow-scrolling:touch;flex:1">
-    <div class="st-row"><span class="st-label">用紙</span>
+    <!-- ★27行が1列に並んでいたのを、区分ごとにまとめた(v24.04)。
+         区分は畳める。行の中身とボタンのidは以前のまま(処理の結び付きを変えないため)。 -->
+    <div class="mn-sec" data-sec="note">
+      <button class="mn-sec-h" type="button">このノート</button>
+      <div class="mn-sec-b">
+<div class="st-row"><span class="st-label">用紙</span>
       <button class="stybtn th-opt sel" data-t="cream">クリーム</button>
       <button class="stybtn th-opt" data-t="white">ホワイト</button>
       <button class="stybtn th-opt" data-t="dark">ダーク</button>
       <button class="stybtn th-opt" data-t="board">黒板</button>
     </div>
-    <div class="st-row" id="pgOpsRow" style="display:none">
-      <span class="st-label">ページ</span>
-      <button class="stybtn" id="pgInsert">⤵ 空白ページを挿入</button>
-      <button class="stybtn" id="pgRemove">⤴ 空白ページを詰める</button>
-    </div>
-    <div class="st-row" id="pgOpsHint" style="display:none;color:var(--ui-dim);font-size:11px">
-      画面上部に見えているページの「前」にA4を1枚差し込みます(以降の内容が1ページ分ずれます)
-    </div>
-    <div class="st-row"><span class="st-label">サイズ</span>
+<div class="st-row"><span class="st-label">サイズ</span>
       <button class="stybtn cv-opt sel" data-cv="inf">無限</button>
       <button class="stybtn cv-opt" data-cv="a4v">A4縦</button>
       <button class="stybtn cv-opt" data-cv="a4h">A4横</button>
     </div>
-    <div class="st-row"><span class="st-label">背景</span>
+<div class="st-row"><span class="st-label">背景</span>
       <button class="stybtn bg-opt sel" data-bg="dots">ドット</button>
       <button class="stybtn bg-opt" data-bg="grid">方眼</button>
       <button class="stybtn bg-opt" data-bg="lines">罫線</button>
       <button class="stybtn bg-opt" data-bg="plain">無地</button>
     </div>
-    <div class="st-row"><span class="st-label">線の強弱</span>
+<div class="st-row" id="pgOpsRow" style="display:none">
+      <span class="st-label">ページ</span>
+      <button class="stybtn" id="pgInsert">⤵ 空白ページを挿入</button>
+      <button class="stybtn" id="pgRemove">⤴ 空白ページを詰める</button>
+    </div>
+<div class="st-row" id="pgOpsHint" style="display:none;color:var(--ui-dim);font-size:11px">
+      画面上部に見えているページの「前」にA4を1枚差し込みます(以降の内容が1ページ分ずれます)
+    </div>
+      </div>
+    </div>
+    <div class="mn-sec" data-sec="write">
+      <button class="mn-sec-h" type="button">書く・貼る</button>
+      <div class="mn-sec-b">
+<div class="st-row"><span class="st-label">線の強弱</span>
       <button class="stybtn dyn-opt" data-dyn="off">一定</button>
       <button class="stybtn dyn-opt sel" data-dyn="pressure">筆圧</button>
       <button class="stybtn dyn-opt" data-dyn="auto">オート</button>
     </div>
-    <div class="st-row" style="padding-top:0">
+<div class="st-row" style="padding-top:0">
       <span style="color:var(--ui-dim);font-size:11px;line-height:1.7" id="dynHint">
         オート: 筆圧 + ペンの傾き + 速さで太さが変わります(傾きは対応ペンのみ)
       </span>
     </div>
-    <div class="st-row"><span class="st-label">マップ</span>
-      <button class="toggle on" id="mmToggle"></button>
-      <span style="color:var(--ui-dim);font-size:11px">左下に鳥瞰ミニマップを表示</span>
-    </div>
-    <div class="st-row"><span class="st-label">更新</span>
-      <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
-      <span id="verInfo" style="color:var(--ui-dim);font-size:11px"></span>
-      <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
-    </div>
-    <div class="st-row"><span class="st-label">画像</span>
+<div class="st-row"><span class="st-label">画像</span>
       <button class="stybtn iq-opt sel" data-iq="high">高画質</button>
       <button class="stybtn iq-opt" data-iq="small">容量優先</button>
       <span style="color:var(--ui-dim);font-size:11px">スクショの文字を残すなら高画質</span>
     </div>
-    <div class="st-row"><span class="st-label">整形</span>
-      <button class="stybtn" id="cleanNoiseBtn">🧹 引用タグを取り除く</button>
-      <span style="color:var(--ui-dim);font-size:11px">このページの[span_0]等の跡を今から一括で消す</span>
-    </div>
-    <div class="st-row"><span class="st-label">整形</span>
-      <button class="stybtn" id="stripBackslashBtn">🧹 \ を一括で消す</button>
-      <span style="color:var(--ui-dim);font-size:11px">式($…$等)や\frac等は残し、崩れて残った\だけ消す</span>
-    </div>
-    <div class="st-row"><span class="st-label">表</span>
-      <button class="stybtn" id="tableAddBtn">⊞ 表を作る</button>
-      <span style="color:var(--ui-dim);font-size:11px">行×列を指定して作ります</span>
-    </div>
-    <div class="st-row"><span class="st-label">数式</span>
-      <button class="stybtn" id="mathAddBtn">∑ 数式を追加</button>
-      <span style="color:var(--ui-dim);font-size:11px">分数・指数をきれいに組んで貼る</span>
-    </div>
-    <div class="st-row"><span class="st-label">数式</span>
+<div class="st-row"><span class="st-label">数式</span>
       <button class="toggle" id="autoCellMathToggle"></button>
       <span style="color:var(--ui-dim);font-size:11px">表を貼った時、セルの中の式も自動で組む(大きい表は少し待ちます)</span>
     </div>
-    <div class="st-row"><span class="st-label">目次</span>
-      <button class="stybtn" id="tocOpenBtn">🔖 目次を開く</button>
-      <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
-    </div>
-    <div class="st-row"><span class="st-label">見出し</span>
+<div class="st-row"><span class="st-label">幅</span>
       <button class="stybtn" id="colWidthBtn">↔ 見やすい幅の設定</button>
       <span style="color:var(--ui-dim);font-size:11px">貼り付けの初期幅と、⋯の「幅をそろえる」に使う幅</span>
     </div>
-    <div class="st-row"><span class="st-label">整列</span>
+      </div>
+    </div>
+    <div class="mn-sec" data-sec="insert">
+      <button class="mn-sec-h" type="button">入れる</button>
+      <div class="mn-sec-b">
+<div class="st-row"><span class="st-label">表</span>
+      <button class="stybtn" id="tableAddBtn">⊞ 表を作る</button>
+      <span style="color:var(--ui-dim);font-size:11px">行×列を指定して作ります</span>
+    </div>
+<div class="st-row"><span class="st-label">数式</span>
+      <button class="stybtn" id="mathAddBtn">∑ 数式を追加</button>
+      <span style="color:var(--ui-dim);font-size:11px">分数・指数をきれいに組んで貼る</span>
+    </div>
+      </div>
+    </div>
+    <div class="mn-sec" data-sec="tidy">
+      <button class="mn-sec-h" type="button">そろえる・片付ける</button>
+      <div class="mn-sec-b">
+<div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyWidthAllBtn">⇔ 全体の幅をそろえる</button>
       <span style="color:var(--ui-dim);font-size:11px">選ばなくてもページ全部を、列ごとに幅と左端をそろえる</span>
     </div>
-    <div class="st-row"><span class="st-label">整列</span>
+<div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="unstackAllBtn">↧ 重なりを全部直す</button>
       <span style="color:var(--ui-dim);font-size:11px">重なった文字を下へ送って解消。連鎖もまとめて直します</span>
     </div>
-    <div class="st-row"><span class="st-label">整列</span>
+<div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="tidyOpenBtn">📐 位置をそろえる</button>
       <span style="color:var(--ui-dim);font-size:11px">だんだんズレた左端・行間を直す</span>
     </div>
-    <div class="st-row"><span class="st-label">整列</span>
+<div class="st-row"><span class="st-label">整列</span>
       <button class="stybtn" id="gapOpenBtn">↕ すき間を空ける / 詰める</button>
       <span style="color:var(--ui-dim);font-size:11px">タップで列を自動判定、ドラッグで範囲を囲む。下げる・詰めるの両方できます</span>
     </div>
-    <div class="st-row"><span class="st-label">整理</span>
+<div class="st-row"><span class="st-label">整理</span>
       <button class="stybtn" id="grpOpenBtn">🗂 まとまりを整理</button>
       <span style="color:var(--ui-dim);font-size:11px">散らかった内容を塊ごとに整理</span>
     </div>
-    <div class="st-row"><span class="st-label">印刷</span>
-      <button class="toggle" id="printWhiteToggle"></button>
-      <span style="color:var(--ui-dim);font-size:11px">印刷・PDFは白い紙で出す(インク節約)</span>
+<div class="st-row"><span class="st-label">整形</span>
+      <button class="stybtn" id="cleanNoiseBtn">🧹 引用タグを取り除く</button>
+      <span style="color:var(--ui-dim);font-size:11px">このページの[span_0]等の跡を今から一括で消す</span>
     </div>
-    <div class="st-row"><span class="st-label">起動</span>
-      <button class="toggle" id="homeToggle"></button>
-      <span style="color:var(--ui-dim);font-size:11px">起動時にノート一覧を開く</span>
+<div class="st-row"><span class="st-label">整形</span>
+      <button class="stybtn" id="stripBackslashBtn">🧹 \ を一括で消す</button>
+      <span style="color:var(--ui-dim);font-size:11px">式($…$等)や\frac等は残し、崩れて残った\だけ消す</span>
     </div>
-    <div class="st-row"><span class="st-label">暗記</span>
+      </div>
+    </div>
+    <div class="mn-sec" data-sec="view">
+      <button class="mn-sec-h" type="button">表示</button>
+      <div class="mn-sec-b">
+<div class="st-row"><span class="st-label">マップ</span>
+      <button class="toggle on" id="mmToggle"></button>
+      <span style="color:var(--ui-dim);font-size:11px">左下に鳥瞰ミニマップを表示</span>
+    </div>
+<div class="st-row"><span class="st-label">暗記</span>
       <button class="toggle" id="msToggle"></button>
       <span style="color:var(--ui-dim);font-size:11px">マーカー部分を紙色で隠す(暗記シート)</span>
     </div>
-    <div class="st-row" style="border-top:1px solid var(--ui-line);margin-top:8px;padding-top:16px">
+<div class="st-row"><span class="st-label">起動</span>
+      <button class="toggle" id="homeToggle"></button>
+      <span style="color:var(--ui-dim);font-size:11px">起動時にノート一覧を開く</span>
+    </div>
+<div class="st-row"><span class="st-label">印刷</span>
+      <button class="toggle" id="printWhiteToggle"></button>
+      <span style="color:var(--ui-dim);font-size:11px">印刷・PDFは白い紙で出す(インク節約)</span>
+    </div>
+<!-- ★右下の 🔖 ブックマーク と同じ画面が開くだけなので出さない。
+         ボタンには処理が結び付いているので、要素は消さずに隠す。 -->
+    <div class="st-row" style="display:none"><span class="st-label">目次</span>
+      <button class="stybtn" id="tocOpenBtn">🔖 ブックマークを開く</button>
+      <span style="color:var(--ui-dim);font-size:11px">印を付けた場所へ一覧から移動</span>
+    </div>
+      </div>
+    </div>
+    <div class="mn-sec" data-sec="app">
+      <button class="mn-sec-h" type="button">アプリ</button>
+      <div class="mn-sec-b">
+<div class="st-row"><span class="st-label">更新</span>
+      <button class="stybtn" id="updateApp">⟳ アプリを更新</button>
+      <span id="verInfo" style="color:var(--ui-dim);font-size:11px"></span>
+      <span style="color:var(--ui-dim);font-size:11px">最新版が反映されない時に(ノートは消えません)</span>
+    </div>
+    <div class="st-row"><span class="st-label">診断</span>
+      <button class="stybtn" id="diagOpenBtn">🩺 同期の状態を調べる</button>
+      <span style="color:var(--ui-dim);font-size:11px">☁ 同期の画面を開きます(端末どうしで食い違う時に)</span>
+    </div>
+      </div>
+    </div>
+    <div class="mn-danger">
+<div class="st-row" style="border-top:1px solid var(--ui-line);margin-top:8px;padding-top:16px">
       <button class="pp-tool" id="wipePage" style="color:#ffb84d">🧹 開いているノートを白紙に(戻せません)</button>
     </div>
-    <div class="st-row">
-      <button class="pp-tool" id="wipeAll" style="color:#ff9d97">💥 すべてのデータを初期化</button>
+<div class="st-row">
+      <button class="pp-tool" id="wipeAll" style="color:#ff9d97">💥 すべてのデータを初期化(ノートは30日間ごみ箱に残ります)</button>
     </div>
-  </div>
+    </div>
+    </div>
 </div>
 
 <div id="syncPanel">
@@ -1999,7 +2067,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "24.00";
+var APP_VERSION = "24.04";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -2157,19 +2225,56 @@ var editHandle = $("#editHandle");
    書き込みを横取りして、編集中は見える場所(トースト)にも出す。 */
 var _statusEl = $("#status");
 var _toastEl = $("#toast"), _toastTimer = null;
+/* =========================================================
+   通知の出し方(v24.01)
+   ---------------------------------------------------------
+   ★状態表示(#status)は上部バーの中の小さな丸で、スマホ幅では
+     約8文字で切れ、しかも横スクロールする帯の中にあった。
+     「保存を止めました」「この端末の版として残しました」など、
+     読んでもらわないと困る知らせがスマホでは届いていなかった。
+   ★書き込む側(359か所)はそのままにし、受け取る所で振り分ける。
+       ・出さない   : 保存済み ✓ / 新規ノート / 準備中…(頻繁で、読む必要がない)
+       ・出し続ける : 「…」で終わる・(3/12) のような進み具合(次の知らせで置き換わる)
+       ・長めに出す : 「⚠」で始まる(8秒・色を変える)
+       ・それ以外   : 2.5秒+1文字60ms(最長8秒)
+     押すと消える。同じ文言が続けて来たら出し直さない。
+   ★#status の丸には40文字までだけ出す(PCで長い文が紙面に被っていた)。
+========================================================= */
+var NOTICE_QUIET = /^(保存済み ✓|新規ノート|準備中…|同期済み.*|)$/;
+var _lastNotice = "", _lastNoticeAt = 0;
+function showNotice(v) {
+  if (!_toastEl) return;
+  v = String(v == null ? "" : v);
+  if (NOTICE_QUIET.test(v)) return;
+  var now = Date.now();
+  if (v === _lastNotice && now - _lastNoticeAt < 1500 && _toastEl.classList.contains("show")) return;
+  _lastNotice = v; _lastNoticeAt = now;
+  var ongoing = /…$|…\)?$|\(\d+\s*\/\s*\d+\)/.test(v);
+  var warn = v.charAt(0) === "⚠";
+  _toastEl.textContent = v;
+  _toastEl.classList.toggle("warn", warn);
+  /* 保存領域の赤い帯が出ている時は、その下にずらす */
+  var st = document.getElementById("storeTrouble");
+  _toastEl.classList.toggle("below-trouble", !!(st && st.style.display !== "none"));
+  _toastEl.classList.add("show");
+  clearTimeout(_toastTimer);
+  if (ongoing) return;                       // 次の知らせが来るまで出しておく
+  var ms = warn ? 8000 : Math.min(8000, 2500 + v.length * 60);
+  _toastTimer = setTimeout(function(){ _toastEl.classList.remove("show"); }, ms);
+}
 var statusEl = {
-  get textContent(){ return _statusEl ? _statusEl.textContent : ""; },
+  get textContent(){ return _statusEl ? (_statusEl.__full || _statusEl.textContent) : ""; },
   set textContent(v){
-    if (_statusEl) _statusEl.textContent = v;
-    if (!_toastEl) return;
-    var hidden = document.body.classList.contains("editing-mode");
-    if (!hidden || !v) { _toastEl.classList.remove("show"); return; }
-    _toastEl.textContent = v;
-    _toastEl.classList.add("show");
-    clearTimeout(_toastTimer);
-    _toastTimer = setTimeout(function(){ _toastEl.classList.remove("show"); }, 2600);
+    v = String(v == null ? "" : v);
+    if (_statusEl) {
+      _statusEl.__full = v;                  // 読み返す側には全文を返す
+      _statusEl.textContent = v.length > 40 ? v.slice(0, 39) + "…" : v;
+      _statusEl.title = v;
+    }
+    showNotice(v);
   }
 };
+if (_toastEl) _toastEl.addEventListener("click", function(){ _toastEl.classList.remove("show"); });
 var hintEl = $("#hint");
 var ctxbar = $("#ctxbar");
 var DPR = Math.max(1, window.devicePixelRatio || 1);
@@ -3084,6 +3189,22 @@ function updateSelUI() {
   $("#ctxDel").style.display = allLocked ? "none" : "";
   $("#ctxDup").style.display = allLocked ? "none" : "";
   $("#ctxFront").style.display = allLocked ? "none" : "";
+  /* ★選んだ物の種類で、よく使う操作だけを出す(v24.03)
+       文字        : 編集 / 見た目 / 数式 / コピー / 削除 / ⋯
+       画像        : 切り抜き / 複製 / 削除 / ⋯(数式の画像はコピーも)
+       図形・手書き: 見た目 / 複製 / 削除 / ⋯
+       複数        : コピー / そろえる / 削除 / ⋯
+     ロックは使う頻度が低いので ⋯ へ移す。ロック中の物を選んだ時だけ、先頭に「解除」を出す。 */
+  var hasCopyText = sel.some(function(x){ return x.type === "text" || (x.type === "image" && x.latex); });
+  var isInk = s1 && (s1.type === "shape" || s1.type === "stroke");
+  $("#ctxCopyText").style.display = hasCopyText ? "" : "none";
+  $("#ctxCropMain").style.display = (!allLocked && isImage && !s1.latex) ? "" : "none";
+  $("#ctxDupMain").style.display = (!allLocked && (isInk || (isImage && !s1.latex))) ? "" : "none";
+  $("#ctxWidthMain").style.display =
+    (!allLocked && sel.length > 1 && sel.some(function(x){ return x.type === "text" || x.type === "image"; })) ? "" : "none";
+  $("#ctxLock").style.display = allLocked ? "" : "none";
+  $("#ctxLock").style.order = allLocked ? "-1" : "";
+  document.body.classList.toggle("sel-one", sel.length === 1);
   // 選択メニューは必ず「BOXの外側」に置く(文字の上に被せない)
   var cw = ctxbar.offsetWidth || (ctxbar.classList.contains("expanded") ? 330 : 190);
   var ch = ctxbar.offsetHeight || 44;
@@ -3101,7 +3222,31 @@ function updateSelUI() {
     { x: r.x + r.w + M, y: Math.max(TOP_LIMIT, r.y) },   // 右
     { x: r.x - cw - M, y: Math.max(TOP_LIMIT, r.y) }     // 左
   ];
-  var placed = null;
+  /* ★候補ごとに「ほかの文字・画像を隠す面積」を数え、いちばん少ない所に置く(v24.03)。
+     以前は選んだBOXに重ならない最初の候補(たいてい真下)に置いていたため、
+     行が詰まっている所では次の行を隠していた。同じなら 下→上→右→左 の順。 */
+  var others = [];
+  for (var oi = 0; oi < objects.length; oi++) {
+    var ob = objects[oi];
+    if ((ob.type !== "text" && ob.type !== "image") || sel.indexOf(ob) !== -1) continue;
+    var obb = objBBox(ob);
+    if (!obb) continue;
+    var sx0 = obb.x * view.s + view.x, sy0 = obb.y * view.s + view.y;
+    var sw0 = obb.w * view.s, sh0 = obb.h * view.s;
+    if (sx0 > innerWidth || sy0 > innerHeight || sx0 + sw0 < 0 || sy0 + sh0 < 0) continue;
+    others.push({ x: sx0, y: sy0, w: sw0, h: sh0 });
+  }
+  var hideArea = function(x, y){
+    var a = 0;
+    for (var k = 0; k < others.length; k++) {
+      var o2 = others[k];
+      var ow = Math.min(x + cw, o2.x + o2.w) - Math.max(x, o2.x);
+      var oh = Math.min(y + ch, o2.y + o2.h) - Math.max(y, o2.y);
+      if (ow > 0 && oh > 0) a += ow * oh;
+    }
+    return a;
+  };
+  var placed = null, bestArea = Infinity;
   for (var ci = 0; ci < cand.length; ci++) {
     var c = cand[ci];
     var cx = Math.max(8, Math.min(innerWidth - cw - 8, c.x));
@@ -3109,8 +3254,9 @@ function updateSelUI() {
     if (cy < TOP_LIMIT || cy + ch > BOT_LIMIT) continue;         // 画面外
     if (cx + cw > r.x && cx < r.x + r.w &&
         cy + ch > r.y && cy < r.y + r.h) continue;               // BOXに重なる
-    placed = { x: cx, y: cy };
-    break;
+    var area = hideArea(cx, cy);
+    if (area < bestArea - 1) { bestArea = area; placed = { x: cx, y: cy }; }
+    if (bestArea === 0) break;                                   // 何も隠さない所が見つかった
   }
   if (!placed) {
     // BOXが画面いっぱいで外に置けない時は、画面下端(ツールバーの上)へ逃がす
@@ -3297,10 +3443,10 @@ $("#clearBtn").onclick = function(){
   if (!objects.length) { statusEl.textContent = "このノートには内容がありません"; return; }
   var pg = findPage(currentId);
   var nm = (pg && pg.title) ? pg.title : "このノート";
-  if (!confirm("「" + nm + "」の中身をすべて消します。\n" +
+  askConfirm("「" + nm + "」の中身をすべて消します。\n" +
                "・ノート自体は一覧に残ります\n" +
                "・他のノートには影響しません\n" +
-               "・↩(取り消し)で元に戻せます\n\nよろしいですか?")) return;
+               "・↩(取り消し)で元に戻せます\n\nよろしいですか?", "消す", function(){
   closePages();
   pushUndo();
   withShrinkAllowed(function(){ rebuildScene("[]"); });   // 意図して消す操作
@@ -3312,6 +3458,7 @@ $("#clearBtn").onclick = function(){
   applyView();
   scheduleSave();
   statusEl.textContent = "「" + nm + "」を空にしました(↩で戻せます)";
+  }, { danger: true });
 };
 
 /* ---------- オブジェクトの移動/リサイズ(共通ロジック) ---------- */
@@ -6575,7 +6722,7 @@ function splitTextObjectAtWorldY(o, worldY) {
    ★「すき間を空ける」と同じ考え方で、列を自動判定して
      その列の中だけを動かす。隣の列には触らない。
 ========================================================= */
-function pushDownBelow(refBBox, oldBottom, delta, exclude) {
+function pushDownBelowRaw(refBBox, oldBottom, delta, exclude) {
   if (!(delta > 0.5)) return 0;
   var col = (typeof gapDetectColumn === "function")
     ? gapDetectColumn(refBBox.x + refBBox.w / 2, refBBox.y + refBBox.h / 2)
@@ -6595,6 +6742,10 @@ function pushDownBelow(refBBox, oldBottom, delta, exclude) {
     moved++;
   }
   return moved;
+}
+/* 図形・手書きも付いていかせる(withInkFollow)。中身は pushDownBelowRaw */
+function pushDownBelow(refBBox, oldBottom, delta, exclude) {
+  return withInkFollow(function(){ return pushDownBelowRaw(refBBox, oldBottom, delta, exclude); });
 }
 function splitTextAtCursor() {
   var o = editingObj, node = null, off = 0;
@@ -7746,16 +7897,45 @@ $("#zoomChip").onclick = function(){
 /* ---------- ツールバーをドラッグで移動(位置は記憶) ---------- */
 (function(){
   var tb = $("#toolbar");
-  function applyToolbarPos(p){
-    tb.style.left = Math.max(4, Math.min(innerWidth - 80, p.x)) + "px";
-    tb.style.top = Math.max(50, Math.min(innerHeight - 70, p.y)) + "px";
+  /* ★位置は「近い方の画面の端からの距離」で覚える(v24.04)。
+     以前は画面の座標そのものを覚えていたため、窓の大きさを変えると
+     画面のまん中に居座ることがあった。
+     読み込み時と画面の大きさが変わった時に、画面の中へ収め直す。
+     つまみ(⠿)を素早く2回押すと、既定の位置(下端中央)に戻る。 */
+  var TB_KEY = "inknote_toolbar";
+  function resetToolbarPos(){
+    tb.style.left = ""; tb.style.top = ""; tb.style.bottom = ""; tb.style.transform = "";
+  }
+  function placeToolbar(px, py){
+    var w = tb.offsetWidth || 300, h = tb.offsetHeight || 56;
+    tb.style.left = Math.max(4, Math.min(innerWidth - w - 4, px)) + "px";
+    tb.style.top = Math.max(50, Math.min(innerHeight - h - 4, py)) + "px";
     tb.style.bottom = "auto";
     tb.style.transform = "none";
   }
-  try {
-    var tp = JSON.parse(localStorage.getItem("inknote_toolbar") || "null");
-    if (tp) applyToolbarPos(tp);
-  } catch (e) {}
+  function applyToolbarPos(p){ placeToolbar(p.x, p.y); }
+  function savedToScreen(t){
+    if (!t) return null;
+    if (t.ax == null) {                          // 以前の形式(画面の座標)
+      /* 画面のまん中あたりに保存されていて、窓の大きさも変わっているなら既定へ戻す */
+      var midY = Math.abs((t.y || 0) - innerHeight / 2) < innerHeight * 0.2;
+      if (midY && t.vw && (t.vw !== innerWidth || t.vh !== innerHeight)) return null;
+      if (midY && !t.vw) return null;
+      return { x: t.x, y: t.y };
+    }
+    var w = tb.offsetWidth || 300, h = tb.offsetHeight || 56;
+    return { x: t.ax === "l" ? t.dx : innerWidth - w - t.dx,
+             y: t.ay === "t" ? t.dy : innerHeight - h - t.dy };
+  }
+  function restoreToolbar(){
+    var t = null;
+    try { t = JSON.parse(localStorage.getItem(TB_KEY) || "null"); } catch (e) {}
+    var p = savedToScreen(t);
+    if (p) placeToolbar(p.x, p.y); else resetToolbarPos();
+  }
+  restoreToolbar();
+  addEventListener("resize", function(){ clearTimeout(tb.__rz); tb.__rz = setTimeout(restoreToolbar, 120); });
+  var lastGripTap = 0;
   $("#tbGrip").addEventListener("pointerdown", function(e){
     e.preventDefault();
     e.stopPropagation();
@@ -7766,9 +7946,22 @@ $("#zoomChip").onclick = function(){
         applyToolbarPos({ x: ev.clientX - off.x, y: ev.clientY - off.y });
       },
       up: function(ev, moved){
-        if (!moved) return;
+        if (!moved) {
+          if (Date.now() - lastGripTap < 400) {
+            resetToolbarPos();
+            try { localStorage.removeItem(TB_KEY); } catch (err) {}
+            statusEl.textContent = "道具箱を元の位置に戻しました";
+          }
+          lastGripTap = Date.now();
+          return;
+        }
         var rr = tb.getBoundingClientRect();
-        try { localStorage.setItem("inknote_toolbar", JSON.stringify({ x: rr.left, y: rr.top })); } catch (err) {}
+        var useL = (rr.left + rr.width / 2) < innerWidth / 2;
+        var useT = (rr.top + rr.height / 2) < innerHeight / 2;
+        var save = { ax: useL ? "l" : "r", ay: useT ? "t" : "b",
+                     dx: useL ? rr.left : innerWidth - rr.right,
+                     dy: useT ? rr.top : innerHeight - rr.bottom };
+        try { localStorage.setItem(TB_KEY, JSON.stringify(save)); } catch (err) {}
       }
     });
   });
@@ -8256,7 +8449,7 @@ function saveDoc() {
         statusEl.textContent = risk.noEdit
           ? "⚠ 編集していないのに中身が変わっていたため、保存を止めました(中身は無事です)"
           : ("⚠ 中身が消える保存を止めました(" + risk.before.n + "個 → " +
-             risk.after.n + "個)。⚙→🩺 で確認できます");
+             risk.after.n + "個)。☁→🩺 で確認できます");
         return false;
       }).catch(function(){ return false; });
     }
@@ -8893,6 +9086,22 @@ function deletePageNow(id) {
 
 /* ---------- ページ一覧パネル ---------- */
 /* ---- アクションシート: prompt/confirmの代わり(PWAでも確実に動く) ---- */
+/* =========================================================
+   確認と知らせ(v24.04)
+   ---------------------------------------------------------
+   ★OS の確認窓(confirm / alert)は、ホーム画面に追加した PWA の
+     全画面表示では出ない端末があり、押せずに止まることがあった。
+     アプリの中のシートで尋ねる。危険な操作は赤い実行ボタン+キャンセルの2択。
+========================================================= */
+function askConfirm(msg, okLabel, onOk, opts) {
+  opts = opts || {};
+  showSheet(String(msg), [
+    /* 閉じ切ってから実行する(続けて別のシートを開く時に打ち消されないように) */
+    { label: okLabel || "実行する", danger: !!opts.danger, fn: function(){ setTimeout(onOk, 240); } },
+    { label: opts.cancelLabel || "キャンセル", cancel: true, fn: opts.onCancel || null }
+  ]);
+}
+function noticeAlert(msg) { statusEl.textContent = "⚠ " + String(msg).replace(/\n/g, " "); }
 function showSheet(title, items) {
   var sc = $("#sheetScrim"), sh = $("#actionSheet");
   $("#asTitle").textContent = title || "";
@@ -10275,12 +10484,12 @@ $("#wipePage").onclick = function(){
      こちらは単元・表示位置の記憶まで消し、取り消しもできない。 */
   var pgW = findPage(currentId);
   var nmW = (pgW && pgW.title) ? pgW.title : "このノート";
-  if (!confirm("⚠「" + nmW + "」を白紙に戻します。\n" +
+  askConfirm("⚠「" + nmW + "」を白紙に戻します。\n" +
                "・中身に加えて、ブックマークの印・表示位置の記憶も消えます\n" +
                "・↩(取り消し)では戻せません\n" +
                "・他のノートには影響しません\n\n" +
                "中身だけ消して戻せるようにしたい場合は、一覧の\n" +
-               "「🧽 開いているノートを空に」を使ってください。\n\nよろしいですか?")) return;
+               "「🧽 開いているノートを空に」を使ってください。\n\nよろしいですか?", "白紙にする", function(){
   withShrinkAllowed(function(){ rebuildScene("[]"); });   // 意図して消す操作
   bookmarks = [];
   view = { x: 0, y: 0, s: sheetFitScale() };
@@ -10296,10 +10505,11 @@ $("#wipePage").onclick = function(){
   scheduleSave();
   closeMenu();
   statusEl.textContent = "白紙にしました";
+  }, { danger: true });
 };
 $("#wipeAll").onclick = function(){
-  if (!confirm("⚠ すべてのノートを削除し、初期状態に戻します。\n(ノートは30日間、ごみ箱に残ります)\nよろしいですか?")) return;
-  if (!confirm("⚠ 最終確認: 本当にすべて削除しますか?\n(クラウド同期中の場合、クラウド側のノートも削除されます)")) return;
+  askConfirm("⚠ すべてのノートを削除し、初期状態に戻します。\n(ノートは30日間、ごみ箱に残ります)\nよろしいですか?", "次へ", function(){
+  askConfirm("⚠ 最終確認: 本当にすべて削除しますか?\n(クラウド同期中の場合、クラウド側のノートも削除されます)", "すべて削除する", function(){
   var ids = pages.map(function(p){ return p.id; });
   var chain = Promise.resolve();
   ids.forEach(function(id){
@@ -10321,6 +10531,8 @@ $("#wipeAll").onclick = function(){
     closeMenu();
     statusEl.textContent = "初期化しました";
   });
+  }, { danger: true });
+  }, { danger: true });
 };
 $("#ppAdd").onclick = function(){ addPage(); closePages(); };
 
@@ -10918,6 +11130,29 @@ function readAsArrayBuffer(file) {
     r.readAsArrayBuffer(file);
   });
 }
+/* PDFを取り込む前に、ページ数と切り抜きの有無を選んでもらう。やめた時は null */
+function choosePdfImport(total) {
+  return new Promise(function(res){
+    var done = false;
+    var fin = function(v){ if (!done) { done = true; res(v); } };
+    var askCrop = function(limit){
+      setTimeout(function(){
+        showSheet("✂ ページを切り抜きながら取り込みますか?", [
+          { label: "✂ 各ページで範囲を指定して取り込む", fn: function(){ fin({ limit: limit, crop: true }); } },
+          { label: "📄 全ページそのまま取り込む", fn: function(){ fin({ limit: limit, crop: false }); } },
+          { label: "やめる", cancel: true, fn: function(){ fin(null); } }
+        ]);
+      }, 240);
+    };
+    if (total > 20) {
+      showSheet(total + "ページあります。どこまで取り込みますか?", [
+        { label: "すべて(" + total + "ページ)", fn: function(){ askCrop(total); } },
+        { label: "先頭20ページだけ", fn: function(){ askCrop(20); } },
+        { label: "やめる", cancel: true, fn: function(){ fin(null); } }
+      ]);
+    } else askCrop(total);
+  });
+}
 function importPdf(file, sx, sy) {
   statusEl.textContent = "PDF読込中…";
   loadPdfJs().then(function(){
@@ -10927,8 +11162,10 @@ function importPdf(file, sx, sy) {
   }).then(function(pdf){
     var total = pdf.numPages;
     var limit = total;
-    if (total > 20 && !confirm(total + "ページあります。すべて取り込みますか?\n(キャンセル=先頭20ページのみ)")) limit = 20;
-    var doCrop = confirm("✂ ページを切り抜きながら取り込みますか?\n(OK=各ページで範囲指定 / キャンセル=全ページそのまま)");
+    /* ★OS の確認窓を使わず、アプリの中で選んでもらう(v24.04) */
+    return choosePdfImport(total).then(function(ch){
+      if (!ch) { statusEl.textContent = "PDFの取り込みをやめました"; return; }
+      var limit = ch.limit, doCrop = ch.crop;
     var cropUrls = [];
     var start = toWorld(sx != null ? sx : innerWidth / 2, sy != null ? sy : 100);
     var yCursor = start.y;
@@ -10970,6 +11207,7 @@ function importPdf(file, sx, sy) {
       }
       scheduleSave();
       fitAll();
+    });
     });
   }).catch(function(){
     statusEl.textContent = "PDF読込失敗(初回は通信が必要です)";
@@ -11299,7 +11537,7 @@ function pageOriginX(pi) {
 }
 /* mode: "left"(左をそろえる) / "gap"(間隔をそろえる) / "both"
    ページをまたいで内容が引き寄せられないよう、ページごとに処理する。 */
-function tidyPositions(mode) {
+function tidyPositionsRaw(mode) {
   var pool = (sel.length >= 2) ? sel.slice() : objects.slice();
   var list = [];
   for (var i = 0; i < pool.length; i++) {
@@ -11415,6 +11653,10 @@ function tidyPositions(mode) {
   setTimeout(function(){
     statusEl.textContent = name + "(" + pgTxt + rowCount + "行 / 元に戻すで取り消せます)";
   }, 40);
+}
+/* 図形・手書きも付いていかせる(withInkFollow)。中身は tidyPositionsRaw */
+function tidyPositions(mode) {
+  return withInkFollow(function(){ return tidyPositionsRaw(mode); });
 }
 function openTidySheet() {
   var scope = (sel.length >= 2) ? ("選んだもの " + sel.length + "件") : "ページ全体";
@@ -11535,7 +11777,7 @@ function askAnchorName(o, lv) {
   var def = o.anch || "";
   if (!def && o.type === "text") def = String(o.text || "").split("\n")[0].slice(0, 40);
   if (!def) def = "見出し" + (anchorList().length + 1);
-  askText(lv === 1 ? "見出し(列)の名前" : "目次に出す名前", def, function(name){
+  askText(lv === 1 ? "見出し(列)の名前" : "ブックマークの名前", def, function(name){
     if (name == null) return;
     name = String(name).trim();
     if (!name) return;
@@ -11548,7 +11790,7 @@ function askAnchorName(o, lv) {
     renderTocPanel();
     updateColBar();
     setTimeout(function(){
-      statusEl.textContent = (o.anchLv === 1 ? "見出しに追加しました: " : "目次に追加しました: ") + name;
+      statusEl.textContent = (o.anchLv === 1 ? "見出しにしました: " : "ブックマークの印を付けました: ") + name;
     }, 40);
   });
 }
@@ -11910,6 +12152,168 @@ function jumpUnit(dir) {
   statusEl.textContent = "「" + target.name + "」へ移動しました";
 }
 /* オブジェクトを平行移動する(種類ごとに持ち方が違うのでここで吸収) */
+/* =========================================================
+   図形・手書きを、文字の自動移動に付いていかせる(v24.02)
+   ---------------------------------------------------------
+   ★「重なりを直す」「幅をそろえる」「位置をそろえる」「すき間」
+     「文字BOXの分割」は文字と画像だけを動かしていた。
+     文字を囲んだ枠・引いた下線・書き込みは取り残され、
+     「赤枠がズレる」原因になっていた。
+   ★それぞれの処理の中身には手を入れない。処理の前後で文字・画像の位置を比べ、
+     動いた分だけ、それに掛かっている図形・手書きを動かす。
+       囲み枠 … 中に入っている文字・画像に合わせて、移動+伸び縮み
+       それ以外 … いちばん重なっている文字・画像1つに付いていく
+       どれにも重なっていない落書き・ロック中の物は動かさない
+       処理の中ですでに動かされた物は、二重に動かさない
+========================================================= */
+var INK_LINK_PAD = 12;                  // 「掛かっている」とみなす広げ幅(ノート座標)
+function isInkObj(o) { return o && (o.type === "stroke" || o.type === "shape"); }
+function isContentObj(o) { return o && (o.type === "text" || o.type === "image"); }
+function boxOfObj(o) {
+  var b = objBBox(o);
+  return b ? { x: b.x, y: b.y, w: b.w, h: b.h } : null;
+}
+function snapBoxes(list, pick) {
+  var out = Object.create(null);
+  for (var i = 0; i < list.length; i++) {
+    var o = list[i];
+    if (!pick(o) || o.id == null) continue;
+    var b = boxOfObj(o);
+    if (b) out[o.id] = b;
+  }
+  return out;
+}
+function boxOverlap(a, b) {
+  var w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  var h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  return (w > 0 && h > 0) ? w * h : 0;
+}
+/* 手書きの線が「輪」になっているか(始点と終点が近い) */
+function strokeIsLoop(o, b) {
+  var p = o.points;
+  if (!p || p.length < 6) return false;
+  var d = Math.hypot(p[0].x - p[p.length - 1].x, p[0].y - p[p.length - 1].y);
+  return d < 0.3 * Math.max(b.w, b.h) && b.w > 24 && b.h > 16;
+}
+/* 図形・手書きが、どの文字・画像に掛かっているかを決める */
+function linkInkToContent(list, content) {
+  var links = [];
+  for (var i = 0; i < list.length; i++) {
+    var o = list[i];
+    if (!isInkObj(o) || o.locked || o.id == null) continue;
+    var ib = boxOfObj(o);
+    if (!ib) continue;
+    var inside = [];
+    for (var id in content) {
+      var c = content[id], cx = c.x + c.w / 2, cy = c.y + c.h / 2;
+      if (cx > ib.x && cx < ib.x + ib.w && cy > ib.y && cy < ib.y + ib.h) inside.push(id);
+    }
+    var enclosing = inside.length > 0 &&
+      (o.type === "shape" ? (o.kind !== "line" && o.kind !== "arrow") : strokeIsLoop(o, ib));
+    if (enclosing) { links.push({ o: o, mode: "enc", ids: inside }); continue; }
+    var g = { x: ib.x - INK_LINK_PAD, y: ib.y - INK_LINK_PAD, w: ib.w + INK_LINK_PAD * 2, h: ib.h + INK_LINK_PAD * 2 };
+    var best = null, bestA = 0;
+    for (var id2 in content) {
+      var a = boxOverlap(g, content[id2]);
+      if (a > bestA) { bestA = a; best = id2; }
+    }
+    if (best != null) links.push({ o: o, mode: "one", ids: [best] });
+  }
+  return links;
+}
+function unionOf(boxes) {
+  var x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  boxes.forEach(function(b){
+    x1 = Math.min(x1, b.x); y1 = Math.min(y1, b.y);
+    x2 = Math.max(x2, b.x + b.w); y2 = Math.max(y2, b.y + b.h);
+  });
+  return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+}
+/* 図形・手書きそのものの範囲(線の太さぶんの余白を含まない) */
+function rawInkBox(o) {
+  var xs = [], ys = [];
+  if (o.type === "shape") { xs = [o.x1, o.x2]; ys = [o.y1, o.y2]; }
+  else o.points.forEach(function(p){ xs.push(p.x); ys.push(p.y); });
+  var x1 = Math.min.apply(null, xs), y1 = Math.min.apply(null, ys);
+  return { x: x1, y: y1, w: Math.max.apply(null, xs) - x1, h: Math.max.apply(null, ys) - y1 };
+}
+/* 図形・手書きを、範囲 A から範囲 B へ写す(移動+伸び縮み) */
+function mapInk(o, A, B) {
+  var sx = A.w > 1 ? B.w / A.w : 1, sy = A.h > 1 ? B.h / A.h : 1;
+  var fx = function(x){ return B.x + (x - A.x) * sx; };
+  var fy = function(y){ return B.y + (y - A.y) * sy; };
+  if (o.type === "shape") {
+    o.x1 = fx(o.x1); o.x2 = fx(o.x2); o.y1 = fy(o.y1); o.y2 = fy(o.y2);
+  } else {
+    for (var i = 0; i < o.points.length; i++) { o.points[i].x = fx(o.points[i].x); o.points[i].y = fy(o.points[i].y); }
+    if (o._orig) for (var j = 0; j < o._orig.length; j++) { o._orig[j].x = fx(o._orig[j].x); o._orig[j].y = fy(o._orig[j].y); }
+  }
+}
+function sameBox(a, b) {
+  return a && b && Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 &&
+         Math.abs(a.w - b.w) < 0.5 && Math.abs(a.h - b.h) < 0.5;
+}
+/* 処理の後に、掛かっていた相手の動きに合わせて動かす。動かした数を返す */
+function followInk(links, before, after, inkBefore) {
+  var n = 0;
+  for (var i = 0; i < links.length; i++) {
+    var L = links[i], o = L.o;
+    if (!sameBox(inkBefore[o.id], boxOfObj(o))) continue;     // 処理がもう動かした
+    var ids = L.ids.filter(function(id){ return before[id] && after[id]; });
+    if (!ids.length) continue;                                // 相手が消えた → 触らない
+    var dxs = ids.map(function(id){ return after[id].x - before[id].x; });
+    var dys = ids.map(function(id){ return after[id].y - before[id].y; });
+    var same = dxs.every(function(v){ return Math.abs(v - dxs[0]) < 0.5; }) &&
+               dys.every(function(v){ return Math.abs(v - dys[0]) < 0.5; });
+    if (L.mode === "enc") {
+      var U0 = unionOf(ids.map(function(id){ return before[id]; }));
+      var U1 = unionOf(ids.map(function(id){ return after[id]; }));
+      if (sameBox(U0, U1)) continue;
+      if (same && Math.abs(U0.w - U1.w) < 0.5 && Math.abs(U0.h - U1.h) < 0.5) moveObjBy(o, dxs[0], dys[0]);
+      else {
+        /* 枠と中身の間の余白は保つ(中身の範囲だけを写すと、枠が中身に貼り付く)。
+           ★線の太さぶんの余白を含まない「枠そのものの範囲」で計算する
+             (含めると、その余白まで比率で伸びて、少しずつずれる)。 */
+        var A = rawInkBox(o), B = {
+          x: A.x + (U1.x - U0.x), y: A.y + (U1.y - U0.y),
+          w: Math.max(4, A.w + (U1.w - U0.w)), h: Math.max(4, A.h + (U1.h - U0.h))
+        };
+        mapInk(o, A, B);
+      }
+      n++;
+      continue;
+    }
+    if (Math.abs(dxs[0]) < 0.5 && Math.abs(dys[0]) < 0.5) continue;
+    moveObjBy(o, dxs[0], dys[0]);
+    n++;
+  }
+  return n;
+}
+/* 処理 fn を包む。fn の戻り値をそのまま返す */
+var inkFollowDepth = 0;
+function withInkFollow(fn) {
+  /* 入れ子になった時は、いちばん外側だけが働く
+     (内側が先に動かすと、外側が「もう動いた」とみなして残りの分を付いていかせないため) */
+  if (inkFollowDepth > 0) return fn();
+  inkFollowDepth++;
+  try { return withInkFollowOuter(fn); }
+  finally { inkFollowDepth--; }
+}
+function withInkFollowOuter(fn) {
+  var list = objects;
+  var before = snapBoxes(list, isContentObj);
+  var inkBefore = snapBoxes(list, isInkObj);
+  var links = linkInkToContent(list, before);
+  var r = fn();
+  var finish = function(){
+    var moved = followInk(links, before, snapBoxes(objects, isContentObj), inkBefore);
+    if (moved) inkDirty = true;
+  };
+  if (r && typeof r.then === "function") return r.then(function(v){ finish(); return v; });
+  finish();
+  return r;
+}
+
 function moveObjBy(o, dx, dy) {
   if (o.type === "stroke") {
     for (var i = 0; i < o.points.length; i++) { o.points[i].x += dx; o.points[i].y += dy; }
@@ -11962,7 +12366,7 @@ function columnGroups() {
   groups.push(cur);
   return groups;
 }
-function tidyWidthsAll() {
+function tidyWidthsAllRaw() {
   var groups = columnGroups();
   if (!groups.length) { statusEl.textContent = "そろえる内容がありません"; return; }
   var total = 0;
@@ -11984,6 +12388,10 @@ function tidyWidthsAll() {
       } },
     { label: "キャンセル", cancel: true }
   ]);
+}
+/* 図形・手書きも付いていかせる(withInkFollow)。中身は tidyWidthsAllRaw */
+function tidyWidthsAll() {
+  return withInkFollow(function(){ return tidyWidthsAllRaw(); });
 }
 function tidyWidths() {
   var targets = [];
@@ -12100,7 +12508,7 @@ function unstackTargets(list) {
   return out;
 }
 /* 重なりを全部ほどく。戻り値は動かした数 */
-function unstackAll(objs, gap) {
+function unstackAllRaw(objs, gap) {
   gap = (gap == null) ? 12 : gap;
   var items = objs.map(function(o){ return { o: o, b: objBBox(o), dy: 0 }; });
   // 上にあるものから順に確定させていく
@@ -12125,6 +12533,10 @@ function unstackAll(objs, gap) {
     if (Math.abs(items[k].dy) > 0.5) { moveObjBy(items[k].o, 0, items[k].dy); moved++; }
   }
   return moved;
+}
+/* 図形・手書きも付いていかせる(withInkFollow)。中身は unstackAllRaw */
+function unstackAll(objs, gap) {
+  return withInkFollow(function(){ return unstackAllRaw(objs, gap); });
 }
 /* ページ全体に対して実行する(メニューから) */
 function unstackWholePage() {
@@ -12151,7 +12563,7 @@ function unstackWholePage() {
   ]);
 }
 
-function unstackSelection(gap) {
+function unstackSelectionRaw(gap) {
   gap = (gap == null) ? 16 : gap;
   var list = [];
   for (var i = 0; i < sel.length; i++) {
@@ -12170,6 +12582,10 @@ function unstackSelection(gap) {
   }
   inkDirty = true; refreshMeasures(); scheduleSave();
   statusEl.textContent = moved ? (moved + "個を下へずらしました") : "重なりはありませんでした";
+}
+/* 図形・手書きも付いていかせる(withInkFollow)。中身は unstackSelectionRaw */
+function unstackSelection(gap) {
+  return withInkFollow(function(){ return unstackSelectionRaw(gap); });
 }
 /* =========================================================
    ノートの中の文字を探す
@@ -13880,7 +14296,7 @@ function importHtmlAsNewPage(html, title) {
     renderTocPanel();
     updateColBar();
     statusEl.textContent = "新しいノートに取り込みました(" + made.length + "ブロック" +
-      (nAnch ? " / 見出し " + nAnch + "件を目次に登録" : "") + ")";
+      (nAnch ? " / 見出し " + nAnch + "件をブックマークに登録" : "") + ")";
     /* ★ブロック全体(表の中も外も)の式を組版する。
        表専用の処理だけだと、表を含むブロックの地の文が取り残される。 */
     if (autoCellMath) {
@@ -14133,15 +14549,15 @@ function importBackup(file) {
     var data = null;
     try { data = JSON.parse(r.result); } catch (e) { data = null; }
     if (!data || data.format !== "inknote-backup" || !data.docs) {
-      alert("バックアップファイルを読み込めませんでした"); return;
+      noticeAlert("バックアップファイルを読み込めませんでした"); return;
     }
     var bPages = (data.index && data.index.pages) || [];
     var titleOf = {}, folderOf = {};
     bPages.forEach(function(bp){ titleOf[String(bp.id)] = bp.title; folderOf[String(bp.id)] = bp.folder || ""; });
     var keys = Object.keys(data.docs).filter(function(k){ return k.indexOf("page_") === 0; });
-    if (!confirm("バックアップから " + keys.length + " 件を取り込みます。\n" +
+    askConfirm("バックアップから " + keys.length + " 件を取り込みます。\n" +
                  "・今あるノートは消えません\n" +
-                 "・中身が違うノートは、別のノートとして追加されます\n\nよろしいですか?")) return;
+                 "・中身が違うノートは、別のノートとして追加されます\n\nよろしいですか?", "取り込む", function(){
     var d = new Date(data.savedAt || Date.now());
     var tag = "(バックアップ " + (d.getMonth() + 1) + "/" + d.getDate() + ")";
     var added = 0, same = 0, copied = 0, failedIn = 0, seq = 0;
@@ -14195,6 +14611,7 @@ function importBackup(file) {
       if (cloudUser()) { try { syncAll(); } catch (e2) {} }
       statusEl.textContent = "取り込みました(戻した " + added + "件 / 別ノートで追加 " + copied +
         "件 / 同じ内容 " + same + "件)" + (failedIn ? " ※" + failedIn + "件は失敗" : "");
+    });
     });
   };
   r.readAsText(file);
@@ -14634,9 +15051,9 @@ function exportSplitPages(b, margin) {
     }
   }
   var total = pages.length;
-  if (!total) { alert("書き出す内容がありません"); return; }
+  if (!total) { noticeAlert("書き出す内容がありません"); return; }
   if (total > 120) {
-    alert("内容が大きすぎて " + total + "枚になります。\n" +
+    noticeAlert("内容が大きすぎて " + total + "枚になります。\n" +
           "「範囲をドラッグで指定」で分けて書き出してください");
     return;
   }
@@ -14892,7 +15309,7 @@ function checkCanvasLimit() {
 }
 function exportHiResSingle(b, margin) {
   checkCanvasLimit();
-  if (!b) { alert("書き出す内容がありません"); return; }
+  if (!b) { noticeAlert("書き出す内容がありません"); return; }
   var m = (margin == null) ? 40 : margin;
   var wW = b.w + m * 2, wH = b.h + m * 2;          // ノート座標での大きさ
   /* ★倍率は落とさず、入りきらない分は次のページへ回す。
@@ -15024,7 +15441,7 @@ function exportHiResSingle(b, margin) {
    ★「視認できる解像度」の下限を倍率1.2とし、
      そこから逆算して1枚の大きさを決める。 */
 function exportWidePages(b, margin) {
-  if (!b) { alert("書き出す内容がありません"); return; }
+  if (!b) { noticeAlert("書き出す内容がありません"); return; }
   var m = (margin == null) ? 40 : margin;
   var MINSCALE = 1.2;                    // これ以上は縮めない
   var MAXPX = 4096;                      // 1枚の長辺の上限
@@ -15050,7 +15467,7 @@ function exportWidePages(b, margin) {
   }
   if (!pages.length) pages = [b];
   if (pages.length > 60) {
-    alert("内容が大きすぎて " + pages.length + "枚になります。\n" +
+    noticeAlert("内容が大きすぎて " + pages.length + "枚になります。\n" +
           "「A4に割って書き出す」か「範囲をドラッグで指定」をお使いください");
     return;
   }
@@ -15337,7 +15754,7 @@ function doExport(b, margin) {
      1枚に収めると倍率が下がって字が読めなくなるため。 */
   if (tooBigForOneSheet(bb)) { exportSplitPages(bb, margin); return; }
   var c = renderPageToCanvas(b, margin);
-  if (!c) { alert("書き出す内容がありません"); return; }
+  if (!c) { noticeAlert("書き出す内容がありません"); return; }
   if (exportFmt === "pdf") exportPDFCanvas(c);
   else exportPNGCanvas(c);
 }
@@ -18277,6 +18694,24 @@ function makeSelectedTheme() {
     statusEl.textContent = "見出しにしました: " + name;
   });
 }
+/* ⚙メニューの区分の開閉。開いている区分を覚えておく(初回は「このノート」と「そろえる」だけ開く) */
+(function(){
+  var KEY = "inknote_menu_open", open = { note: 1, tidy: 1 };
+  try { var v = JSON.parse(localStorage.getItem(KEY) || "null"); if (v) open = v; } catch (e) {}
+  var secs = document.querySelectorAll("#menuPanel .mn-sec");
+  for (var i = 0; i < secs.length; i++) {
+    (function(sec){
+      var key = sec.getAttribute("data-sec");
+      if (!open[key]) sec.classList.add("closed");
+      sec.querySelector(".mn-sec-h").addEventListener("click", function(){
+        sec.classList.toggle("closed");
+        open[key] = sec.classList.contains("closed") ? 0 : 1;
+        try { localStorage.setItem(KEY, JSON.stringify(open)); } catch (e) {}
+      });
+    })(secs[i]);
+  }
+})();
+$("#diagOpenBtn").onclick = function(){ closeMenu(); setTimeout(function(){ $("#syncBtn").click(); }, 160); };
 $("#tidyWidthAllBtn").onclick = function(){ closeMenu(); setTimeout(tidyWidthsAll, 120); };
 $("#unstackAllBtn").onclick = function(){ closeMenu(); setTimeout(unstackWholePage, 120); };
 $("#colWidthBtn").onclick = function(){
@@ -18493,69 +18928,73 @@ function toggleAutoWidth(o) {
 }
 
 function openMoreSheet() {
-  var items = [];
+  /* ★2段にする(v24.03)。以前は21項目が1列に並び、PCでもスクロールが要った。
+     1段目は「選んだ物に固有の操作」と、性質ごとにまとめた入口だけ(最大8項目)。
+     これまでの項目はすべて、どこかの段から届く。 */
   var one = (sel.length === 1) ? sel[0] : null;
+  var reopen = function(){ setTimeout(openMoreSheet, 240); };
+  /* 2段目を開く(シートを続けて開く時は、前が閉じ切るのを待つ。重なると後の方が消える) */
+  var sub = function(title, list){
+    return function(){
+      setTimeout(function(){
+        list.push({ label: "← 戻る", cancel: true, fn: reopen });
+        showSheet(title, list);
+      }, 240);
+    };
+  };
+  var items = [];
 
-  // --- 図・コードの表示 ---
+  // --- 1. 選んだ物に固有の操作 ---
   if (one && one.type === "text" && !isTableObj(one)) {
-    items.push({
-      label: one.mono ? "🔤 ふつうの文字にする" : "🔡 等幅にする(図やコードの位置を保つ)",
-      fn: function(){ toggleMono(one); }
-    });
+    items.push({ label: one.mono ? "🔤 ふつうの文字にする" : "🔡 等幅にする(図やコードの位置を保つ)",
+                 fn: function(){ toggleMono(one); } });
+    items.push({ label: one.autoW ? "↩ 決まった幅で折り返す" : "⇢ 入力に合わせて横に伸ばす",
+                 fn: function(){ toggleAutoWidth(one); } });
   }
-
-  // --- 文字の折り返し ---
-  if (one && one.type === "text" && !isTableObj(one)) {
-    items.push({
-      label: one.autoW ? "↩ 決まった幅で折り返す" : "⇢ 入力に合わせて横に伸ばす",
-      fn: function(){ toggleAutoWidth(one); }
-    });
-  }
-
-  // --- 持ち運ぶ ---
-  items.push({ label: "📄 コピーする(別の場所に貼れる)", fn: function(){ clipCopy(false); } });
-  items.push({ label: "✂️ 切り取る(別の場所へ移す)", fn: function(){ clipCopy(true); } });
-  if (clipHas())
-    items.push({ label: "📋 ここに貼り付ける", fn: function(){ clipPaste(); } });
-
-  // --- よく使う ---
-  if (ctxVisible("ctxDup")) items.push({ label: "⧉ 複製する(その場に増やす)", fn: function(){ pressCtx("ctxDup"); } });
-  if (ctxVisible("ctxFront")) items.push({ label: "⬆ いちばん前に出す", fn: function(){ pressCtx("ctxFront"); } });
-  if (ctxVisible("ctxOpa")) items.push({ label: "🌓 透明度を変える", fn: function(){ pressCtx("ctxOpa"); } });
-
-  // --- 表 ---
   if (one && isTableObj(one))
     items.push({ label: "⊞ 表を編集する(行や列を増減)…", fn: function(){ openTableMenu(one); } });
-
-  // --- 内容を変える ---
-  if (ctxVisible("ctxCrop")) items.push({ label: "✂ 画像を切り抜く", fn: function(){ pressCtx("ctxCrop"); } });
-  if (ctxVisible("ctxMath")) {
-    items.push({ label: (one && one.latex) ? "∑ 数式を編集する / 文字に戻す"
-                                           : "∑ 数式にする(組版)",
-                 fn: function(){ pressCtx("ctxMath"); } });
+  if (one && one.type === "image" && !one.latex) {
+    items.push({ label: one.note ? "🔎 検索用のことばを直す" : "🔎 検索用のことばを付ける", fn: function(){
+      askText("この図を探すためのことば(カンマ区切り可)", one.note || "", function(v){
+        if (v == null) return;
+        pushUndo();
+        one.note = String(v).trim() || null;
+        scheduleSave();
+        statusEl.textContent = one.note ? ("この図は「" + one.note + "」で探せます") : "検索用のことばを外しました";
+      });
+    } });
   }
-  // 直線化と図形補正はまとめて1項目に
   if (ctxVisible("ctxStraighten") || ctxVisible("ctxShapify"))
     items.push({ label: "✏️ 手書きを整える…", fn: openTuneSheet });
 
-  // 並べる・まとめる
-  /* ★幅そろえは用紙の種類に関係なく使える整形なので、
-     以前のように無限モード限定にはしない。
-     また、文章に画像が混ざっていても使えるようにする
-     (貼り付けた直後は文章と数式の画像が混ざるのが普通のため)。 */
-  var canWidth = sel.some(function(x){ return x.type === "text" || x.type === "image"; });
-  if (canWidth) {
-    items.push({ label: "⇔ 見やすい幅(" + READ_W + "px)にそろえる", fn: tidyWidths });
+  // --- 2. 持ち運ぶ ---
+  items.push({ label: "✂️ 切り取る(別の場所へ移す)", fn: function(){ clipCopy(true); } });
+  if (clipHas()) items.push({ label: "📋 ここに貼り付ける", fn: function(){ clipPaste(); } });
+
+  // --- 3. コピー・取り出し ---
+  var nText = sel.filter(function(x){ return x.type === "text"; }).length;
+  var nMathSel = sel.filter(function(x){ return x.type === "image" && x.latex; }).length;
+  var copyList = [];
+  if (nText || nMathSel) {
+    var part = [];
+    if (nText) part.push("文字" + nText);
+    if (nMathSel) part.push("数式" + nMathSel);
+    copyList.push({ label: "📄 文字としてコピー(" + part.join(" + ") + "・他のアプリへ貼れる)", fn: copySelectedText });
   }
-  if (sel.length > 1 && sel.every(function(x){ return x.type === "text"; })) {
-    items.push({ label: "⇔ いちばん広いものに幅を合わせる",
-                 fn: function(){ equalizeTextWidths("max"); } });
-  }
-  if (sel.length > 1) {
-    items.push({ label: "↧ 重なりを直す(選んだ分)", fn: function(){
-      /* ★以前は横の位置を見ずに全部を1列へ縦積みしていたため、
-         別の列まで巻き込んで下へ送っていた。
-         横に重なっている相手だけを対象にする方式へ揃える。 */
+  copyList.push({ label: "📋 アプリ内でコピー(別の場所に貼る)", fn: function(){ clipCopy(false); } });
+  if (ctxVisible("ctxCopy") || ctxVisible("ctxSave"))
+    copyList.push({ label: "🖼 画像として取り出す…", fn: openExportSelSheet });
+  items.push({ label: "📄 コピー・取り出し…", fn: sub("コピー・取り出し", copyList) });
+
+  // --- 4. そろえる・重なり ---
+  var alignList = [];
+  if (sel.some(function(x){ return x.type === "text" || x.type === "image"; }))
+    alignList.push({ label: "⇔ 見やすい幅(" + READ_W + "px)にそろえる", fn: tidyWidths });
+  if (sel.length > 1 && sel.every(function(x){ return x.type === "text"; }))
+    alignList.push({ label: "⇔ いちばん広いものに幅を合わせる", fn: function(){ equalizeTextWidths("max"); } });
+  if (sel.length > 1)
+    alignList.push({ label: "↧ 重なりを直す(選んだ分)", fn: function(){
+      /* 横に重なっている相手だけを対象にする(別の列を巻き込まない) */
       var objs = unstackTargets(sel);
       if (objs.length < 2) { statusEl.textContent = "2つ以上選んでから実行してください"; return; }
       pushUndo();
@@ -18563,54 +19002,29 @@ function openMoreSheet() {
       inkDirty = true; refreshMeasures(); scheduleSave(); updateSelUI();
       statusEl.textContent = n ? (n + "個を下へずらしました(↩で戻せます)") : "重なりはありませんでした";
     } });
-  }
-  /* ★図・写真に検索用のことばを付ける。図の中身は文字にできないため、
-     これが無いと図だけ検索から漏れる。 */
-  if (sel.length === 1 && sel[0].type === "image" && !sel[0].latex) {
-    var im0 = sel[0];
-    items.push({ label: im0.note ? "🔎 検索用のことばを直す" : "🔎 検索用のことばを付ける",
-                 fn: function(){
-      askText("この図を探すためのことば(カンマ区切り可)", im0.note || "", function(v){
-        if (v == null) return;
-        pushUndo();
-        im0.note = String(v).trim() || null;
-        scheduleSave();
-        statusEl.textContent = im0.note
-          ? ("この図は「" + im0.note + "」で探せます")
-          : "検索用のことばを外しました";
-      });
-    } });
-  }
-  /* 見出し(テーマ)にする操作は、対象を選んで行うのでこちらに置く。
-     ★「テーマ名を変える」はここには出さない。すぐ下の🔖から同じことが
-       でき、⋯の項目が増えて画面からはみ出す原因になっていた。
-       まだテーマでない物を「テーマにする」入口だけ残す。 */
-  if (sel.length === 1 && sel[0].type === "text" && sel[0].anchLv !== 1) {
-    items.push({ label: "📑 これを見出しにする", fn: makeSelectedTheme });
-  }
-  if (ctxVisible("ctxTidy")) items.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
-  if (ctxVisible("ctxGroup")) items.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
-  if (ctxVisible("ctxAnchor"))
-    items.push({ label: (one && one.anch) ? ("🔖 目次「" + one.anch + "」を編集/外す")
-                                          : "🔖 目次に追加する",
-                 fn: function(){ pressCtx("ctxAnchor"); } });
+  if (ctxVisible("ctxTidy")) alignList.push({ label: "📐 位置をそろえる…", fn: function(){ pressCtx("ctxTidy"); } });
+  if (alignList.length) items.push({ label: "⇔ そろえる・重なり…", fn: sub("そろえる・重なり", alignList) });
 
-  // --- 取り出す ---
-  /* ★選んだものの文字をまとめて外部へ。
-     投げ縄で離れた場所をいくつも囲んだ時、1つずつ開いてコピーするのは
-     現実的でないので、選択ぶんを上から順に繋げて渡す。 */
-  var nText = sel.filter(function(x){ return x.type === "text"; }).length;
-  var nMathSel = sel.filter(function(x){ return x.type === "image" && x.latex; }).length;
-  if (nText || nMathSel) {
-    /* 内訳を素直に読める言い方にする(「0個 + 数式1」のような表示を避ける) */
-    var part = [];
-    if (nText) part.push("文字" + nText);
-    if (nMathSel) part.push("数式" + nMathSel);
-    items.push({ label: "📋 まとめてコピー(" + part.join(" + ") + ")",
-                 fn: copySelectedText });
-  }
-  if (ctxVisible("ctxCopy") || ctxVisible("ctxSave"))
-    items.push({ label: "🖼 画像として取り出す…", fn: openExportSelSheet });
+  // --- 5. ブックマーク・まとまり ---
+  var bmList = [];
+  if (sel.length === 1 && sel[0].type === "text" && sel[0].anchLv !== 1)
+    bmList.push({ label: "📑 これを見出しにする", fn: makeSelectedTheme });
+  if (ctxVisible("ctxAnchor"))
+    bmList.push({ label: (one && one.anch) ? ("🔖 ブックマーク「" + one.anch + "」を編集/外す") : "🔖 ブックマークの印を付ける",
+                  fn: function(){ pressCtx("ctxAnchor"); } });
+  if (ctxVisible("ctxGroup")) bmList.push({ label: "🗂 まとまりを整理する…", fn: function(){ pressCtx("ctxGroup"); } });
+  if (bmList.length) items.push({ label: "🔖 ブックマーク・まとまり…", fn: sub("ブックマーク・まとまり", bmList) });
+
+  // --- 6. ロック・表示 ---
+  var allLocked = sel.length > 0 && sel.every(function(o){ return o.locked; });
+  var viewList = [];
+  viewList.push({ label: allLocked ? "🔓 ロックを解除する" : "🔒 ロックする(動かない・消えないようにする)",
+                  fn: function(){ pressCtx("ctxLock"); } });
+  if (ctxVisible("ctxOpa")) viewList.push({ label: "🌓 透明度を変える", fn: function(){ pressCtx("ctxOpa"); } });
+  if (ctxVisible("ctxFront")) viewList.push({ label: "⬆ いちばん前に出す", fn: function(){ pressCtx("ctxFront"); } });
+  if (ctxVisible("ctxDup") && !ctxVisible("ctxDupMain"))
+    viewList.push({ label: "⧉ 複製する(その場に増やす)", fn: function(){ pressCtx("ctxDup"); } });
+  items.push({ label: "🔒 ロック・透明度・前後…", fn: sub("ロック・透明度・前後", viewList) });
 
   items.push({ label: "キャンセル", cancel: true });
   showSheet(sel.length > 1 ? (sel.length + "個を選択中") : "この項目でできること", items);
@@ -18997,7 +19411,7 @@ function gapClose() {
   $("#gapTool").classList.remove("show");
 }
 /* 確定: 対象をまとめて下げる。1回のUndoで戻せる */
-function gapCommit() {
+function gapCommitRaw() {
   if (!gapOn) return;
   var dy = Math.round(gapDy);
   if (!dy) { gapClose(); statusEl.textContent = "変わりませんでした"; return; }
@@ -19010,6 +19424,10 @@ function gapCommit() {
   inkDirty = true; scheduleSave(); updateSelUI();
   statusEl.textContent = list.length + " 個を " +
     (dy > 0 ? (dy + "px 下げました") : (-dy + "px 詰めました")) + "(↩で戻せます)";
+}
+/* 図形・手書きも付いていかせる(withInkFollow)。中身は gapCommitRaw */
+function gapCommit() {
+  return withInkFollow(function(){ return gapCommitRaw(); });
 }
 /* ドラッグ中は本体を動かさず、棒と帯だけを動かして予告する。
    ★実物を毎フレーム動かすと重く、途中でやめた時に戻せない。 */
@@ -19140,6 +19558,10 @@ $("#ctxOpa").onclick = function(e){
   e.stopPropagation();
   openOpacity();
 };
+$("#ctxCopyText").onclick = function(){ copySelectedText(); };
+$("#ctxCropMain").onclick = function(){ pressCtx("ctxCrop"); };
+$("#ctxDupMain").onclick = function(){ pressCtx("ctxDup"); };
+$("#ctxWidthMain").onclick = function(){ tidyWidths(); };
 $("#ctxLock").onclick = function(e){
   e.stopPropagation();
   if (!sel.length) return;
