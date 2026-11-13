@@ -431,6 +431,17 @@
     padding:7px 12px;border-radius:999px;z-index:25;border:none;cursor:pointer;
   }
   #posChip{color:#ffd98a}
+  /* ★右下・左下のボタンを少し透かして、後ろの紙面がやや見えるようにする(v24.08)。
+     文字が読めなくならないよう、背景をぼかし、指で触れている間と押せる時は濃くする。 */
+  #chipsL>button,#chipsR>button{
+    background:rgba(32,36,43,.52) !important;
+    -webkit-backdrop-filter:blur(6px) saturate(1.2);backdrop-filter:blur(6px) saturate(1.2);
+    text-shadow:0 1px 2px rgba(0,0,0,.45);
+    transition:background .15s}
+  #chipsL>button:hover,#chipsR>button:hover,
+  #chipsL>button:active,#chipsR>button:active{background:rgba(32,36,43,.85) !important}
+  /* ブックマークは絵だけにしたので、ほかのボタンと同じ高さの丸にする */
+  #posChip{font-size:16px !important;line-height:1;padding:6px 10px !important}
   /* 右下・左下のボタンを縦に積む入れ物(v24.05)。
      下端の高さと右端の寄せは、入れ物ごとに1か所で決める。 */
   #chipsL,#chipsR{position:fixed;display:flex;flex-direction:column-reverse;gap:8px;z-index:27;
@@ -1423,7 +1434,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v24.07">InkNote <small>v24.07</small></div>
+  <div class="brand" title="InkNote v24.08">InkNote <small>v24.08</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1574,7 +1585,7 @@ window.onerror = function(msg, src, line){
 <!-- ★右下のボタンは縦に積む入れ物の中に置く(v24.05)。
      以前はボタンごとに高さを数字で持ち、状況ごとに別の数字へ書き換えていたため、
      組み合わせによって重なっていた。入れ物ごと上げ下げ・左右に寄せる。 -->
-<div id="chipsR"><button id="zoomChip">100%</button><button id="fitChip">⛶ 20%</button><button id="posChip">🔖 ブックマーク</button></div><div id="chipsL"><button id="pasteChip">📋 貼り付け</button><button id="mapChip">🗺 マップ</button><button id="topChip" style="display:none">⤒ 先頭</button></div>
+<div id="chipsR"><button id="zoomChip">100%</button><button id="fitChip">⛶ 20%</button><button id="posChip" title="ブックマーク" aria-label="ブックマーク">🔖</button></div><div id="chipsL"><button id="pasteChip">📋 貼り付け</button><button id="mapChip">🗺 マップ</button><button id="topChip" style="display:none">⤒ 先頭</button></div>
 <div id="vscroll">
   <div id="vsTrack"></div>
   <div id="vsThumb"></div>
@@ -2083,7 +2094,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "24.07";
+var APP_VERSION = "24.08";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
