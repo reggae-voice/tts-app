@@ -427,13 +427,21 @@
   #tocList .toc-row, #tocList .toc-th{touch-action:pan-y}
   #tocList.dragging .toc-row, #tocList.dragging .toc-th{touch-action:none}
   #zoomChip,#fitChip,#posChip{
-    position:fixed;right:14px;
     background:rgba(32,36,43,.85);color:#cfd3da;font-size:11.5px;font-weight:600;
     padding:7px 12px;border-radius:999px;z-index:25;border:none;cursor:pointer;
   }
-  #zoomChip{bottom:calc(env(safe-area-inset-bottom) + 84px)}
-  #fitChip{bottom:calc(env(safe-area-inset-bottom) + 122px)}
-  #posChip{bottom:calc(env(safe-area-inset-bottom) + 160px);color:#ffd98a}
+  #posChip{color:#ffd98a}
+  /* 右下・左下のボタンを縦に積む入れ物(v24.05)。
+     下端の高さと右端の寄せは、入れ物ごとに1か所で決める。 */
+  #chipsL,#chipsR{position:fixed;display:flex;flex-direction:column-reverse;gap:8px;z-index:27;
+    bottom:calc(env(safe-area-inset-bottom) + var(--chips-bottom, 84px));pointer-events:none}
+  #chipsL{left:14px;align-items:flex-start}
+  #chipsR{right:var(--chips-right, 14px);align-items:flex-end}
+  #chipsL>button,#chipsR>button{position:static;pointer-events:auto}
+  /* 下に横スライダーが出ている時・A4横は、スライダーの上へまとめて上げる */
+  body.has-hscroll, body.mode-a4h{--chips-bottom:128px}
+  /* 右端に縦スライダーが出ている時・A4縦は、スライダーの左へまとめて寄せる */
+  body.has-vscroll-v, body.mode-a4v{--chips-right:40px}
   /* 送れていないノートがある時の印 */
   .push-warn{position:relative}
   .push-warn::after{content:"⚠";position:absolute;top:-4px;right:-4px;font-size:12px;
@@ -510,33 +518,20 @@
      貼り付けボタンと22px重なり、しかもスライダーの方が手前(z-index)
      なので、重なった所を押すとスライダーが反応して貼り付けできなかった。
      モードではなく「いま下に横スライダーが出ているか」で逃がす。 */
-  body.mode-a4h #pasteChip,
-  body.mode-a4h #zoomChip,
-  body.has-hscroll #pasteChip,
-  body.has-hscroll #zoomChip,
-  body.has-hscroll #mapChip,
-  body.has-hscroll #topChip{bottom:calc(env(safe-area-inset-bottom) + 128px)}
+  /* (下へ逃がす高さは #chipsL/#chipsR の --chips-bottom で決める) */
   /* ★それでも重なった場合に備え、貼り付けなど操作系を手前にする。
      スライダーは広い帯なので、ボタンが隠れる側になると押せない。 */
   body.has-hscroll #pasteChip,
   body.has-hscroll #mapChip,
   body.has-hscroll #topChip{z-index:27}
-  body.mode-a4h #fitChip{bottom:calc(env(safe-area-inset-bottom) + 166px)}
-  body.mode-a4h #mapChip{bottom:calc(env(safe-area-inset-bottom) + 174px)}
-  body.mode-a4h #posChip{bottom:calc(env(safe-area-inset-bottom) + 204px)}
-  body.mode-a4h #topChip{bottom:calc(env(safe-area-inset-bottom) + 220px)}
+
   /* ★A4縦のときだけ右のチップを逃がしていたが、無限モードでも
      同じ右端スライダーが出るのに逃がしておらず、チップとつまみが
      重なって干渉していた(無限=近すぎる の原因)。
      一方でA4縦の48pxは離れすぎだったので、その中間の40pxに統一する。
      無限モードはスライダーが出たり消えたりするので、
      出ている時だけ寄せる(vscroll.onが付いている時)。 */
-  body.mode-a4v #zoomChip,
-  body.mode-a4v #fitChip,
-  body.mode-a4v #posChip{right:40px}
-  body.has-vscroll-v #zoomChip,
-  body.has-vscroll-v #fitChip,
-  body.has-vscroll-v #posChip{right:40px}
+  /* (右へ寄せる幅は #chipsR の --chips-right で決める) */
   #vscroll.h #vsTrack{
     position:absolute;bottom:10px;left:0;right:0;height:4px;
     background:rgba(120,126,140,.18);border-radius:2px;
@@ -564,14 +559,10 @@
   body.editing-mode #vscroll{z-index:26}
   body.editing-mode #vscroll.v{bottom:auto;height:var(--kbTop, 52%)}
   #topChip{
-    position:fixed;left:14px;
-    bottom:calc(env(safe-area-inset-bottom) + 176px);
     background:rgba(32,36,43,.85);color:#cfd3da;font-size:11.5px;font-weight:600;
     padding:7px 12px;border-radius:999px;z-index:25;border:none;cursor:pointer;
   }
   #mapChip{
-    position:fixed;left:14px;
-    bottom:calc(env(safe-area-inset-bottom) + 130px);
     background:rgba(32,36,43,.85);color:#cfd3da;font-size:11.5px;font-weight:600;
     padding:7px 12px;border-radius:999px;z-index:25;border:none;cursor:pointer;
   }
@@ -698,8 +689,6 @@
   #pcArea:empty::before{content:"(ここに貼り付け)";color:#a9a294}
   #pasteCatch .pc-foot{display:flex;gap:8px;padding-top:10px}
   #pasteChip{
-    position:fixed;left:14px;
-    bottom:calc(env(safe-area-inset-bottom) + 84px);
     background:rgba(32,36,43,.85);color:#cfd3da;font-size:11.5px;font-weight:600;
     padding:7px 12px;border-radius:999px;z-index:25;border:none;cursor:pointer;
   }
@@ -865,7 +854,6 @@
   }
   #fingerToggle.attention{animation:ftPulse 1.2s ease-in-out 2}
   #selBox.locked{border-style:solid;border-color:#e0a83a}
-  #asTitle{white-space:pre-line}
   /* ⚙メニューの区分(v24.04) */
   .mn-sec{border-bottom:1px solid var(--ui-line)}
   .mn-sec-h{display:flex;align-items:center;justify-content:space-between;width:100%;
@@ -1177,6 +1165,26 @@
     cursor:pointer;flex:0 0 auto;
   }
   .pf-tab.sel{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
+  /* ===== ノート一覧の整理(v24.07) ===== */
+  /* 上部を小さく: 大見出し「InkNote」と「📖 開いているノート名」の行をやめ、件数を見出しにする */
+  #pagesPanel .pp-app{display:none}
+  #pagesPanel .pp-now{display:none}
+  #pagesPanel .pp-sub{font-size:15px;font-weight:800;color:var(--ui-text)}
+  /* 1段目のカードが帯の下に潜って見えないように */
+  #ppList{padding-top:6px}
+  /* 「すべて」の小見出し(押すとそのフォルダだけに絞る) */
+  .pp-group-h{grid-column:1/-1;display:flex;align-items:baseline;justify-content:space-between;
+    width:100%;border:none;background:transparent;cursor:pointer;text-align:left;
+    color:var(--ui-text);font-size:13.5px;font-weight:800;padding:14px 4px 6px;
+    border-bottom:1px solid var(--ui-line);margin-bottom:2px}
+  .pp-group-h:first-child{padding-top:2px}
+  .pp-group-n{color:var(--ui-dim);font-size:11.5px;font-weight:600}
+  /* 開いているノートの印 */
+  .pp-card-now{position:absolute;top:6px;right:6px;z-index:3;
+    background:var(--accent);color:#fff;font-size:10px;font-weight:700;
+    padding:2px 7px;border-radius:999px;pointer-events:none}
+  .pp-add-here{grid-column:1/-1;justify-self:center;border:1px dashed var(--accent);border-radius:12px;
+    background:transparent;color:var(--accent);font-size:13px;font-weight:700;padding:10px 18px;cursor:pointer}
   .pp-ctrl{
     border:none;background:rgba(255,255,255,.07);color:var(--ui-dim);
     border-radius:999px;padding:0 12px;height:36px;font-size:12px;cursor:pointer;
@@ -1214,9 +1222,16 @@
   }
   #asFoot{flex:0 0 auto}
   #actionSheet.show{transform:translateX(-50%) translateY(0)}
+  /* ★題名は折り返して全部出す(以前は1行で切れ、確認の大事な部分が読めなかった) */
   #asTitle{
-    color:var(--ui-dim);font-size:12px;font-weight:700;
-    padding:2px 6px 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    color:var(--ui-text);font-size:14px;font-weight:700;line-height:1.5;
+    padding:2px 6px 8px;white-space:normal;word-break:break-word;
+  }
+  /* 説明: 改行どおりに出す。長い時はこの欄の中でスクロールする */
+  #asDetail{
+    flex:0 1 auto;max-height:34vh;overflow-y:auto;
+    color:var(--ui-dim);font-size:12.5px;line-height:1.75;
+    padding:0 6px 12px;white-space:pre-line;word-break:break-word;
   }
   .as-item{
     display:block;width:100%;border:none;text-align:left;
@@ -1408,7 +1423,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v24.04">InkNote <small>v24.04</small></div>
+  <div class="brand" title="InkNote v24.07">InkNote <small>v24.07</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1556,12 +1571,10 @@ window.onerror = function(msg, src, line){
   </button>
 </div>
 
-<button id="zoomChip">100%</button>
-<button id="fitChip">⛶ 20%</button>
-
-<button id="posChip">🔖 ブックマーク</button><button id="pasteChip">📋 貼り付け</button>
-<button id="mapChip">🗺 マップ</button>
-<button id="topChip" style="display:none">⤒ 先頭</button>
+<!-- ★右下のボタンは縦に積む入れ物の中に置く(v24.05)。
+     以前はボタンごとに高さを数字で持ち、状況ごとに別の数字へ書き換えていたため、
+     組み合わせによって重なっていた。入れ物ごと上げ下げ・左右に寄せる。 -->
+<div id="chipsR"><button id="zoomChip">100%</button><button id="fitChip">⛶ 20%</button><button id="posChip">🔖 ブックマーク</button></div><div id="chipsL"><button id="pasteChip">📋 貼り付け</button><button id="mapChip">🗺 マップ</button><button id="topChip" style="display:none">⤒ 先頭</button></div>
 <div id="vscroll">
   <div id="vsTrack"></div>
   <div id="vsThumb"></div>
@@ -1663,6 +1676,7 @@ window.onerror = function(msg, src, line){
 <div id="sheetScrim"></div>
 <div id="actionSheet">
   <div id="asTitle"></div>
+  <div id="asDetail"></div>
   <div id="asBody"><div id="asItems"></div><div id="asFoot"></div></div>
 </div>
 <div id="inputDlg">
@@ -1712,7 +1726,7 @@ window.onerror = function(msg, src, line){
   <div id="ppList" class="scrollable"></div>
   <div class="pp-foot">
     <button id="ppAdd">＋ 新しいノート</button>
-    <button id="clearBtn" class="pp-clear">🧽 開いているノートを空に</button>
+    <button id="clearBtn" class="pp-clear" style="display:none">🧽 このノートの中身を消す</button>
   </div>
   <button id="toolsToggle" aria-expanded="false">
     <span>🛠 書き出し・バックアップ</span><span id="toolsArrow">⌃</span>
@@ -1996,11 +2010,13 @@ window.onerror = function(msg, src, line){
       </div>
     </div>
     <div class="mn-danger">
-<div class="st-row" style="border-top:1px solid var(--ui-line);margin-top:8px;padding-top:16px">
+<!-- ★「中身を消す」(ノートの ⋮)と役目が重なり、違いが伝わらなかったので出さない(v24.06)。
+     ボタンには処理が結び付いているので、要素は消さずに隠す。 -->
+<div class="st-row" style="display:none">
       <button class="pp-tool" id="wipePage" style="color:#ffb84d">🧹 開いているノートを白紙に(戻せません)</button>
     </div>
 <div class="st-row">
-      <button class="pp-tool" id="wipeAll" style="color:#ff9d97">💥 すべてのデータを初期化(ノートは30日間ごみ箱に残ります)</button>
+      <button class="pp-tool" id="wipeAll" style="color:#ff9d97">💥 すべてのノートを消して初期状態に戻す</button>
     </div>
     </div>
     </div>
@@ -2067,7 +2083,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "24.04";
+var APP_VERSION = "24.07";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3437,27 +3453,36 @@ $("#redoBtn").onclick = function(){
   updateUndoUI();
 };
 $("#clearBtn").onclick = function(){
-  /* ★一覧の中にあるので「一覧のノートが全部消えるのか?」と読めてしまう。
-     消えるのは「いま開いている1つのノートの中身」だけ。
-     名前を出して、ノート自体は残ること・戻せることまで書く。 */
+  /* ★「空に」「白紙に」の2つの操作があり、何が消えて戻せるのかが分からなかった(v24.06)。
+     「中身を消す」1つにまとめ、消す前に必ず「以前の版」へ控えを残す。
+     すぐなら ↩ で、後からでも ⋮ →「以前の版に戻す」で戻せる。 */
   if (!objects.length) { statusEl.textContent = "このノートには内容がありません"; return; }
   var pg = findPage(currentId);
   var nm = (pg && pg.title) ? pg.title : "このノート";
-  askConfirm("「" + nm + "」の中身をすべて消します。\n" +
-               "・ノート自体は一覧に残ります\n" +
-               "・他のノートには影響しません\n" +
-               "・↩(取り消し)で元に戻せます\n\nよろしいですか?", "消す", function(){
-  closePages();
-  pushUndo();
-  withShrinkAllowed(function(){ rebuildScene("[]"); });   // 意図して消す操作
-  /* ★白紙化と同じ理由。中身を消したら用紙の枚数と表示範囲を
-     作り直さないと、スクロールが実際の紙と合わなくなる。 */
-  refreshMeasures();
-  applyCanvasMode(true);
-  clampView();
-  applyView();
-  scheduleSave();
-  statusEl.textContent = "「" + nm + "」を空にしました(↩で戻せます)";
+  var pid = currentId;
+  askConfirm("「" + nm + "」の中身を消しますか?\n" +
+             "消えるもの: このノートに書いた文字・写真・手書き\n" +
+             "残るもの: ノート自体(一覧に残ります)・ブックマーク・他のノート\n" +
+             "戻し方: すぐなら ↩ で。後からでも、ノートの ⋮ →「以前の版に戻す」で戻せます",
+             "中身を消す", function(){
+    if (currentId !== pid) return;
+    /* 最新の中身を保存してから控える(控えに直前の編集まで入るように) */
+    Promise.resolve(dirtySinceSave ? saveDocNow() : null).catch(function(){}).then(function(){
+      return keepVersion(pid, "中身を消す前");
+    }).then(function(){
+      if (currentId !== pid) return;
+      closePages();
+      pushUndo();
+      withShrinkAllowed(function(){ rebuildScene("[]"); });   // 意図して消す操作
+      /* ★中身を消したら用紙の枚数と表示範囲を作り直す
+         (しないと、スクロールが実際の紙と合わなくなる) */
+      refreshMeasures();
+      applyCanvasMode(true);
+      clampView();
+      applyView();
+      scheduleSave();
+      statusEl.textContent = "「" + nm + "」の中身を消しました(↩ または ⋮→以前の版 で戻せます)";
+    });
   }, { danger: true });
 };
 
@@ -8518,7 +8543,16 @@ function scheduleThumb(pid) {
   clearTimeout(thumbTimer);
   thumbTimer = setTimeout(function(){ makeThumb(pid); }, 1200);
 }
-var THUMB_VER = 2;                          // 解像度を上げた版。古いサムネは作り直す
+var THUMB_VER = 3;                          // 解像度を上げた版。古いサムネは作り直す
+/* ★サムネイルに使う範囲(v24.07)。
+   横に広いノート(A4幅の2倍以上)は全体を縮めると細かい縞にしか見えないので、
+   左上からA4幅ぶん(4:3)を切り出して、読める大きさを優先する。 */
+function thumbRegion(b) {
+  if (!b) return b;
+  var A4 = 794;
+  if (b.w <= A4 * 2) return b;
+  return { x: b.x, y: b.y, w: A4, h: Math.min(b.h, Math.round(A4 * 0.75)) };
+}
 function makeThumb(pid) {
   if (pid !== currentId) return;             // 既に切替済みなら作らない
   try {
@@ -8526,7 +8560,7 @@ function makeThumb(pid) {
     // サムネは画面用なので、印刷用の白背景設定は一時的に外す
     var pwSave = printWhite;
     printWhite = false;
-    var c = renderPageToCanvas(null, 24);
+    var c = renderPageToCanvas(thumbRegion(contentBBox()), 24);
     printWhite = pwSave;
     outWhite = false;
     if (!c || !c.width) return;
@@ -8648,7 +8682,7 @@ function makeThumbFor(pid) {
       })(arr[i]);
     }
     return Promise.all(waits).then(function(){
-      var b = thumbBBox(arr);
+      var b = thumbRegion(thumbBBox(arr));
       if (!b) return;
       var pwSave = printWhite;
       printWhite = false;
@@ -9102,9 +9136,20 @@ function askConfirm(msg, okLabel, onOk, opts) {
   ]);
 }
 function noticeAlert(msg) { statusEl.textContent = "⚠ " + String(msg).replace(/\n/g, " "); }
-function showSheet(title, items) {
+function showSheet(title, items, detail) {
   var sc = $("#sheetScrim"), sh = $("#actionSheet");
-  $("#asTitle").textContent = title || "";
+  /* ★題名が1行で切れ、「戻せるのか」など大事な説明が読めなかった(v24.05)。
+     題名は折り返して全部出し、説明は題名の下に分けて出す。
+     detail を渡さず題名に改行が入っている時は、2行目以降を説明として扱う。 */
+  var t = String(title || ""), d = (detail != null) ? String(detail) : "";
+  if (detail == null && t.indexOf("\n") !== -1) {
+    d = t.slice(t.indexOf("\n") + 1).replace(/^\s+/, "");
+    t = t.slice(0, t.indexOf("\n"));
+  }
+  $("#asTitle").textContent = t;
+  var dEl = $("#asDetail");
+  dEl.textContent = d;
+  dEl.style.display = d ? "" : "none";
   /* ★項目が多い時にシートが画面からはみ出さないよう、
      「スクロールする項目欄」と「固定のキャンセル欄」に分ける。
      キャンセルが常に見えていれば、長い一覧でもスクロールせずに閉じられる。 */
@@ -9252,14 +9297,14 @@ function renderFolderTabs() {
     b.textContent = label;
     b.addEventListener("click", function(){
       if (b.__longFired) { b.__longFired = false; return; }         // 長押しで開いた直後は無視
-      if (val && listFolder === val) { folderMenu(val); return; }  // 選択中を再タップ=管理
+      if (val && val !== LIST_NONE && listFolder === val) { folderMenu(val); return; }  // 選択中を再タップ=管理
       listFolder = val;
       renderPageList();
     });
     /* ★フォルダの名前変更・削除は「選択中のタブをもう一度タップ」でしか
        開けず、気づきようがなかった(削除できないという指摘)。
        どのタブでも長押しで開けるようにする。 */
-    if (val) {
+    if (val && val !== LIST_NONE) {
       b.title = "長押しで名前変更・削除";
       var lt = null;
       var startLong = function(){
@@ -9279,46 +9324,50 @@ function renderFolderTabs() {
     }
     wrap.appendChild(b);
   };
-  mk("すべて", "");
-  for (var i = 0; i < fl.length; i++) mk("📁 " + fl[i], fl[i]);
+  /* ★件数を添え、📁 は付けない(v24.07)。選んでいるタブは塗りで分かる。
+     フォルダに入っていないノートがある時は「未分類」も出す。 */
+  var fc = folderCounts(pages);
+  mk("すべて " + fc.all, "");
+  for (var i = 0; i < fl.length; i++) mk(fl[i] + " " + (fc.by[fl[i]] || 0), fl[i]);
+  if (fl.length && fc.none) mk("未分類 " + fc.none, LIST_NONE);
   /* 「📂」から一覧と整理ができる。
      ★以前は4つ以上ある時だけ出していたが、この入口が
        名前変更・削除への唯一の分かりやすい導線でもあるため、
        フォルダが1つでもあれば出す。 */
+  /* ★以前の「📂」は名前の無いフォルダに見え、押すと帯と同じ一覧が出るだけだった。
+     「⋯」にして、フォルダの名前変更・削除だけを出す(v24.07)。 */
   if (fl.length >= 1) {
     var all = document.createElement("button");
     all.className = "pf-tab";
-    all.textContent = "📂";
-    all.title = "フォルダ一覧";
+    all.textContent = "⋯";
+    all.title = "フォルダの名前変更・削除";
     all.addEventListener("click", function(){
-      var items = [{ label: "すべて", fn: function(){ listFolder = ""; renderPageList(); } }];
-      fl.forEach(function(f){
-        var n = pages.filter(function(p){ return (p.folder||"") === f; }).length;
-        items.push({ label: "📁 " + f + "(" + n + ")", fn: function(){
-          listFolder = f; renderPageList();
-        }});
+      var sub = fl.map(function(f){
+        return { label: "📁 " + f + "(" + (fc.by[f] || 0) + "件)", fn: function(){ folderMenu(f); } };
       });
-      items.push({ label: "⚙ フォルダの名前変更・削除…", fn: function(){
-        var sub = fl.map(function(f){
-          return { label: "📁 " + f, fn: function(){ folderMenu(f); } };
-        });
-        sub.push({ label: "キャンセル", cancel: true });
-        showSheet("どのフォルダを整理しますか", sub);
-      }});
-      items.push({ label: "キャンセル", cancel: true });
-      showSheet("フォルダを選択", items);
+      sub.push({ label: "キャンセル", cancel: true });
+      showSheet("どのフォルダを整理しますか(名前の変更・削除)", sub);
     });
     wrap.appendChild(all);
   }
   // 「＋」= 新しいフォルダ(mkは使わず専用ボタン: リスナー競合を避ける)
   var plus = document.createElement("button");
   plus.className = "pf-tab";
-  plus.textContent = "＋";
+  plus.textContent = "＋ フォルダ";
   plus.addEventListener("click", function(){
     askText("新しいフォルダ名", "", function(name){
       if (!name || !name.trim()) return;
       var f = name.trim();
       var pg = findPage(currentId);
+      var makeEmpty = function(){
+        ensureFolder(f);                         // 独立データとして保存 → 消えない
+        saveIndex();
+        if (cloudUser()) cloudPushIndex().catch(function(){});
+        listFolder = f;
+        renderPageList();
+        statusEl.textContent = "フォルダ「" + f + "」を作りました(ノートの ⋮ →「フォルダへ移動」で入れられます)";
+      };
+      if (!pg) { makeEmpty(); return; }
       if (pg) {
         showSheet("フォルダ「" + f + "」を作成", [
           { label: "いま開いている「" + pg.title + "」を入れる", fn: function(){ setPageFolder(pg, f); } },
@@ -9460,9 +9509,14 @@ function restoreVersion(id, key) {
   }).catch(function(){ statusEl.textContent = "戻せませんでした"; });
 }
 function pageMenu(pg) {
+  /* ★「中身を消す」は開いているノートのカードにだけ出す(v24.06)。
+     以前は一覧の下端「新しいノート」の隣に常に出ていて、押し間違えやすかった。 */
+  var clearItem = (pg.id === currentId)
+    ? [{ label: "🧽 このノートの中身を消す…", danger: true, fn: function(){ $("#clearBtn").click(); } }]
+    : [];
   showSheet("「" + pg.title + "」", [
     { label: "✎ 名前を変更", fn: function(){ renamePage(pg.id); } },
-    { label: "🕘 以前の版に戻す", fn: function(){ openVersionSheet(pg); } },
+    { label: "🕘 以前の版に戻す", fn: function(){ openVersionSheet(pg); } }].concat(clearItem).concat([
     { label: "🖼 サムネの絵を取り出す", fn: function(){ rescueThumb(pg); } },
     { label: "🔄 サムネイルを更新", fn: function(){
         statusEl.textContent = "サムネイルを作り直しています…";
@@ -9475,7 +9529,7 @@ function pageMenu(pg) {
     { label: "📁 フォルダへ移動", fn: function(){ pickFolder(pg); } },
     { label: "🗑 削除", danger: true, fn: function(){ deletePage(pg.id); } },
     { label: "キャンセル", cancel: true }
-  ]);
+  ]));
 }
 /* 一覧を操作している間は作り直さない。
    ★指を置いてから離すまでの間にカードが差し替わると、
@@ -9510,6 +9564,76 @@ function updateCardThumb(pid) {
 }
 /* skipContent: 題名の絞り込みだけを反映し、中身の検索は走らせない
    (入力のたびに全ノートを読み直さないため) */
+/* =========================================================
+   ノート一覧の並べ方(v24.07)
+   ---------------------------------------------------------
+   ★「すべて」ではフォルダごとに小見出しを付けて並べる(最後に「未分類」)。
+     以前はフォルダの区別なく1列に並び、カードの題名の頭に 📁 が付くだけで、
+     どれがどのフォルダか見分けにくかった。
+   ★フォルダを選んでいる時・検索している時は小見出しを付けない。
+   ★「未分類」は、フォルダに入っていないノートだけを見る選び方。
+     名前と衝突しない印(LIST_NONE)で持つ。
+   戻り値: [{ type: "head", folder, label, count } | { type: "page", pg }]
+========================================================= */
+var LIST_NONE = "\u0000none";
+function groupPagesForList(sorted, opt) {
+  var folder = opt.folder || "", q = String(opt.query || "").trim().toLowerCase();
+  var folderOrder = opt.folders || [];
+  var arr = sorted.slice();
+  if (folder === LIST_NONE) arr = arr.filter(function(p){ return !p.folder; });
+  else if (folder) arr = arr.filter(function(p){ return (p.folder || "") === folder; });
+  if (q) arr = arr.filter(function(p){ return String(p.title || "").toLowerCase().indexOf(q) !== -1; });
+  var plain = function(){ return arr.map(function(p){ return { type: "page", pg: p }; }); };
+  if (folder || q) return plain();
+  var hasFolder = arr.some(function(p){ return !!p.folder; });
+  if (!hasFolder) return plain();
+  var out = [];
+  folderOrder.forEach(function(f){
+    var inF = arr.filter(function(p){ return (p.folder || "") === f; });
+    if (!inF.length) return;
+    out.push({ type: "head", folder: f, label: f, count: inF.length });
+    inF.forEach(function(p){ out.push({ type: "page", pg: p }); });
+  });
+  /* 一覧にまだ載っていないフォルダ名(順番の表に無いもの)も取りこぼさない */
+  var known = {};
+  folderOrder.forEach(function(f){ known[f] = 1; });
+  var stray = {};
+  arr.forEach(function(p){ if (p.folder && !known[p.folder]) (stray[p.folder] = stray[p.folder] || []).push(p); });
+  Object.keys(stray).sort(function(a, b){ return a.localeCompare(b, "ja"); }).forEach(function(f){
+    out.push({ type: "head", folder: f, label: f, count: stray[f].length });
+    stray[f].forEach(function(p){ out.push({ type: "page", pg: p }); });
+  });
+  var none = arr.filter(function(p){ return !p.folder; });
+  if (none.length) {
+    out.push({ type: "head", folder: LIST_NONE, label: "未分類", count: none.length });
+    none.forEach(function(p){ out.push({ type: "page", pg: p }); });
+  }
+  return out;
+}
+/* フォルダの帯に出す件数 */
+function folderCounts(pagesList) {
+  var c = { all: pagesList.length, none: 0, by: {} };
+  pagesList.forEach(function(p){
+    if (p.folder) c.by[p.folder] = (c.by[p.folder] || 0) + 1;
+    else c.none++;
+  });
+  return c;
+}
+
+/* 「すべて」の小見出し。押すとそのフォルダだけに絞る */
+function makeListGroupHead(it) {
+  var h = document.createElement("button");
+  h.className = "pp-group-h";
+  h.type = "button";
+  var name = document.createElement("span");
+  name.textContent = (it.folder === LIST_NONE ? "" : "📁 ") + it.label;
+  var cnt = document.createElement("span");
+  cnt.className = "pp-group-n";
+  cnt.textContent = it.count + "件 ›";
+  h.appendChild(name); h.appendChild(cnt);
+  h.addEventListener("click", function(){ listFolder = it.folder; renderPageList(); });
+  return h;
+}
 function renderPageList(skipContent) {
   renderFolderTabs();
   var list = $("#ppList");
@@ -9517,16 +9641,17 @@ function renderPageList(skipContent) {
   list.className = "scrollable" + (listView === "grid" ? " grid" : "");
   $("#ppView").textContent = (listView === "grid") ? "☰" : "▦";
   $("#ppSort").textContent = (listSort === "name") ? "🔤 名前順" : (listSort === "created") ? "📅 作成順" : "🕒 変更順";
-  var arr = sortedPages();
-  if (listFolder) arr = arr.filter(function(p){ return (p.folder || "") === listFolder; });
   var q = (listQuery || "").trim().toLowerCase();
-  if (q) arr = arr.filter(function(p){ return (p.title || "").toLowerCase().indexOf(q) !== -1; });
+  /* 並べ方は groupPagesForList に任せる(すべて=フォルダごとに小見出し) */
+  var items = groupPagesForList(sortedPages(), { folder: listFolder, query: q, folders: folderList() });
+  var arr = items.filter(function(x){ return x.type === "page"; }).map(function(x){ return x.pg; });
   // 見出しの件数表示(起動画面としての情報量)
   var cnt = $("#ppCount");
   if (cnt) {
     cnt.textContent = q
       ? "「" + listQuery.trim() + "」に一致 " + arr.length + " 件"
-      : (listFolder ? "📁 " + listFolder + " · " + arr.length + " 件"
+      : (listFolder === LIST_NONE ? "未分類 · " + arr.length + " 件"
+         : listFolder ? listFolder + " · " + arr.length + " 件"
                     : pages.length + " 件のノート");
   }
   /* ★いま開いているノートの名前を見出しに出す。
@@ -9544,13 +9669,21 @@ function renderPageList(skipContent) {
     }
   }
 
-  for (var i = 0; i < arr.length; i++) {
+  for (var ii = 0; ii < items.length; ii++) {
+    if (items[ii].type === "head") { list.appendChild(makeListGroupHead(items[ii])); continue; }
     (function(pg){
       if (listView === "grid") {
         // ===== カード =====
         var card = document.createElement("div");
         card.className = "pp-card" + (pg.id === currentId ? " current" : "");
         card.setAttribute("data-pid", String(pg.id));
+        if (pg.id === currentId) {
+          /* 開いているノートの印(見出しの「📖 ノート名」の行の代わり) */
+          var nowB = document.createElement("span");
+          nowB.className = "pp-card-now";
+          nowB.textContent = "開いています";
+          card.appendChild(nowB);
+        }
         // サムネと、その上に重ねる帯をまとめる枠
         var media = document.createElement("div");
         media.className = "pp-card-media";
@@ -9572,11 +9705,16 @@ function renderPageList(skipContent) {
         over.className = "pp-card-over";
         var title = document.createElement("span");
         title.className = "pp-card-title";
-        title.textContent = (pg.folder ? "📁" : "") + pg.title;
+        /* ★題名の頭の 📁 はやめた(v24.07)。「すべて」は小見出しで分かり、
+           フォルダで絞り込んでいる時は全部に付いて情報にならなかった。 */
+        title.textContent = pg.title;
         title.title = pg.title;      // 省略された時に全文を確認できる
         var date = document.createElement("span");
         date.className = "pp-card-date";
-        date.textContent = new Date(pg.ts || pg.id).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
+        var dt = new Date(pg.ts || pg.id);
+        date.textContent = dt.toLocaleDateString("ja-JP", (dt.getFullYear() === new Date().getFullYear())
+          ? { month: "numeric", day: "numeric" } : { year: "numeric", month: "numeric", day: "numeric" }) +
+          ((q && pg.folder) ? "  📁 " + pg.folder : "");       // 検索中はどのフォルダかも出す
         var texts = document.createElement("div");
         texts.className = "pp-card-texts";
         texts.appendChild(title);
@@ -9669,7 +9807,7 @@ function renderPageList(skipContent) {
         row.className = "pp-row" + (pg.id === currentId ? " current" : "");
         var title2 = document.createElement("span");
         title2.className = "pp-title";
-        title2.textContent = (pg.folder ? "📁 " : "") + pg.title;
+        title2.textContent = pg.title + ((q && pg.folder) ? "  📁 " + pg.folder : "");
         title2.addEventListener("click", function(){ switchPage(pg.id); });
         var ren = document.createElement("button");
         ren.textContent = "✎";
@@ -9689,16 +9827,31 @@ function renderPageList(skipContent) {
         row.appendChild(del);
         list.appendChild(row);
       }
-    })(arr[i]);
+    })(items[ii].pg);
   }
   if (!arr.length) {
     var empty = document.createElement("div");
     empty.style.cssText = "grid-column:1/-1;color:var(--ui-dim);font-size:12.5px;text-align:center;padding:34px 8px;line-height:1.7";
     empty.innerHTML = q
       ? "🔍 一致するノートがありません"
-      : (listFolder ? "📂 このフォルダは空です<br><span style='font-size:11px'>ノートの ⋮ から移動できます<br>フォルダ名の変更・削除は、上のタブを長押し(またはもう一度タップ)</span>"
-                    : "📝 まだノートがありません<br><span style='font-size:11px'>下の「＋ 新しいページ」から始めましょう</span>");
+      : (listFolder === LIST_NONE ? "フォルダに入っていないノートはありません"
+         : listFolder ? "このフォルダにはまだノートがありません<br><span style='font-size:11px'>ほかのノートは ⋮ →「フォルダへ移動」で入れられます</span>"
+                    : "📝 まだノートがありません<br><span style='font-size:11px'>下の「＋ 新しいノート」から始めましょう</span>");
     list.appendChild(empty);
+    /* フォルダを選んでいる時は、そのフォルダに入れた新しいノートを作れる */
+    if (listFolder && listFolder !== LIST_NONE && !q) {
+      var addHere = document.createElement("button");
+      addHere.className = "pp-add-here";
+      addHere.textContent = "＋ ここに新しいノート";
+      var fHere = listFolder;
+      addHere.addEventListener("click", function(){
+        addPage();
+        var np = findPage(currentId);
+        if (np) setPageFolder(np, fHere);
+        closePages();
+      });
+      list.appendChild(addHere);
+    }
   }
   sizePageCards();
   if (!skipContent) renderListContentHits();
@@ -10508,8 +10661,14 @@ $("#wipePage").onclick = function(){
   }, { danger: true });
 };
 $("#wipeAll").onclick = function(){
-  askConfirm("⚠ すべてのノートを削除し、初期状態に戻します。\n(ノートは30日間、ごみ箱に残ります)\nよろしいですか?", "次へ", function(){
-  askConfirm("⚠ 最終確認: 本当にすべて削除しますか?\n(クラウド同期中の場合、クラウド側のノートも削除されます)", "すべて削除する", function(){
+  askConfirm("すべてのノートを消して、初期状態に戻しますか?\n" +
+             "消えるもの: 一覧にあるすべてのノート(" + pages.length + "件)。同期している時はクラウドからも\n" +
+             "残るもの: 設定(用紙の色・画質など)\n" +
+             "戻し方: ごみ箱に30日間残ります(一覧の 💾 バックアップ・ごみ箱 →「ごみ箱」から1件ずつ戻せます)", "次へ", function(){
+  askConfirm("最終確認: 本当にすべてのノートを消しますか?\n" +
+             "同期している時は、ほかの端末の一覧からも消えます(それぞれの端末のごみ箱には30日間残ります)。" +
+             "心配なら先に 💾「バックアップを保存」をしてください",
+             "すべて消す", function(){
   var ids = pages.map(function(p){ return p.id; });
   var chain = Promise.resolve();
   ids.forEach(function(id){
