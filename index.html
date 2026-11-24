@@ -602,6 +602,9 @@
     -webkit-user-select:none;user-select:none;
   }
   #editHandle.show{display:block}
+  /* ★見た目は細いまま、指が届く範囲だけ左右に広げる。
+     細くしたぶん掴みにくくならないように。 */
+  #editHandle::before{content:"";position:absolute;left:-13px;right:-13px;top:-5px;bottom:-5px}
   /* ★逃げ場が無くて文字の上に置かざるを得ない時は、薄くして
      下の文字を読めるようにする。触れば元の濃さに戻る。 */
   #editHandle.dim{opacity:.35}
@@ -1478,7 +1481,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v24.12">InkNote <small>v24.12</small></div>
+  <div class="brand" title="InkNote v24.14">InkNote <small>v24.14</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -2155,7 +2158,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "24.12";
+var APP_VERSION = "24.14";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3155,15 +3158,15 @@ function selBBox() {
 /* ---------- 選択の表示 ---------- */
 function setSelection(list) {
   ctxbar.classList.remove("expanded");   // 選択が変わったら「その他」は畳む
-  var prev = sel;                        // 直前まで選んでいた物(空BOXの後始末に使う)
   // 前の選択の見た目を解除
   for (var i = 0; i < sel.length; i++)
     if (sel[i].el) sel[i].el.classList.remove("selected");
   sel = list || [];
-  /* ★選択から外れた空のテキストBOXは、ここで消す(v24.11)。
-     確定の時点では消さずに残す場合があるため、後始末をここで引き受ける。 */
-  for (var pv = 0; pv < prev.length; pv++)
-    if (sel.indexOf(prev[pv]) === -1) dropIfEmptyText(prev[pv]);
+  /* ★ここで空BOXを消してはいけない(v24.13)。
+     v24.11 で「選択から外れたら消す」を入れたが、置き場所を決めてから
+     打とうとしただけで消えてしまい、「よく消える」状態になった。
+     空BOXを消すのは、今までどおり「何も入れずに入力を終えた時」だけ。
+     そこで残した物(_kept)は、点線の枠として見えているので邪魔にならない。 */
   for (var j = 0; j < sel.length; j++)
     if (sel[j].el) sel[j].el.classList.add("selected");
   updateSelUI();
@@ -4603,11 +4606,16 @@ function positionEditHandle() {
   editHandle.style.top = Math.round(y) + "px";
   editHandle.classList.add("show");
 }
-editHandle.addEventListener("pointerdown", function(e){
-  if (!editingObj) return;
-  e.preventDefault();     // フォーカス(キーボード)を保ったまま掴む
-  e.stopPropagation();
-  var o = editingObj;
+/* いま画面に出ている中身が空か。
+   ★編集中は o.text がまだ古い(確定するまで書き戻さない)ので、DOMを見る。 */
+function editingBoxIsEmpty(o) {
+  if (!o || !o.el) return false;
+  if (o.el.querySelector && o.el.querySelector("img,table")) return false;
+  var raw = (o.el.innerText != null) ? o.el.innerText : (o.el.textContent || "");
+  return String(raw).trim() === "";
+}
+/* 編集中のBOXを動かす。つまみ(✥)と、空のBOXの本体から呼ぶ。 */
+function dragEditingBox(e, o) {
   var snapshot = serializeScene();
   var riders = linkedHighlighters(o);        // 上の蛍光ペンも一緒に動かす
   drag(e, {
@@ -4622,12 +4630,19 @@ editHandle.addEventListener("pointerdown", function(e){
     },
     up: function(ev, moved){
       if (moved) {
+        o._kept = true;      /* ★置き場所を決めた箱は、空でも消さない */
         pushSnapshot(snapshot);
         scheduleSave();
       }
       try { o.el.focus(); } catch (err) {}   // 念のためフォーカス復帰
     }
   });
+}
+editHandle.addEventListener("pointerdown", function(e){
+  if (!editingObj) return;
+  e.preventDefault();     // フォーカス(キーボード)を保ったまま掴む
+  e.stopPropagation();
+  dragEditingBox(e, editingObj);
 });
 
 /* 編集中のテキストが「実際に見えている領域」(キーボードを除いた部分)に
@@ -4782,10 +4797,10 @@ function commitText() {
   // ★空のまま確定したBOXは削除する。
   //   見えない空BOXが溜まると、タップを奪って誤選択・誤移動の原因になる。
   //   ただし表・数式の画像・装飾が入っていれば、文字が無くても消さない。
-  /* ★メニューや窓を開いている間は、空でも消さない(v24.11)。
-     ここで消すと、そのあとの操作が相手を失って空振りする。
-     この場合は「選択から外れた時」に dropIfEmptyText で消す。 */
-  if (isTrulyEmptyText(o) && o !== keepEmptyObj) {
+  /* ★メニューや窓を開いている間(keepEmptyObj)と、置き場所を決めた物
+     (_kept)は、空でも消さない。ここで消すと、そのあとの操作が相手を
+     失って空振りし、ユーザーから見ると「BOXが勝手に消える」ことになる。 */
+  if (isTrulyEmptyText(o) && o !== keepEmptyObj && !o._kept) {
     var oi = objects.indexOf(o);
     if (oi !== -1) objects.splice(oi, 1);
     if (el.parentNode) el.parentNode.removeChild(el);
@@ -4973,6 +4988,16 @@ function attachObjHandlers(o) {
   var el = o.el;
   el.addEventListener("pointerdown", function(e){
     if (tool !== "select" && tool !== "text") return;
+    /* ★中身が空なら、編集中でも本体を触って動かせる(v24.13)。
+       空のBOXには選ぶ文字が無いので、なぞる操作は「動かす」で間違いない。
+       つまみ(✥)しか掴めないと、置き場所を決めるのが難しかった。
+       焦点はこのBOXのままなので、キーボードは閉じない。 */
+    if (editingObj === o && editingBoxIsEmpty(o)) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragEditingBox(e, o);
+      return;
+    }
     if (editingObj === o) return;
     if (editingObj) commitText();   // 編集中に他を触ったら先に確定(blur阻止対策)
     if (pinch) return;
@@ -17167,7 +17192,7 @@ var keepEmptyObj = null;
    見えない空BOXが残るとタップを奪い、誤選択・誤移動の元になる。 */
 function dropIfEmptyText(o) {
   if (!o || o.type !== "text") return false;
-  if (o === editingObj || o === keepEmptyObj) return false;
+  if (o === editingObj || o === keepEmptyObj || o._kept) return false;
   if (!isTrulyEmptyText(o)) return false;
   var i = objects.indexOf(o);
   if (i === -1) return false;
@@ -17194,11 +17219,77 @@ function openMenuFromEditing() {
     keepEmptyObj = o;                                // 空でも、ここでは消さない
     try { commitText(); } finally { keepEmptyObj = null; }
   }
+  o._kept = true;        /* ★メニューを開いた=この箱を使うつもり。空でも以後は消さない */
   linkCaretMemo = memo ? { o: o, s: memo.s, e: memo.e,
                            anchorIdx: memo.anchorIdx, text: o.text } : null;
   if (objects.indexOf(o) !== -1) setSelection([o]);  // 選び直す → メニューが出る
 }
 /* ===== 編集中のメニュー(v24.12)ここまで ===== */
+
+/* =========================================================
+   ===== 編集中の1本指スワイプで画面を動かす(v24.14) =====
+   長い文章を編集している最中、BOXが画面いっぱいになると、紙をつかむ
+   余白がどこにも無くなり、上下の文面を確かめられなかった。
+   2本指でも動かせるが、片手では届かない。
+   そこで、文字の上を1本指でなぞったら紙を動かす。
+   ・長押ししてから動かした時は、文字を選ぼうとしているので動かさない
+   ・すでに文字を選んでいる時も動かさない(選び直しの邪魔をしない)
+   ・2本指になったら、今までどおりピンチに任せる
+   ・指やマウスの種類が touch 以外(ペン・マウス)は、今までどおり選択に譲る
+   ・中身が空のBOXは、なぞると「BOXを動かす」(v24.13)。こちらは見る文字が
+     無いので、紙ではなく箱が動く方が自然。
+========================================================= */
+var editPan = null;
+var EDIT_PAN_SLOP = 10;      // これだけ動いたら「なぞった」とみなす
+var EDIT_PAN_HOLD = 500;     // これより長く押してから動かしたら、選択とみなす
+function editPanTarget(e) {
+  if (!e || e.pointerType !== "touch") return null;
+  if (!editingObj || !editingObj.el || !e.target) return null;
+  if (!editingObj.el.contains(e.target)) return null;
+  if (editingBoxIsEmpty(editingObj)) return null;     // 空のBOXは「箱を動かす」が優先
+  return editingObj;
+}
+function editPanHasSelection() {
+  var s = window.getSelection && window.getSelection();
+  return !!(s && s.rangeCount && !s.isCollapsed);
+}
+document.addEventListener("pointerdown", function(e){
+  if (!editPanTarget(e)) return;
+  if (editPanHasSelection()) return;
+  editPan = { id: e.pointerId, x0: e.clientX, y0: e.clientY,
+              x: e.clientX, y: e.clientY, t0: Date.now(), on: false };
+}, true);
+document.addEventListener("pointermove", function(e){
+  if (!editPan || e.pointerId !== editPan.id) return;
+  if (Object.keys(touchPts).length >= 2) { editPan = null; return; }   // ピンチに任せる
+  if (!editPan.on) {
+    var mv = Math.hypot(e.clientX - editPan.x0, e.clientY - editPan.y0);
+    if (mv < EDIT_PAN_SLOP) return;
+    if (Date.now() - editPan.t0 > EDIT_PAN_HOLD) { editPan = null; return; }
+    if (editPanHasSelection()) { editPan = null; return; }
+    editPan.on = true;
+    textSelecting = true;        // 自動スクロールに引き戻されないようにする
+  }
+  if (e.cancelable) e.preventDefault();
+  view.x += e.clientX - editPan.x;
+  view.y += e.clientY - editPan.y;
+  editPan.x = e.clientX; editPan.y = e.clientY;
+  applyView();
+  positionEditHandle();
+}, true);
+function endEditPan(e) {
+  if (!editPan || (e && e.pointerId != null && e.pointerId !== editPan.id)) return;
+  var was = editPan.on;
+  editPan = null;
+  if (!was) return;
+  if (e && e.cancelable) e.preventDefault();   // 離した所にカーソルが飛ばないように
+  clampView();
+  setTimeout(function(){ textSelecting = false; }, 300);
+}
+["pointerup", "pointercancel", "lostpointercapture"].forEach(function(n){
+  document.addEventListener(n, endEditPan, true);
+});
+/* ===== 編集中の1本指スワイプ(v24.14)ここまで ===== */
 
 /* =========================================================
    数式(LaTeX)を組版して貼る
