@@ -731,6 +731,12 @@
     flex-wrap:wrap;                          /* 収まらない時は2段に折り返す */
   }
   #richBar.show{display:flex}
+  /* ★カーソル版(v24.11): 文字を選んでいない時は、選ばなくても使える物だけ出す */
+  #richBar.caret-only > *{display:none}
+  #richBar.caret-only #rbLink,
+  #richBar.caret-only #rbMenu{display:block}
+  #richBar.caret-only #rbLink::after{content:" リンク";font-size:11px;font-weight:700}
+  #richBar.caret-only button{padding:0 9px}
   #richBar button{
     border:none;background:#20242B;color:var(--ui-text);
     min-width:27px;height:27px;border-radius:7px;cursor:pointer;
@@ -1471,7 +1477,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v24.10">InkNote <small>v24.10</small></div>
+  <div class="brand" title="InkNote v24.11">InkNote <small>v24.11</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1686,6 +1692,7 @@ window.onerror = function(msg, src, line){
   <span class="rb-sep"></span>
   <button id="rbMath" title="選んだ部分を数式に組版">∑</button>
   <button id="rbLink" title="選んだ文字にURLを埋め込む">🔗</button>
+  <button id="rbMenu" title="入力を終えて、いつものメニューを出す">⋯ メニュー</button>
   <span class="rb-sep"></span>
   <button id="rbHead" title="選んだ文字を見出しにする">🔖</button>
   <span class="rb-sep"></span>
@@ -2145,7 +2152,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "24.10";
+var APP_VERSION = "24.11";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3145,10 +3152,15 @@ function selBBox() {
 /* ---------- 選択の表示 ---------- */
 function setSelection(list) {
   ctxbar.classList.remove("expanded");   // 選択が変わったら「その他」は畳む
+  var prev = sel;                        // 直前まで選んでいた物(空BOXの後始末に使う)
   // 前の選択の見た目を解除
   for (var i = 0; i < sel.length; i++)
     if (sel[i].el) sel[i].el.classList.remove("selected");
   sel = list || [];
+  /* ★選択から外れた空のテキストBOXは、ここで消す(v24.11)。
+     確定の時点では消さずに残す場合があるため、後始末をここで引き受ける。 */
+  for (var pv = 0; pv < prev.length; pv++)
+    if (sel.indexOf(prev[pv]) === -1) dropIfEmptyText(prev[pv]);
   for (var j = 0; j < sel.length; j++)
     if (sel[j].el) sel[j].el.classList.add("selected");
   updateSelUI();
@@ -4050,6 +4062,8 @@ function startTextEdit(o, pt) {
     el.focus();
     placeCaret(el, pt);
     ensureEditingVisible();
+    updateRichBar();                  /* ★カーソル版をすぐ出す(v24.11) */
+    setTimeout(updateRichBar, 260);   /*   画面が動いたあと、位置を取り直す */
   }, 30);
   el.addEventListener("blur", onTextBlur);
   el.addEventListener("input", onTextInput);
@@ -4766,7 +4780,10 @@ function commitText() {
   // ★空のまま確定したBOXは削除する。
   //   見えない空BOXが溜まると、タップを奪って誤選択・誤移動の原因になる。
   //   ただし表・数式の画像・装飾が入っていれば、文字が無くても消さない。
-  if (isTrulyEmptyText(o)) {
+  /* ★メニューや窓を開いている間は、空でも消さない(v24.11)。
+     ここで消すと、そのあとの操作が相手を失って空振りする。
+     この場合は「選択から外れた時」に dropIfEmptyText で消す。 */
+  if (isTrulyEmptyText(o) && o !== keepEmptyObj) {
     var oi = objects.indexOf(o);
     if (oi !== -1) objects.splice(oi, 1);
     if (el.parentNode) el.parentNode.removeChild(el);
@@ -16286,13 +16303,24 @@ function selectionInsideEditing() {
   return r;
 }
 function hideRichBar() { var b = rbEl(); if (b) b.classList.remove("show"); }
-function showRichBarFor(range) {
+function showRichBarFor(range, caretMode) {
   var b = rbEl();
   if (!b) return;
   b.classList.add("show");
   var rect = null;
-  try { rect = range.getBoundingClientRect(); } catch (e) {}
+  try { if (range) rect = range.getBoundingClientRect(); } catch (e) {}
   var bw = b.offsetWidth || 300, bh = b.offsetHeight || 40;
+  /* ★カーソル版(v24.11)は、横をBOXの左端にそろえる。
+     カーソルに横も合わせると、1字打つたびにバーが右へ動いて落ち着かない。
+     空のBOXでは範囲の寸法が取れないので、BOXそのものを目印にする。 */
+  if (caretMode && editingObj && editingObj.el) {
+    var er = editingObj.el.getBoundingClientRect();
+    var hasLine = !!(rect && rect.height);
+    rect = { left: er.left, width: 0,
+             top:    hasLine ? rect.top    : er.top,
+             bottom: hasLine ? rect.bottom : er.bottom,
+             height: hasLine ? rect.height : (er.height || 20) };
+  }
 
   /* 使える高さ。キーボードが出ている分は除く */
   var vv = window.visualViewport;
@@ -16303,7 +16331,7 @@ function showRichBarFor(range) {
 
   var x, y;
   if (rect && (rect.width || rect.height)) {
-    x = rect.left + rect.width / 2 - bw / 2;
+    x = caretMode ? rect.left : (rect.left + rect.width / 2 - bw / 2);
     /* ★選んだ文字の「上」に出すのが基本。
        ただし、すぐ上には端末標準の「切り取り/コピー/貼り付け」が
        出るので、その高さぶん(約56px)よけて更に上に出す。 */
@@ -16312,7 +16340,10 @@ function showRichBarFor(range) {
        こちらのボタンを押してもOS側が優先されて反応しないため、
        iPadでは十分に余裕を取る。 */
     var isIpad = /iPad|Macintosh/.test(navigator.userAgent) && "ontouchend" in document;
-    var OS_MENU = (isIpad || /iPhone|iPod/.test(navigator.userAgent)) ? 108 : 56;
+    /* ★カーソル版は文字を選んでいないので、端末標準のメニューは出ない。
+       よけたままだと、理由もなく高い位置に浮いてしまう。 */
+    var OS_MENU = caretMode ? 0
+                : ((isIpad || /iPhone|iPod/.test(navigator.userAgent)) ? 108 : 56);
     y = rect.top - bh - OS_MENU;
     if (y < topLimit) {
       // 上に入らない時だけ下へ回す
@@ -16342,9 +16373,20 @@ function showRichBarFor(range) {
   b.style.top = y + "px";
 }
 function updateRichBar() {
+  var b0 = rbEl();
   var r = selectionInsideEditing();
-  if (!r) { hideRichBar(); return; }
-  showRichBarFor(r);
+  if (r) {                                  // 文字を選んでいる → 今までどおり全部
+    if (b0) b0.classList.remove("caret-only");
+    showRichBarFor(r, false);
+    return;
+  }
+  /* ★カーソルだけでも出す(v24.11)。選ばなくても使える物だけに絞る。 */
+  if (editingObj && editingObj.el) {
+    if (b0) b0.classList.add("caret-only");
+    showRichBarFor(caretRangeInsideEditing(), true);
+    return;
+  }
+  hideRichBar();
 }
 document.addEventListener("selectionchange", function(){
   /* ★編集中のカーソル位置を、動くたびに即座に控える。
@@ -16642,7 +16684,9 @@ function bindRichBar() {
        その後にボタンの処理が走る端末があるため、live の選択に頼ると
        「分けたい所をタップしてから押してください」で終わってしまう。 */
     try {
-      var rr = selectionInsideEditing();
+      /* ★カーソルだけの時も控える(v24.11)。選んでいない時に押せる
+         ボタンが増えたので、「選択が無い=控えない」では場所を見失う。 */
+      var rr = selectionInsideEditing() || caretRangeInsideEditing();
       if (editingObj && rr) {
         lastEditSnap = { o: editingObj, node: rr.startContainer, off: rr.startOffset,
                          text: String(rr.toString() || ""), at: Date.now() };
@@ -16697,6 +16741,7 @@ function bindRichBar() {
   bindTap($("#rbClear"), function(){ applyRich(null, true); });
   bindTap($("#rbMath"), function(){ convertSelectionToMath(); });
   bindTap($("#rbLink"), function(){ linkFromRichBar(); });
+  bindTap($("#rbMenu"), function(){ openMenuFromEditing(); });
   /* ★選んだ文字をそのまま見出し名にして目次へ登録する。
      貼り付けた長文を読みながら、その場で章立てを作れるようにするため。
      見出しはBOX単位なので、印は「その文字が入っているBOX」に付く。 */
@@ -16981,15 +17026,22 @@ function editLinkDialog(info) {
     var A = o.el.querySelectorAll("a")[info.anchorIdx] || null;
     if (A) { hasA = true; curUrl = A.getAttribute("href") || ""; label = A.textContent || ""; }
   }
+  keepEmptyObj = o;                      // 窓を開いている間は、空でも消さない
   openLinkDialog({
-    title: hasA ? "リンクを直す" : (info.s == null ? "リンクを入れる(文末に追加されます)" : "選んだ文字にURLを埋め込む"),
+    title: hasA ? "リンクを直す"
+         : (info.s == null ? "リンクを入れる(文末に追加されます)"
+         : (info.text ? "選んだ文字にURLを埋め込む" : "ここにリンクを入れる")),
     url: curUrl, label: label, canRemove: hasA
-  }, function(res){ if (res) applyLinkResult(info, res); });
+  }, function(res){
+    keepEmptyObj = null;
+    if (res) applyLinkResult(info, res);
+    else dropIfEmptyText(o);             // 取り消して空のままなら、BOXも残さない
+  });
 }
 /* リッチバーの 🔗 */
 function linkFromRichBar() {
   var info = null, rr = null;
-  try { rr = selectionInsideEditing(); } catch (e) {}
+  try { rr = selectionInsideEditing() || caretRangeInsideEditing(); } catch (e) {}
   if (editingObj && rr) info = linkTargetFromRange(editingObj, rr);
   else if (lastLinkSnap && Date.now() - lastLinkSnap.at < 4000 && objects.indexOf(lastLinkSnap.o) !== -1) info = lastLinkSnap;
   if (!info) { statusEl.textContent = "URLを埋め込みたい文字を選んでから押してください"; return; }
@@ -17085,6 +17137,64 @@ document.addEventListener("keydown", function(e){
   }
 });
 /* ===== リンク(v24.10)ここまで ===== */
+
+/* =========================================================
+   ===== カーソル版のバー(v24.11) =====
+   文字を選んでいなくても、編集中なら小さなバーを出す。
+   これが無いと、新しく作ったBOXや入力の途中には、どのメニューへの
+   入口も無く、「1字入れて → 閉じて → 選び直す」しかなかった。
+   出すのは、文字を選ばなくても使える2つだけ。
+   - 🔗  カーソルの位置にリンクを入れる(窓でURLと表示を決める)
+   - ⋯  入力を終えて、いつものメニューを出す(閉じて選び直す、を1回で)
+========================================================= */
+/* カーソルだけ(選んでいない)の範囲も返す。
+   selectionInsideEditing は「選んでいる時」専用で collapsed には null を
+   返すので、位置を控える用にこちらを使う。 */
+function caretRangeInsideEditing() {
+  if (!editingObj || !editingObj.el) return null;
+  var s = window.getSelection && window.getSelection();
+  if (!s || !s.rangeCount) return null;
+  var r = s.getRangeAt(0);
+  var node = r.commonAncestorContainer;
+  if (node.nodeType === 3) node = node.parentNode;
+  if (!editingObj.el.contains(node)) return null;
+  return r;
+}
+/* 空のBOXを、メニューや窓を開いている間だけ消さずに残すための目印。
+   ★これが無いと、窓を開いた瞬間に焦点が外れて確定が走り、空のBOXは
+     その場で消される。消えた後に「リンクを入れる」等が走っても相手が
+     居らず、押しても何も起きないように見える(v24.10 の空BOXがこれ)。 */
+var keepEmptyObj = null;
+/* 選択から外れた空のテキストBOXは、その時点で消す。
+   見えない空BOXが残るとタップを奪い、誤選択・誤移動の元になる。 */
+function dropIfEmptyText(o) {
+  if (!o || o.type !== "text") return false;
+  if (o === editingObj || o === keepEmptyObj) return false;
+  if (!isTrulyEmptyText(o)) return false;
+  var i = objects.indexOf(o);
+  if (i === -1) return false;
+  objects.splice(i, 1);
+  if (o.el && o.el.parentNode) o.el.parentNode.removeChild(o.el);
+  inkDirty = true;
+  scheduleSave();
+  return true;
+}
+/* ⋯ 入力を終えて、いつものメニューを出す。
+   commitText は最後に選択を外す(書き終わった後のスクロールでBOXが
+   動かないようにするため)ので、ここで選び直して #ctxbar を出す。 */
+function openMenuFromEditing() {
+  /* ★押した時点で既に確定が走っている端末もある(preventDefault が
+     効かず blur が先に飛ぶ場合)。その時は、押した瞬間に控えた箱を使う。 */
+  var o = editingObj ||
+          (lastEditSnap && Date.now() - lastEditSnap.at < 4000 ? lastEditSnap.o : null);
+  if (!o) return;
+  if (editingObj === o) {
+    keepEmptyObj = o;                                // 空でも、ここでは消さない
+    try { commitText(); } finally { keepEmptyObj = null; }
+  }
+  if (objects.indexOf(o) !== -1) setSelection([o]);  // 選び直す → メニューが出る
+}
+/* ===== カーソル版のバー(v24.11)ここまで ===== */
 
 /* =========================================================
    数式(LaTeX)を組版して貼る
