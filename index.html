@@ -95,6 +95,9 @@
   .obj-text h1:first-child,.obj-text h2:first-child,.obj-text h3:first-child{margin-top:0}
   .obj-text ul,.obj-text ol{margin:.25em 0 .25em 0;padding-left:1.4em}
   .obj-text li{margin:.12em 0}
+  /* リンク(v24.10)。色は用紙テーマに合わせて --link-col で切り替える */
+  .obj-text a{color:var(--link-col,#2C6BD6);text-decoration:underline;
+    text-decoration-thickness:1.5px;text-underline-offset:3px;cursor:pointer}
   /* 図やコードのように、文字の位置を揃えたいテキスト */
   .obj-text.mono{
     font-family:"SF Mono","Roboto Mono",Menlo,Consolas,"Courier New",monospace !important;
@@ -1275,6 +1278,27 @@
     box-shadow:0 12px 40px rgba(10,12,16,.5);
   }
   #inputDlg.show{display:block}
+  /* ===== リンクの入力(URL と 表示) ===== */
+  #linkDlg{
+    position:fixed;left:50%;top:18%;transform:translateX(-50%);
+    width:min(400px, calc(100vw - 32px));
+    background:var(--ui-bg2);border:1px solid var(--ui-line);
+    border-radius:16px;padding:16px;z-index:63;display:none;
+    box-shadow:0 12px 40px rgba(10,12,16,.5);
+  }
+  #linkDlg.show{display:block}
+  #ldTitle{color:var(--ui-text);font-size:13.5px;font-weight:600;margin-bottom:10px}
+  #linkDlg .ld-lab{color:var(--ui-dim);font-size:11.5px;font-weight:700;margin:8px 0 4px}
+  #linkDlg input{
+    width:100%;box-sizing:border-box;border:1px solid var(--ui-line);
+    background:rgba(255,255,255,.06);color:var(--ui-text);
+    border-radius:10px;padding:11px 12px;font-size:15px;outline:none;
+  }
+  #linkDlg input:focus{border-color:var(--accent)}
+  #ldMsg{color:#ff9d97;font-size:12px;margin-top:8px;min-height:0}
+  #ldCancel{background:rgba(255,255,255,.07);color:var(--ui-dim)}
+  #ldRemove{background:rgba(255,255,255,.07);color:#ff9d97}
+  #ldOk{background:var(--accent);color:#fff}
   /* AIから取り込む用の大きめ入力欄(HTMLを貼り付ける) */
   #aiImpDlg{
     position:fixed;left:50%;top:12%;transform:translateX(-50%);
@@ -1447,7 +1471,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v24.09">InkNote <small>v24.09</small></div>
+  <div class="brand" title="InkNote v24.10">InkNote <small>v24.10</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1661,6 +1685,7 @@ window.onerror = function(msg, src, line){
   <button class="rb-mark" data-m="#B6E3FF" title="青のマーカー" style="background:#B6E3FF"></button>
   <span class="rb-sep"></span>
   <button id="rbMath" title="選んだ部分を数式に組版">∑</button>
+  <button id="rbLink" title="選んだ文字にURLを埋め込む">🔗</button>
   <span class="rb-sep"></span>
   <button id="rbHead" title="選んだ文字を見出しにする">🔖</button>
   <span class="rb-sep"></span>
@@ -1702,6 +1727,19 @@ window.onerror = function(msg, src, line){
   <div id="asTitle"></div>
   <div id="asDetail"></div>
   <div id="asBody"><div id="asItems"></div><div id="asFoot"></div></div>
+</div>
+<div id="linkDlg">
+  <div id="ldTitle">リンクを入れる</div>
+  <div class="ld-lab">URL</div>
+  <input id="ldUrl" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://example.com">
+  <div class="ld-lab">表示(文字に見える部分)</div>
+  <input id="ldLabel" type="text" placeholder="空なら URL がそのまま表示されます">
+  <div id="ldMsg"></div>
+  <div class="id-row">
+    <button id="ldCancel">キャンセル</button>
+    <button id="ldRemove">リンクを外す</button>
+    <button id="ldOk">OK</button>
+  </div>
 </div>
 <div id="inputDlg">
   <div id="idLabel"></div>
@@ -2107,7 +2145,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "24.09";
+var APP_VERSION = "24.10";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -3808,7 +3846,7 @@ function isDarkColor(hex) {
    見出しも箇条書きも改行を失い、1行に繋がった読めない塊になる
    (AIが整理して返したHTMLを取り込む時に必ず踏む)。 */
 var RICH_TAGS = { B:1, STRONG:1, I:1, EM:1, U:1, BR:1, SPAN:1, DIV:1, P:1, FONT:1,
-                  H1:1, H2:1, H3:1, UL:1, OL:1, LI:1,
+                  H1:1, H2:1, H3:1, UL:1, OL:1, LI:1, A:1,
                   TABLE:1, THEAD:1, TBODY:1, TFOOT:1, TR:1, TD:1, TH:1, IMG:1 };
 function sanitizeRich(html) {
   var box = document.createElement("div");
@@ -3840,6 +3878,24 @@ function sanitizeRich(html) {
         //   食い違わないよう同じ値で揃える(セルの外にはみ出さないため)
         n.setAttribute("style", "height:" + (h2 || "1.1em") +
           ";max-height:1.2em;vertical-align:-0.2em;display:inline-block");
+        continue;
+      }
+      /* ★リンク(v24.10)。href だけを残す。許すのは http / https / mailto / tel のみ。
+         javascript: や data: は、見た目が普通の文字でも押すと動いてしまうので必ず落とす。
+         不正な href のリンクは、中身の文字だけを残す(span に置き換えて中も洗う)。 */
+      if (n.tagName === "A") {
+        var href3 = linkSafeUrl(n.getAttribute("href"));
+        var attrs3 = Array.prototype.slice.call(n.attributes || []);
+        for (var a3 = 0; a3 < attrs3.length; a3++) n.removeAttribute(attrs3[a3].name);
+        if (!href3 || (node.closest && node.closest("a")) || node.tagName === "A") {
+          var sp3 = document.createElement("span");      // 不正・入れ子のリンクは文字だけにする
+          while (n.firstChild) sp3.appendChild(n.firstChild);
+          node.replaceChild(sp3, n);
+          walk(sp3);
+          continue;
+        }
+        n.setAttribute("href", href3);
+        walk(n);
         continue;
       }
       // 属性は色まわりだけ残す
@@ -4067,6 +4123,13 @@ function onTextPaste(e) {
   var raw = cd.getData("text/plain");
   if (!raw) return;
   e.preventDefault();
+  /* ★URL だけを貼ったときはリンクにする(選んだ文字があれば、その文字にリンクを付ける) */
+  var pastedUrl = pasteAsLinkUrl(raw);
+  if (pastedUrl && insertLinkAtSelection(pastedUrl)) {
+    onTextInput();
+    statusEl.textContent = "URLをリンクとして貼り付けました";
+    return;
+  }
   var txt = cleanPastedText(raw);
   var changed = (txt !== raw);
   try {
@@ -4636,7 +4699,7 @@ function syncEditingObjFromDom() {
   o.text = raw.replace(/\n$/, "");
   if (o.autoW && el.offsetWidth) o.w = el.offsetWidth;
   var cleaned = sanitizeRich(el.innerHTML);
-  o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
+  o.rich = /<(b|strong|i|em|u|a|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
            ? cleaned : null;
   /* ★入力中の文字も「編集した」と数える。
      確定前の入力は pushUndo も scheduleSave も通らないため、
@@ -4673,7 +4736,7 @@ function commitText() {
   var cleaned = sanitizeRich(el.innerHTML);
   // ★表も装飾として残す。ここに table が無かったため、
   //   編集して確定するたびに表の枠が消えてただの文章になっていた。
-  o.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
+  o.rich = /<(b|strong|i|em|u|a|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned)
            ? cleaned : null;
   /* ★このセッションで実際に中身が変わっていれば、始める前の状態を
      Undo履歴に積む(数式変換を個別に何度もした場合は、既にそちらで
@@ -4910,6 +4973,7 @@ function attachObjHandlers(o) {
     }
     // 【誤移動防止】未選択オブジェクト: ドラッグ=画面スクロール / タップ=選択
     // 移動は「選択して青枠をドラッグ」に統一(PDFページの上でも自由にスクロールできる)
+    var tappedLink = (o.type === "text" && e.target && e.target.closest) ? e.target.closest("a[href]") : null;
     drag(e, {
       move: function(ev, dxs, dys){
         if (pinch) return;
@@ -4920,6 +4984,11 @@ function attachObjHandlers(o) {
       },
       up: function(ev, moved){
         if (moved) return;
+        if (tappedLink && tool === "select" && o.el && o.el.contains(tappedLink)) {
+          setSelection([o]);                    // リンクの文字をタップ → 開く/編集 の選択肢
+          showLinkSheet(o, tappedLink);
+          return;
+        }
         if (o.type === "text" && tool === "text") {
           setSelection([o]);
           startTextEdit(o);   // テキストツール中はタップで即入力
@@ -5123,6 +5192,9 @@ selBox.addEventListener("pointerdown", function(e){
         // ドラッグ(移動)はタップ履歴に含めない → 直後のタップで誤って編集が開かない
         pushSnapshot(snapshot);
         updateSelUI();
+        tapObj = null;
+      } else if (sel.length === 1 && sel[0].type === "text" && linkAtPoint(sel[0], ev.clientX, ev.clientY)) {
+        showLinkSheet(sel[0], linkAtPoint(sel[0], ev.clientX, ev.clientY));   // リンクの上のタップは編集より先に案内
         tapObj = null;
       } else if (sel.length === 1 && sel[0].type === "text" && !sel[0].locked) {
         startTextEdit(sel[0], { x: ev.clientX, y: ev.clientY });   // ロック時は開かない
@@ -6736,7 +6808,7 @@ function splitPiecesAtCaret(o, node, off) {
     /* ★div / p / br が「構造あり」の判定から漏れていた。
        段落や空行だけで組まれた文章(装飾なし)は rich が捨てられ、
        ただの文字列に戻るため、切った上側の段落分けが消えていた。 */
-    copy.rich = /<(div|p|br|b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img|h1|h2|h3|ul|ol|li)\b/i.test(rich)
+    copy.rich = /<(div|p|br|b|strong|i|em|u|a|span|font|table|tr|td|th|thead|tbody|img|h1|h2|h3|ul|ol|li)\b/i.test(rich)
               ? rich : null;
     pieces.push(copy);
   }
@@ -6988,7 +7060,7 @@ function splitTextObjectByPath(o, path) {
     copy.h = Math.max(20, bottom - top);
     copy.text = text;
     var html = sanitizeRich(groupToHtml(allNodes));
-    copy.rich = /<(b|strong|i|em|u|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(html) ? html : null;
+    copy.rich = /<(b|strong|i|em|u|a|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(html) ? html : null;
     pieces.push(copy);
     if (run.inside) insidePieces.push(copy);
   }
@@ -8023,7 +8095,7 @@ $("#zoomChip").onclick = function(){
    スクロールせず裏のキャンバスだけが動いていた。
    UIの上にポインタがある時はブラウザ標準のスクロールに任せる。 */
 var UI_SCROLL_SEL = "#pagesPanel,#expPanel,#menuPanel,#sheetScrim,#inputDlg," +
-                    "#aiImpDlg,#ppList,#richBar,.scrollable,#verPanel,#sheetWrap";
+                    "#aiImpDlg,#linkDlg,#ppList,#richBar,.scrollable,#verPanel,#sheetWrap";
 function wheelOverUI(t) {
   return !!(t && t.closest && t.closest(UI_SCROLL_SEL));
 }
@@ -9566,6 +9638,7 @@ function layoutMoving() { return Date.now() < layoutSettleUntil; }
 function listIsBusy() {
   if (Date.now() < listBusyUntil) return true;
   if ($("#inputDlg") && $("#inputDlg").classList.contains("show")) return true;
+  if ($("#linkDlg") && $("#linkDlg").classList.contains("show")) return true;
   if ($("#actionSheet") && $("#actionSheet").classList.contains("show")) return true;
   return false;
 }
@@ -10317,6 +10390,7 @@ function applyTheme(name, isStartup) {
   if (THEMES[name]) themeName = name;
   var th = THEMES[themeName];
   document.documentElement.style.setProperty("--paper", th.paper);
+  document.documentElement.style.setProperty("--link-col", linkColor());
   if (canvasMode === "inf") document.body.style.background = th.paper;
   else {
     document.body.style.background = GUTTER;
@@ -11495,6 +11569,7 @@ function richSnapshotFor(o) {
       "h3{font-size:1.12em;font-weight:800;line-height:1.35;margin:.5em 0 .3em}" +
       "ul,ol{padding-left:1.4em;margin:.2em 0}" +
       "b,strong{font-weight:800}" +
+      "a{color:" + inkForOutput(linkColor()) + ";text-decoration:underline}" +
       "pre,code{font-family:ui-monospace,Menlo,Consolas,monospace;white-space:pre}";
     var css = "";
     var inner = sanitizeRich(o.el.innerHTML);
@@ -16571,6 +16646,7 @@ function bindRichBar() {
       if (editingObj && rr) {
         lastEditSnap = { o: editingObj, node: rr.startContainer, off: rr.startOffset,
                          text: String(rr.toString() || ""), at: Date.now() };
+        lastLinkSnap = linkTargetFromRange(editingObj, rr);
       }
     } catch (e) {}
   });
@@ -16620,6 +16696,7 @@ function bindRichBar() {
     });
   bindTap($("#rbClear"), function(){ applyRich(null, true); });
   bindTap($("#rbMath"), function(){ convertSelectionToMath(); });
+  bindTap($("#rbLink"), function(){ linkFromRichBar(); });
   /* ★選んだ文字をそのまま見出し名にして目次へ登録する。
      貼り付けた長文を読みながら、その場で章立てを作れるようにするため。
      見出しはBOX単位なので、印は「その文字が入っているBOX」に付く。 */
@@ -16698,6 +16775,316 @@ function bindRichBar() {
   })();
 }
 bindRichBar();
+
+/* =========================================================
+   ===== リンク(v24.10) =====
+   文字にURLを埋め込む。「表示する文字」と「行き先のURL」を別々に持てる。
+   中身は o.rich の <a href="…"> として残る(保存・同期・書き出しは既存の仕組みのまま)。
+   - 選んだ文字 → リッチバーの 🔗 → URL と 表示 を入れる
+   - 文字のタップ → 開く / URLをコピー / 直す / 外す
+   - URL だけを貼る → そのままリンクになる(文字を選んで貼ると、その文字にリンク)
+   - 「その他」→「リンクを入れる」→ 文末に追加
+========================================================= */
+var lastLinkSnap = null;   // リッチバーを押した瞬間の「箱・選んだ位置」
+function linkColor() {
+  if (typeof outWhite !== "undefined" && outWhite) return "#2C6BD6";
+  return (themeName === "dark" || themeName === "board") ? "#8DB8FF" : "#2C6BD6";
+}
+/* 保存してよいURLだけを通す。http / https / mailto / tel 以外
+   (javascript: や data: など)は、見た目が普通の文字でも押すと動くので必ず落とす。 */
+function linkSafeUrl(u) {
+  var s = String(u == null ? "" : u).replace(/[\u0000-\u0020\u007f-\u009f\u200b-\u200f\u2028\u2029\ufeff]/g, "");
+  if (!s || s.length > 2000) return "";
+  if (/^https?:\/\/[^\/?#]+/i.test(s)) return s;
+  if (/^mailto:[^\s@]+@[^\s@]+$/i.test(s)) return s;
+  if (/^tel:\+?[0-9()\-.;,*#]+$/i.test(s)) return s;
+  return "";
+}
+/* 入力欄の文字をURLに整える。全角で打たれても通す。
+   「example.com」のようにhttps://を省いた入力は、https:// を補う。
+   使えない入力は空文字を返す。 */
+function normalizeLinkUrl(s) {
+  var t = String(s == null ? "" : s).trim();
+  t = t.replace(/[\uff01-\uff5e]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+       .replace(/\u3000/g, " ").trim();
+  if (!t || /\s/.test(t)) return "";
+  if (/^[^\s\/?#:@]+\.[a-z]{2,}:\d+/i.test(t)) return linkSafeUrl("https://" + t);   // ホスト:ポート
+  if (/^[a-z][a-z0-9+.\-]*:/i.test(t)) return linkSafeUrl(t);                         // スキームあり
+  if (/^[^\s@\/]+@[^\s@\/]+\.[^\s@\/]+$/.test(t)) return linkSafeUrl("mailto:" + t);   // メールアドレス
+  if (/^(www\.|[^\s\/?#:]+\.[a-z]{2,}([\/?#]|$))/i.test(t)) return linkSafeUrl("https://" + t);
+  return "";
+}
+/* 貼り付けた文字が「URL1つだけ」ならそのURLを返す(それ以外は空) */
+function pasteAsLinkUrl(raw) {
+  var t = String(raw == null ? "" : raw).trim();
+  if (!t || /\s/.test(t) || !/^https?:\/\//i.test(t)) return "";
+  return linkSafeUrl(t);
+}
+function linkNorm(s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim(); }
+
+/* ---- 位置の数え方: 改行を除いた「文字の数」で場所を表す ----
+   編集中の画面(<div>で段落分け)と、確定後の画面(\nで段落分け)で
+   改行の持ち方が違うため、改行を数えない方式にしておくと両方で同じ場所を指せる。 */
+function linkCountChars(str) { return String(str).replace(/[\r\n]/g, "").length; }
+function linkCharsBefore(el, container, offset) {
+  var r = document.createRange();
+  r.selectNodeContents(el);
+  try { r.setEnd(container, offset); } catch (e) { return 0; }
+  return linkCountChars(r.toString());
+}
+function linkPosFromCount(el, n, forStart) {
+  var w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null, false);
+  var run = 0, tn, last = null;
+  while ((tn = w.nextNode())) {
+    var d = tn.data, len = linkCountChars(d);
+    last = tn;
+    if (forStart ? (run + len > n) : (run + len >= n)) {
+      var need = n - run, i = 0, c = 0;
+      while (i < d.length && c < need) { if (d.charAt(i) !== "\n" && d.charAt(i) !== "\r") c++; i++; }
+      if (forStart) while (i < d.length && (d.charAt(i) === "\n" || d.charAt(i) === "\r")) i++;
+      return { node: tn, off: i };
+    }
+    run += len;
+  }
+  return last ? { node: last, off: last.data.length } : null;
+}
+function linkAnchorIn(el, node) {
+  if (node && node.nodeType === 3) node = node.parentNode;
+  var a = (node && node.closest) ? node.closest("a") : null;
+  return (a && el.contains(a)) ? a : null;
+}
+function linkIndexOf(el, a) { return Array.prototype.indexOf.call(el.querySelectorAll("a"), a); }
+function linkTargetFromRange(o, rr) {
+  var el = o.el;
+  var a = linkAnchorIn(el, rr.startContainer) || linkAnchorIn(el, rr.endContainer);
+  return { o: o,
+           s: linkCharsBefore(el, rr.startContainer, rr.startOffset),
+           e: linkCharsBefore(el, rr.endContainer, rr.endOffset),
+           text: String(rr.toString() || ""),
+           anchorIdx: a ? linkIndexOf(el, a) : -1,
+           at: Date.now() };
+}
+function linkUnwrapNode(a) {
+  if (!a || !a.parentNode) return;
+  while (a.firstChild) a.parentNode.insertBefore(a.firstChild, a);
+  a.parentNode.removeChild(a);
+}
+function linkUnwrapAnchorsIn(root) {
+  var list = root.querySelectorAll ? root.querySelectorAll("a") : [];
+  for (var i = list.length - 1; i >= 0; i--) linkUnwrapNode(list[i]);
+}
+function linkAppendAtEnd(el, label, url) {
+  var A = document.createElement("a");
+  A.setAttribute("href", url);
+  A.textContent = label;
+  var cur = el.textContent || "";
+  if (cur && !/[\s\u3000]$/.test(cur)) el.appendChild(document.createTextNode(" "));
+  el.appendChild(A);
+}
+function linkWrapRange(el, s, e, label, url, selText) {
+  var a = linkPosFromCount(el, s, true), b = linkPosFromCount(el, e, false);
+  if (!a || !b) { linkAppendAtEnd(el, label, url); return; }
+  var r = document.createRange();
+  try { r.setStart(a.node, a.off); r.setEnd(b.node, b.off); } catch (err) { linkAppendAtEnd(el, label, url); return; }
+  var frag = r.extractContents();
+  linkUnwrapAnchorsIn(frag);
+  var A = document.createElement("a");
+  A.setAttribute("href", url);
+  if (label && linkNorm(label) !== linkNorm(selText)) A.appendChild(document.createTextNode(label));
+  else A.appendChild(frag);                 // 表示を変えていなければ、太字・色などをそのまま残す
+  r.insertNode(A);
+}
+/* リンクを入れた/直した/外した後の仕上げ。確定時と同じ手順で o.text / o.rich に映す。 */
+function linkFinish(o, msg) {
+  var el = o.el;
+  if (el.normalize) el.normalize();
+  var raw = (el.innerText != null) ? el.innerText : (el.textContent || "");
+  o.text = raw.replace(/\n$/, "");
+  var cleaned = sanitizeRich(el.innerHTML);
+  o.rich = /<(b|strong|i|em|u|a|span|font|table|tr|td|th|thead|tbody|img)\b/i.test(cleaned) ? cleaned : null;
+  if (hasRich(o)) el.innerHTML = sanitizeRich(o.rich); else el.textContent = o.text;
+  if (o.autoW && el.offsetWidth) o.w = el.offsetWidth;
+  editsSinceLoad++;
+  syncEmptyClass(o);
+  measureObj(o);
+  realignHighlighters();
+  inkDirty = true;
+  scheduleSave();
+  statusEl.textContent = msg;
+}
+function applyLinkResult(info, res) {
+  var o = info.o;
+  if (!o || objects.indexOf(o) === -1 || !o.el) return;
+  if (editingObj === o) commitText();       // 入力を確定してから作業する(通常は入力欄に移った時点で確定済み)
+  var el = o.el;
+  var A = (info.anchorIdx >= 0) ? (el.querySelectorAll("a")[info.anchorIdx] || null) : null;
+  if (res.remove) {
+    if (!A) return;
+    pushUndo();
+    linkUnwrapNode(A);
+    linkFinish(o, "リンクを外しました(文字は残っています)");
+    return;
+  }
+  pushUndo();
+  if (A) {
+    A.setAttribute("href", res.url);
+    if (res.label && linkNorm(res.label) !== linkNorm(A.textContent)) A.textContent = res.label;
+  } else {
+    var label = res.label || info.text || res.url;
+    if (info.s == null || info.e == null) linkAppendAtEnd(el, label, res.url);
+    else linkWrapRange(el, info.s, info.e, label, res.url, info.text);
+  }
+  linkFinish(o, "リンクを入れました: " + linkNorm(res.label || info.text || res.url).slice(0, 30));
+}
+/* ---- URL と 表示 を入れる窓 ---- */
+function openLinkDialog(opt, cb) {
+  var dlg = $("#linkDlg"), inU = $("#ldUrl"), inL = $("#ldLabel"), msg = $("#ldMsg"), scrim = $("#sheetScrim");
+  $("#ldTitle").textContent = opt.title || "リンクを入れる";
+  inU.value = opt.url || "";
+  inL.value = linkNorm(opt.label || "");
+  msg.textContent = "";
+  $("#ldRemove").style.display = opt.canRemove ? "" : "none";
+  scrim.classList.add("show");
+  dlg.classList.add("show");
+  var guardUntil = Date.now() + 400;        // 開いた直後に、離した指で閉じてしまわないように
+  setTimeout(function(){ try { inU.focus(); inU.select(); } catch (e) {} }, 60);
+  function finish(res) {
+    dlg.classList.remove("show");
+    scrim.classList.remove("show");
+    scrim.onclick = null;
+    inU.onkeydown = null; inL.onkeydown = null;
+    if (cb) cb(res);
+  }
+  function ok() {
+    var url = normalizeLinkUrl(inU.value);
+    if (!url) {
+      msg.textContent = inU.value.trim()
+        ? "このURLは使えません。https:// から始まるURLを入れてください"
+        : "URLを入れてください";
+      return;
+    }
+    finish({ url: url, label: linkNorm(inL.value) });
+  }
+  $("#ldOk").onclick = ok;
+  $("#ldCancel").onclick = function(){ finish(null); };
+  $("#ldRemove").onclick = function(){ finish({ remove: true }); };
+  scrim.onclick = function(){ if (Date.now() < guardUntil) return; finish(null); };
+  var kd = function(e){
+    if (e.key === "Enter" && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); ok(); }   // 変換の確定Enterでは送らない
+    if (e.key === "Escape") finish(null);
+  };
+  inU.onkeydown = kd; inL.onkeydown = kd;
+}
+function editLinkDialog(info) {
+  var o = info.o, curUrl = "", label = info.text || "", hasA = false;
+  if (info.anchorIdx >= 0 && o.el) {
+    var A = o.el.querySelectorAll("a")[info.anchorIdx] || null;
+    if (A) { hasA = true; curUrl = A.getAttribute("href") || ""; label = A.textContent || ""; }
+  }
+  openLinkDialog({
+    title: hasA ? "リンクを直す" : (info.s == null ? "リンクを入れる(文末に追加されます)" : "選んだ文字にURLを埋め込む"),
+    url: curUrl, label: label, canRemove: hasA
+  }, function(res){ if (res) applyLinkResult(info, res); });
+}
+/* リッチバーの 🔗 */
+function linkFromRichBar() {
+  var info = null, rr = null;
+  try { rr = selectionInsideEditing(); } catch (e) {}
+  if (editingObj && rr) info = linkTargetFromRange(editingObj, rr);
+  else if (lastLinkSnap && Date.now() - lastLinkSnap.at < 4000 && objects.indexOf(lastLinkSnap.o) !== -1) info = lastLinkSnap;
+  if (!info) { statusEl.textContent = "URLを埋め込みたい文字を選んでから押してください"; return; }
+  lastLinkSnap = null;
+  editLinkDialog(info);
+}
+/* 「その他」から: 文末に追加 */
+function addLinkToObject(o) {
+  editLinkDialog({ o: o, s: null, e: null, text: "", anchorIdx: -1, at: Date.now() });
+}
+/* ---- 開く・タップ ---- */
+function openLinkUrl(url) {
+  var safe = linkSafeUrl(url);
+  if (!safe) { statusEl.textContent = "⚠ このリンクは開けません"; return; }
+  try {
+    var a = document.createElement("a");
+    a.href = safe;
+    if (/^https?:/i.test(safe)) { a.target = "_blank"; a.rel = "noopener noreferrer"; }
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ if (a.parentNode) a.parentNode.removeChild(a); }, 0);
+  } catch (e) {
+    try { window.open(safe, "_blank", "noopener"); } catch (e2) {}
+  }
+}
+function linkAtPoint(o, x, y) {
+  if (!o || !o.el || !document.elementsFromPoint) return null;
+  var els = document.elementsFromPoint(x, y) || [];
+  for (var i = 0; i < els.length; i++) {
+    if (!o.el.contains(els[i])) continue;
+    var a = els[i].closest ? els[i].closest("a") : null;
+    if (a && o.el.contains(a)) return a;
+  }
+  return null;
+}
+function showLinkSheet(o, a) {
+  var url = a.getAttribute("href") || "";
+  var label = linkNorm(a.textContent);
+  var idx = linkIndexOf(o.el, a);
+  var clip = function(t, n){ t = String(t); return t.length > n ? t.slice(0, n - 1) + "…" : t; };
+  var info = { o: o, s: null, e: null, text: label, anchorIdx: idx, at: Date.now() };
+  showSheet("🔗 " + clip(label || url, 40) + "\n" + clip(url, 140), [
+    { label: "↗ このリンクを開く", fn: function(){ openLinkUrl(url); } },
+    { label: "📋 URLをコピー", fn: function(){ copyTextToClipboard(url, "URLをコピーしました"); } },
+    { label: "✎ リンクを直す(URL・表示)", fn: function(){ editLinkDialog(info); } },
+    { label: "リンクを外す(文字は残る)", fn: function(){ applyLinkResult(info, { remove: true }); } },
+    { label: "文字を編集する", fn: function(){ setSelection([o]); startTextEdit(o); } },
+    { label: "閉じる", cancel: true }
+  ]);
+}
+/* ---- URL を貼ったとき ---- */
+function insertLinkAtSelection(url) {
+  if (!editingObj || !editingObj.el) return false;
+  var s = window.getSelection();
+  if (!s || !s.rangeCount) return false;
+  var r = s.getRangeAt(0);
+  var c = r.commonAncestorContainer;
+  if (c.nodeType === 3) c = c.parentNode;
+  if (!editingObj.el.contains(c)) return false;
+  if (linkAnchorIn(editingObj.el, r.startContainer) || linkAnchorIn(editingObj.el, r.endContainer)) return false;   // 既存リンクの中は普通に貼る
+  var A = document.createElement("a");
+  A.setAttribute("href", url);
+  var tail = null;
+  if (r.collapsed) {
+    A.textContent = url;
+    tail = document.createTextNode(" ");    // 直後に打つ文字がリンクに入り込まないよう、空白を1つ挟む
+  } else {
+    var frag = r.extractContents();
+    linkUnwrapAnchorsIn(frag);
+    A.appendChild(frag);
+  }
+  r.insertNode(A);
+  var nr = document.createRange();
+  if (tail) { A.parentNode.insertBefore(tail, A.nextSibling); nr.setStartAfter(tail); }
+  else nr.setStartAfter(A);
+  nr.collapse(true);
+  s.removeAllRanges(); s.addRange(nr);
+  return true;
+}
+/* リンクの文字を押したとき、同じタブで開いてアプリが消えないようにする
+   (開くのは「このリンクを開く」からだけ。編集中は押しても開かない) */
+document.addEventListener("click", function(e){
+  var t = e.target;
+  if (t && t.closest && t.closest(".obj-text a")) e.preventDefault();
+}, true);
+/* PC: 選んだ文字で Ctrl/⌘+K → リンクの窓 */
+document.addEventListener("keydown", function(e){
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === "k" || e.key === "K") &&
+      editingObj && selectionInsideEditing()) {
+    e.preventDefault();
+    linkFromRichBar();
+  }
+});
+/* ===== リンク(v24.10)ここまで ===== */
 
 /* =========================================================
    数式(LaTeX)を組版して貼る
@@ -19123,6 +19510,8 @@ function openMoreSheet() {
     items.push({ label: one.autoW ? "↩ 決まった幅で折り返す" : "⇢ 入力に合わせて横に伸ばす",
                  fn: function(){ toggleAutoWidth(one); } });
   }
+  if (one && one.type === "text" && !isTableObj(one))
+    items.push({ label: "🔗 リンクを入れる(URLと表示)", fn: function(){ addLinkToObject(one); } });
   if (one && isTableObj(one))
     items.push({ label: "⊞ 表を編集する(行や列を増減)…", fn: function(){ openTableMenu(one); } });
   if (one && one.type === "image" && !one.latex) {
