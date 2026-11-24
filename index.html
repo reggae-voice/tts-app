@@ -589,11 +589,14 @@
     background:#fff;cursor:pointer;touch-action:none;
   }
   #minimap.show{display:block}
+  /* ★細い縦長にする(v24.12)。丸は文字に被る面積が大きく、邪魔だった。
+     役目は「キーボードを開いたまま動かす」こと。つまみの形にして、
+     横幅を半分近くまで削る。 */
   #editHandle{
     position:fixed;display:none;z-index:60;
-    width:38px;height:38px;border-radius:50%;
+    width:22px;height:46px;border-radius:999px;
     background:rgba(32,36,43,.92);color:#fff;
-    font-size:17px;line-height:38px;text-align:center;
+    font-size:12px;line-height:46px;text-align:center;
     box-shadow:0 4px 14px rgba(15,18,24,.4);
     touch-action:none;cursor:grab;
     -webkit-user-select:none;user-select:none;
@@ -603,15 +606,24 @@
      下の文字を読めるようにする。触れば元の濃さに戻る。 */
   #editHandle.dim{opacity:.35}
   #editHandle.dim:active{opacity:1}
+  /* ★編集中の操作は、画面の上の1行にまとめる(v24.12)。
+     以前は3つのボタンを right: の数値で1つずつ置いていたので、
+     画面の幅ごとに重なりを調整する必要があった。並べて置けば
+     幅に合わせて自然に収まり、ボタンを足すのも楽になる。 */
+  #editTop{
+    position:fixed;z-index:41;display:none;
+    top:calc(env(safe-area-inset-top) + 10px);left:10px;right:10px;
+    justify-content:flex-end;align-items:center;gap:6px;
+    pointer-events:none;                      /* 隙間は下の紙に通す */
+  }
+  body.editing-mode #editTop{display:flex}
+  #editTop > button{pointer-events:auto}
   /* 編集中の確定ボタン: どんな巨大テキストでも必ず抜けられる脱出口 */
   #editDone{
-    position:fixed;z-index:41;display:none;
-    top:calc(env(safe-area-inset-top) + 10px);right:10px;
     border:none;border-radius:999px;padding:10px 16px;
     background:var(--accent);color:#fff;font-size:14px;font-weight:800;
     box-shadow:0 4px 14px rgba(15,18,24,.4);cursor:pointer;
   }
-  body.editing-mode #editDone{display:block}
   /* ★文字を選ばなくても、カーソルの位置で分けられる専用ボタン。
      リッチバーは「文字を選んだ時だけ」出るうえ、押すと焦点が外れて
      編集が確定してしまい、分割の起点を見失いやすかった。 */
@@ -647,21 +659,16 @@
   #updBanner .ub-yes{background:#fff;color:#1c346e}
   #updBanner .ub-no{background:transparent;color:#cfd8f5}
   body.editing-mode #updBanner{display:none !important}
-  #editSplit, #editCopy{
-    position:fixed;z-index:41;display:none;
-    top:calc(env(safe-area-inset-top) + 10px);
-    border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:9px 14px;
+  #editSplit, #editCopy, #editMenu{
+    border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:9px 13px;
     background:rgba(32,36,43,.92);color:#fff;font-size:13px;font-weight:800;
     box-shadow:0 4px 14px rgba(15,18,24,.4);cursor:pointer;white-space:nowrap;
   }
-  #editSplit{right:106px}
-  /* ★「ここで分割」の左隣。狭い画面では文言が長いと重なるので、
-     コピー側は少し詰めた見た目にする。 */
-  #editCopy{right:216px;padding:9px 12px;font-size:12.5px}
-  body.editing-mode #editSplit,
-  body.editing-mode #editCopy{display:block}
-  @media (max-width: 400px){
-    #editCopy{right:200px;padding:9px 10px;font-size:12px}
+  /* 狭い画面では詰める。★絵文字には替えない。「✂」は切り取りに見えて
+     「分割」の意味が伝わらないため、短い言葉のまま残す。 */
+  @media (max-width: 430px){
+    #editSplit, #editCopy, #editMenu{padding:9px 10px;font-size:12px}
+    #editDone{padding:10px 12px;font-size:13px}
   }
   #cropModal{
     position:fixed;inset:0;background:rgba(10,12,16,.93);z-index:100;
@@ -731,12 +738,6 @@
     flex-wrap:wrap;                          /* 収まらない時は2段に折り返す */
   }
   #richBar.show{display:flex}
-  /* ★カーソル版(v24.11): 文字を選んでいない時は、選ばなくても使える物だけ出す */
-  #richBar.caret-only > *{display:none}
-  #richBar.caret-only #rbLink,
-  #richBar.caret-only #rbMenu{display:block}
-  #richBar.caret-only #rbLink::after{content:" リンク";font-size:11px;font-weight:700}
-  #richBar.caret-only button{padding:0 9px}
   #richBar button{
     border:none;background:#20242B;color:var(--ui-text);
     min-width:27px;height:27px;border-radius:7px;cursor:pointer;
@@ -1477,7 +1478,7 @@ window.onerror = function(msg, src, line){
   <button class="chip-btn disabled" id="redoBtn" title="やり直す">↪︎</button>
   <button class="chip-btn" id="menuBtn" title="メニュー">⚙</button>
   <button class="chip-btn" id="lockBtn" title="編集ロック(閲覧のみ)">🔒</button>
-  <div class="brand" title="InkNote v24.11">InkNote <small>v24.11</small></div>
+  <div class="brand" title="InkNote v24.12">InkNote <small>v24.12</small></div>
 </div>
 
 <button class="pnl-tab" id="pnlTab" title="設定を開く"></button>
@@ -1642,9 +1643,12 @@ window.onerror = function(msg, src, line){
 </div>
 <div id="editHandle" title="ドラッグで移動">✥</div>
 <div id="toast"></div>
-<button id="editCopy" title="このテキストBOXの中身をすべてコピー">📋 全部コピー</button>
-<button id="editSplit" title="カーソル位置でテキストを上下に分ける">✂ ここで分割</button>
-<button id="editDone" title="入力を確定">✓ 確定</button>
+<div id="editTop">
+  <button id="editCopy" title="このテキストBOXの中身をすべてコピー">全部コピー</button>
+  <button id="editSplit" title="カーソル位置でテキストを上下に分ける">分割</button>
+  <button id="editMenu" title="入力を終えて、いつものメニューを出す">⋯ メニュー</button>
+  <button id="editDone" title="入力を確定">✓ 確定</button>
+</div>
 
 <div id="cropModal">
   <div id="cropHead">必要な部分をドラッグで囲む(囲んだ後は四隅・各辺を掴んで調整できます)</div>
@@ -1692,7 +1696,6 @@ window.onerror = function(msg, src, line){
   <span class="rb-sep"></span>
   <button id="rbMath" title="選んだ部分を数式に組版">∑</button>
   <button id="rbLink" title="選んだ文字にURLを埋め込む">🔗</button>
-  <button id="rbMenu" title="入力を終えて、いつものメニューを出す">⋯ メニュー</button>
   <span class="rb-sep"></span>
   <button id="rbHead" title="選んだ文字を見出しにする">🔖</button>
   <span class="rb-sep"></span>
@@ -2152,7 +2155,7 @@ var inkDirty = true;
 var db = null;
 var useLocalStorage = false;
 var saveTimer = null;
-var APP_VERSION = "24.11";
+var APP_VERSION = "24.12";
 var listView = "grid";        // ページ一覧の表示: grid(カード) / list(リスト)
 var listSort = "ts";          // 並び順: ts(変更順) / created(作成順) / name(名前順)
 var listFolder = "";          // 表示中のフォルダ("" = すべて)
@@ -4049,6 +4052,7 @@ function startTextEdit(o, pt) {
      編集は一切Undoの記録が残らず、カットして確定した後にUndoを押しても
      戻せないという不具合になっていた。 */
   editSessionSnapshot = serializeScene();
+  linkCaretMemo = null;      /* 入力を始めたら、前に控えたカーソル位置は捨てる */
   editingObj = o;
   document.body.classList.add("editing-mode");   // キーボードと重なるUIを隠す
   var el = o.el;
@@ -4062,8 +4066,6 @@ function startTextEdit(o, pt) {
     el.focus();
     placeCaret(el, pt);
     ensureEditingVisible();
-    updateRichBar();                  /* ★カーソル版をすぐ出す(v24.11) */
-    setTimeout(updateRichBar, 260);   /*   画面が動いたあと、位置を取り直す */
   }, 30);
   el.addEventListener("blur", onTextBlur);
   el.addEventListener("input", onTextInput);
@@ -4561,7 +4563,7 @@ function positionEditHandle() {
   var vv = window.visualViewport;
   var vvTop = vv ? vv.offsetTop : 0;
   var visH = vv ? vv.height : innerHeight;
-  var HS = 40;                                  // グリップの大きさ
+  var HW = 22, HH = 46;                         // つまみの大きさ(細い縦長)
   var b = objBBox(editingObj);
   var rx = b.x * view.s + view.x;
   var ry = b.y * view.s + view.y;
@@ -4577,22 +4579,22 @@ function positionEditHandle() {
        文字を隠さないよう半透明にする。 */
   var cy = caretScreenY();
   var caretY = (cy != null ? cy : ry);
-  var topLim = vvTop + 56, botLim = vvTop + visH - HS - 12;
+  var topLim = vvTop + 56, botLim = vvTop + visH - HH - 12;
   var x, y;
   var narrow = false;
-  if (rx - HS - 8 >= 6) {
-    x = rx - HS - 8;                            // 左の外側
-    y = caretY - HS / 2;
-  } else if (rx + rw + 8 + HS <= innerWidth - 6) {
+  if (rx - HW - 8 >= 6) {
+    x = rx - HW - 8;                            // 左の外側
+    y = caretY - HH / 2;
+  } else if (rx + rw + 8 + HW <= innerWidth - 6) {
     x = rx + rw + 8;                            // 右の外側
-    y = caretY - HS / 2;
+    y = caretY - HH / 2;
   } else {
     narrow = true;
     x = 6;                                      // 画面の左端
     /* カーソルの行から離す。下に十分な余地があれば下、無ければ上。 */
-    var CLEAR = HS + 28;                        // 行から空ける距離
+    var CLEAR = HH + 28;                        // 行から空ける距離
     if (caretY + CLEAR <= botLim) y = caretY + CLEAR;
-    else y = caretY - CLEAR - HS;
+    else y = caretY - CLEAR - HH;
   }
   y = Math.max(topLim, Math.min(botLim, y));
   editHandle.classList.toggle("dim", narrow);
@@ -7710,6 +7712,16 @@ $("#editCopy").addEventListener("pointerdown", function(e){
   if (!txt.trim()) { statusEl.textContent = "コピーする文字がありません"; return; }
   copyTextToClipboard(txt, "コピーしました");
   statusEl.textContent = "このテキストを全部コピーしました(" + txt.length + "文字)";
+});
+$("#editMenu").addEventListener("pointerdown", function(e){
+  /* pointerdown で拾い、既定動作を止める(焦点を保ったままカーソル位置を控える) */
+  e.preventDefault();
+  e.stopPropagation();
+  try {
+    var rr = selectionInsideEditing() || caretRangeInsideEditing();
+    if (editingObj && rr) lastLinkSnap = linkTargetFromRange(editingObj, rr);
+  } catch (err) {}
+  openMenuFromEditing();
 });
 $("#editDone").addEventListener("pointerdown", function(e){
   // pointerdownで処理する: blurより先に確実に拾う(clickだとキーボードの
@@ -16303,24 +16315,13 @@ function selectionInsideEditing() {
   return r;
 }
 function hideRichBar() { var b = rbEl(); if (b) b.classList.remove("show"); }
-function showRichBarFor(range, caretMode) {
+function showRichBarFor(range) {
   var b = rbEl();
   if (!b) return;
   b.classList.add("show");
   var rect = null;
-  try { if (range) rect = range.getBoundingClientRect(); } catch (e) {}
+  try { rect = range.getBoundingClientRect(); } catch (e) {}
   var bw = b.offsetWidth || 300, bh = b.offsetHeight || 40;
-  /* ★カーソル版(v24.11)は、横をBOXの左端にそろえる。
-     カーソルに横も合わせると、1字打つたびにバーが右へ動いて落ち着かない。
-     空のBOXでは範囲の寸法が取れないので、BOXそのものを目印にする。 */
-  if (caretMode && editingObj && editingObj.el) {
-    var er = editingObj.el.getBoundingClientRect();
-    var hasLine = !!(rect && rect.height);
-    rect = { left: er.left, width: 0,
-             top:    hasLine ? rect.top    : er.top,
-             bottom: hasLine ? rect.bottom : er.bottom,
-             height: hasLine ? rect.height : (er.height || 20) };
-  }
 
   /* 使える高さ。キーボードが出ている分は除く */
   var vv = window.visualViewport;
@@ -16331,7 +16332,7 @@ function showRichBarFor(range, caretMode) {
 
   var x, y;
   if (rect && (rect.width || rect.height)) {
-    x = caretMode ? rect.left : (rect.left + rect.width / 2 - bw / 2);
+    x = rect.left + rect.width / 2 - bw / 2;
     /* ★選んだ文字の「上」に出すのが基本。
        ただし、すぐ上には端末標準の「切り取り/コピー/貼り付け」が
        出るので、その高さぶん(約56px)よけて更に上に出す。 */
@@ -16340,10 +16341,7 @@ function showRichBarFor(range, caretMode) {
        こちらのボタンを押してもOS側が優先されて反応しないため、
        iPadでは十分に余裕を取る。 */
     var isIpad = /iPad|Macintosh/.test(navigator.userAgent) && "ontouchend" in document;
-    /* ★カーソル版は文字を選んでいないので、端末標準のメニューは出ない。
-       よけたままだと、理由もなく高い位置に浮いてしまう。 */
-    var OS_MENU = caretMode ? 0
-                : ((isIpad || /iPhone|iPod/.test(navigator.userAgent)) ? 108 : 56);
+    var OS_MENU = (isIpad || /iPhone|iPod/.test(navigator.userAgent)) ? 108 : 56;
     y = rect.top - bh - OS_MENU;
     if (y < topLimit) {
       // 上に入らない時だけ下へ回す
@@ -16373,20 +16371,11 @@ function showRichBarFor(range, caretMode) {
   b.style.top = y + "px";
 }
 function updateRichBar() {
-  var b0 = rbEl();
+  /* 文字を選んでいる時だけ出す。選んでいない時の入口は、画面上の
+     「⋯ メニュー」(#editMenu)が引き受ける。 */
   var r = selectionInsideEditing();
-  if (r) {                                  // 文字を選んでいる → 今までどおり全部
-    if (b0) b0.classList.remove("caret-only");
-    showRichBarFor(r, false);
-    return;
-  }
-  /* ★カーソルだけでも出す(v24.11)。選ばなくても使える物だけに絞る。 */
-  if (editingObj && editingObj.el) {
-    if (b0) b0.classList.add("caret-only");
-    showRichBarFor(caretRangeInsideEditing(), true);
-    return;
-  }
-  hideRichBar();
+  if (!r) { hideRichBar(); return; }
+  showRichBarFor(r);
 }
 document.addEventListener("selectionchange", function(){
   /* ★編集中のカーソル位置を、動くたびに即座に控える。
@@ -16741,7 +16730,6 @@ function bindRichBar() {
   bindTap($("#rbClear"), function(){ applyRich(null, true); });
   bindTap($("#rbMath"), function(){ convertSelectionToMath(); });
   bindTap($("#rbLink"), function(){ linkFromRichBar(); });
-  bindTap($("#rbMenu"), function(){ openMenuFromEditing(); });
   /* ★選んだ文字をそのまま見出し名にして目次へ登録する。
      貼り付けた長文を読みながら、その場で章立てを作れるようにするため。
      見出しはBOX単位なので、印は「その文字が入っているBOX」に付く。 */
@@ -17048,9 +17036,18 @@ function linkFromRichBar() {
   lastLinkSnap = null;
   editLinkDialog(info);
 }
-/* 「その他」から: 文末に追加 */
+/* 「その他」から。
+   ★「⋯ メニュー」を通って来た時は、押した所(カーソル)に入れる。
+     そのあと文字が変わっていれば位置がずれるので、文末に付ける。 */
 function addLinkToObject(o) {
-  editLinkDialog({ o: o, s: null, e: null, text: "", anchorIdx: -1, at: Date.now() });
+  var m = linkCaretMemo;
+  var atCaret = !!(m && m.o === o && m.text === o.text);
+  editLinkDialog({ o: o,
+                   s: atCaret ? m.s : null,
+                   e: atCaret ? m.e : null,
+                   text: "",
+                   anchorIdx: atCaret && m.anchorIdx != null ? m.anchorIdx : -1,
+                   at: Date.now() });
 }
 /* ---- 開く・タップ ---- */
 function openLinkUrl(url) {
@@ -17139,13 +17136,14 @@ document.addEventListener("keydown", function(e){
 /* ===== リンク(v24.10)ここまで ===== */
 
 /* =========================================================
-   ===== カーソル版のバー(v24.11) =====
-   文字を選んでいなくても、編集中なら小さなバーを出す。
+   ===== 編集中のメニュー(v24.12) =====
+   編集中は、画面の上の行に「⋯ メニュー」を出す(#editMenu)。
    これが無いと、新しく作ったBOXや入力の途中には、どのメニューへの
    入口も無く、「1字入れて → 閉じて → 選び直す」しかなかった。
-   出すのは、文字を選ばなくても使える2つだけ。
-   - 🔗  カーソルの位置にリンクを入れる(窓でURLと表示を決める)
-   - ⋯  入力を終えて、いつものメニューを出す(閉じて選び直す、を1回で)
+   ★v24.11 では文字の近くに小さなバーを浮かせていたが、紙の上に
+     浮いた物が増えて邪魔だったため、上の行にまとめ直した。
+   「⋯ メニュー」= 入力を終えて、いつものメニューを出す。
+   押した時のカーソル位置は控えておき、「その他 → リンクを入れる」で使う。
 ========================================================= */
 /* カーソルだけ(選んでいない)の範囲も返す。
    selectionInsideEditing は「選んでいる時」専用で collapsed には null を
@@ -17182,19 +17180,25 @@ function dropIfEmptyText(o) {
 /* ⋯ 入力を終えて、いつものメニューを出す。
    commitText は最後に選択を外す(書き終わった後のスクロールでBOXが
    動かないようにするため)ので、ここで選び直して #ctxbar を出す。 */
+var linkCaretMemo = null;   /* ⋯メニューを押した時のカーソル位置(リンクを入れる所) */
 function openMenuFromEditing() {
   /* ★押した時点で既に確定が走っている端末もある(preventDefault が
      効かず blur が先に飛ぶ場合)。その時は、押した瞬間に控えた箱を使う。 */
   var o = editingObj ||
           (lastEditSnap && Date.now() - lastEditSnap.at < 4000 ? lastEditSnap.o : null);
   if (!o) return;
+  /* ★押した時のカーソル位置を控える。確定するとカーソルは消えるが、
+     「その他 → リンクを入れる」は、この位置に入れたい。 */
+  var memo = (lastLinkSnap && lastLinkSnap.o === o) ? lastLinkSnap : null;
   if (editingObj === o) {
     keepEmptyObj = o;                                // 空でも、ここでは消さない
     try { commitText(); } finally { keepEmptyObj = null; }
   }
+  linkCaretMemo = memo ? { o: o, s: memo.s, e: memo.e,
+                           anchorIdx: memo.anchorIdx, text: o.text } : null;
   if (objects.indexOf(o) !== -1) setSelection([o]);  // 選び直す → メニューが出る
 }
-/* ===== カーソル版のバー(v24.11)ここまで ===== */
+/* ===== 編集中のメニュー(v24.12)ここまで ===== */
 
 /* =========================================================
    数式(LaTeX)を組版して貼る
